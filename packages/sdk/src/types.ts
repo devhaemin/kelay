@@ -56,7 +56,7 @@ export interface ImplicitColumns {
 export type AnyRow = ImplicitColumns & { [field: string]: unknown };
 
 /** A row as the Data API returns it: implicit columns, `shared` when the collection has it, then the fields. */
-export type Row<A extends AppRef, N extends CollectionName<A>> = string extends N
+export type Row<A extends AppRef, N extends CollectionName<A>> = string extends CollectionName<A>
   ? AnyRow
   : Simplify<
       ImplicitColumns &
@@ -65,7 +65,7 @@ export type Row<A extends AppRef, N extends CollectionName<A>> = string extends 
     >;
 
 /** Values for `create`: required fields must be present; implicit columns are set by the database. */
-export type NewRow<A extends AppRef, N extends CollectionName<A>> = string extends N
+export type NewRow<A extends AppRef, N extends CollectionName<A>> = string extends CollectionName<A>
   ? { [field: string]: unknown }
   : Simplify<
       (CollectionOf<A, N> extends { readonly shared: true } ? { shared?: boolean } : unknown) &
