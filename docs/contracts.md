@@ -140,10 +140,16 @@ The control API serves the same `AppRegistryEntry` to service callers at `GET /i
 - **Tools generated from `AppSchema`:**
   - `<collection>_list` (where, limit), `<collection>_get` (id), `<collection>_create`, `<collection>_update` (id + values), `<collection>_delete` (id);
   - `action_<name>` for each action.
-  - Every tool calls the Data API with the user's token, so RLS applies.
+  - Every collection tool calls the Data API with the user's token, so RLS applies.
+  - An action tool starts the action's agent graph through the run orchestrator (§13) with the same token and `caller: { kind: "agent", id: <azp> }`, waits up to `MCP_ACTION_WAIT_MS` (default 45 seconds) and returns the run's output. A failed run, a run still going after the wait, and the per-user run cap come back as tool errors the assistant can read. Without `RUNNER_URL` an action tool answers "not available yet".
 - **Limits.** Two token buckets, each set by `MCP_RATE_PER_MIN` (default 60): one per `sub × app` and one per `azp × app`. A request takes a token from both. The client bucket is per app so that one busy app cannot use up an assistant's budget for every other app.
 - **Metering.** One `McpCallRecord` per tool call, written as a JSON log line: `{type:"mcp_call", app, sub, client, tool, ms, ok, denied?, args?}`. `denied` is set when the user's role refused the call; `args` is the arguments as JSON, cut to 200 characters. When `CONTROL_API_URL` is set, the gateway also posts the records to `POST {CONTROL_API_URL}/internal/v1/mcp-calls` as `{ calls: McpCallRecord[] }` (at most 500 per request, each stamped with `at`). It sends them in batches in the background, so a slow control API never delays a tool call.
-- **A2A.** The gateway serves an A2A agent card at `/:handle/:app/.well-known/agent-card.json`. Its OAuth security scheme points at Kelay ID's real endpoints (§8).
+- **A2A.** The gateway serves an A2A agent card at `/:handle/:app/.well-known/agent-card.json`. Its OAuth security scheme points at Kelay ID's real endpoints (§8). The card's JSON-RPC interface, `POST /:handle/:app/a2a`, implements `SendMessage` of A2A 1.0:
+  - **Callers.** Without `x-kelay-caller` the caller is a member's own agent: the bearer token is the resource-bound token of an MCP client (`aud` = the MCP resource URL, with `azp`). With an `app-runtime` caller token of another app, the caller is that app acting for the user: the bearer token is the user's token for the target app, and the control API must report a `connected` A2A grant from the calling app (`GET /internal/v1/grants`). No such grant answers `403 denied`; a grant that cannot be checked answers `500`. Each call over a grant is counted with `POST /internal/v1/grants/calls`.
+  - **Message → action.** A data part `{ action, input? }` names the action (by name or by its skill id `action_<name>`); else `metadata.skillId` does; else the app's default action runs: its first one with an agent graph. A data part without `action` is the input. The input is validated like the action tool's arguments.
+  - **Answer.** The run's output comes back as a direct agent `Message`: `result.message` with `role: "ROLE_AGENT"`, one data part (or a text part for a string output) and `metadata: { action, runId }`. The gateway keeps no tasks and does not stream, so every other operation is `UnsupportedOperationError` (-32004). A failed run is a JSON-RPC error -32603 whose `data` names the reason.
+  - **Versions.** `A2A-Version` may be `1.0` or `0.3`; anything else is `VersionNotSupportedError` (-32009). The 0.3 method name `message/send` is accepted and answered in the 0.3 shape.
+  - The same two rate-limit buckets apply. The runner records the run with `caller.kind` `agent` or `app`.
 
 ## 8. Kelay ID
 

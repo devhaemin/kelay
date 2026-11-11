@@ -23,6 +23,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@kelay/runner": "workspace:*",
     "@modelcontextprotocol/client": "^2.4.0",
     "@types/pluralize": "^0.0.33",
     "tsup": "^9.0.0"

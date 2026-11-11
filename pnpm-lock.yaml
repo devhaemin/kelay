@@ -438,6 +438,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@kelay/runner':
+        specifier: workspace:*
+        version: link:../runner
       '@modelcontextprotocol/client':
         specifier: ^2.4.0
         version: 2.4.0

@@ -4,7 +4,7 @@ import { LOCAL_PORTS } from '@kelay/contracts';
 import { loadAppRegistry } from '@kelay/contracts/registry';
 import { remoteJwks } from '@kelay/tokens';
 import { z } from 'zod';
-import { createControlApiMeter, createGateway, stdoutMeter, teeMeter } from './index.ts';
+import { createControlApiLinks, createControlApiMeter, createGateway, createRunnerActionRunner, stdoutMeter, teeMeter } from './index.ts';
 
 const Env = z.object({
   PORT: z.coerce.number().int().positive().default(LOCAL_PORTS.mcpGateway),
@@ -16,6 +16,9 @@ const Env = z.object({
   DATA_API_URL: z.url(),
   MCP_RATE_PER_MIN: z.coerce.number().int().positive().default(60),
   CONTROL_API_URL: z.url().optional(),
+  /** The run orchestrator. Without it, action tools and A2A messages answer "not available yet". */
+  RUNNER_URL: z.url().optional(),
+  MCP_ACTION_WAIT_MS: z.coerce.number().int().positive().default(45_000),
 });
 const env = Env.parse(process.env);
 
@@ -32,6 +35,8 @@ const controlMeter = env.CONTROL_API_URL
     })
   : undefined;
 
+const logError = (type: string) => (error: Error) => console.error(JSON.stringify({ type, message: error.message }));
+
 const app = createGateway({
   config: {
     publicBaseUrl: env.MCP_PUBLIC_BASE_URL,
@@ -43,10 +48,17 @@ const app = createGateway({
   registry,
   jwks: remoteJwks(env.KELAY_ID_JWKS_URL),
   ...(controlMeter ? { meter: teeMeter(stdoutMeter, controlMeter.sink) } : {}),
+  ...(env.RUNNER_URL
+    ? { actions: createRunnerActionRunner({ runnerUrl: env.RUNNER_URL, callerSecret: env.KELAY_CALLER_SECRET, waitMs: env.MCP_ACTION_WAIT_MS, onError: logError('runner_error') }) }
+    : {}),
+  // App-to-app A2A calls need a connected grant, which only the control API can vouch for.
+  ...(env.CONTROL_API_URL
+    ? { links: createControlApiLinks({ controlApiUrl: env.CONTROL_API_URL, callerSecret: env.KELAY_CALLER_SECRET, onError: logError('links_error') }) }
+    : {}),
 });
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
-  console.log(JSON.stringify({ type: 'listening', service: 'mcp-gateway', port: info.port, apps: Object.keys(registry.apps) }));
+  console.log(JSON.stringify({ type: 'listening', service: 'mcp-gateway', port: info.port, apps: Object.keys(registry.apps), runner: env.RUNNER_URL ?? null }));
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
