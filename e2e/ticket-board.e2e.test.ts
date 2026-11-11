@@ -1,0 +1,220 @@
+// The Ticket Board path across the running services, nothing mocked: Kelay ID issues the tokens,
+// the Data API enforces RLS in Postgres, the Control API takes feedback, and the MCP gateway serves
+// the same rows to an assistant that went through the OAuth authorization-code flow.
+import * as oauth from 'oauth4webapi';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { beforeAll, describe, expect, inject, it } from 'vitest';
+import { audienceForApp } from '@kelay/contracts';
+import { KelayError, createKelayClient, sendFeedback } from '@kelay/sdk';
+import { remoteJwks, signCallerToken, verifyKelayToken } from '@kelay/tokens';
+import { BOARD, BUILDER, CONSOLE_APP, FEEDBACK, FOREIGN_TICKET, HANDLE, ORG, PASSWORD, TEAM } from '../scripts/lib/data.ts';
+import { KelayIdSession, redirectTarget } from '../scripts/lib/session.ts';
+import { ASSISTANT_CLIENT_ID, ASSISTANT_REDIRECT_URI } from './assistant.ts';
+
+const APP = 'ticket-board';
+const { config, users, builderId } = inject('stack');
+const person = (key: string) => TEAM.find((p) => p.key === key)!;
+const resource = `${config.mcpPublicBaseUrl}/${HANDLE}/${APP}/mcp`;
+
+/** What RLS should let Junho read: tickets assigned to him, plus the ones shared with the team. */
+const visibleToJunho = BOARD.filter((t) => t.assignee === 'junho' || t.shared);
+const titles = (rows: readonly object[]) => rows.map((r) => String((r as { title?: unknown }).title)).sort();
+
+let junho: KelayIdSession;
+let junhoToken: string;
+const auth = {
+  getUserToken: () => junhoToken,
+  // What the app's own runtime sends with every call (contract §4).
+  getCallerToken: () => signCallerToken({ kind: 'app-runtime', app: APP, env: 'prod' }, config.callerSecret),
+};
+
+async function builderGet(path: string): Promise<{ status: number; body: any }> {
+  const session = new KelayIdSession(config.issuer);
+  await session.signIn(BUILDER.email, PASSWORD);
+  const token = await session.appToken(CONSOLE_APP);
+  const res = await fetch(`${config.controlApiUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  return { status: res.status, body: await res.json() };
+}
+
+beforeAll(async () => {
+  junho = new KelayIdSession(config.issuer);
+  expect(await junho.signIn(person('junho').email, PASSWORD)).toBe(users.junho);
+  junhoToken = await junho.appToken(APP);
+});
+
+describe('Kelay ID', () => {
+  it('gives Junho an app-scoped token carrying his membership', async () => {
+    const claims = await verifyKelayToken(junhoToken, {
+      jwks: remoteJwks(config.jwksUrl),
+      issuer: config.issuer,
+      audience: audienceForApp(APP),
+      app: APP,
+    });
+    expect(claims).toMatchObject({ sub: users.junho, org: ORG, role: 'member', plan: 'team' });
+  });
+
+  it('refuses a token for an app the person is not a member of', async () => {
+    const res = await junho.postJson('/v1/token', { app: CONSOLE_APP });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: { code: 'denied' } });
+  });
+});
+
+describe('Data API under Junho’s token', () => {
+  const client = createKelayClient({ dataApiUrl: config.dataApiUrl, app: APP, ...auth });
+  const tickets = client.collection('tickets');
+
+  it('returns only his own tickets and the shared ones', async () => {
+    const rows = await tickets.list();
+    expect(titles(rows)).toEqual(titles(visibleToJunho));
+    expect(rows.length).toBeLessThan(BOARD.length);
+    for (const row of rows) {
+      expect(row.org_id).toBe(ORG);
+      expect(row.assignee_id === users.junho || row.shared === true).toBe(true);
+    }
+    expect(await tickets.get(FOREIGN_TICKET.id)).toBeNull();
+    const hidden = BOARD.find((t) => t.assignee === 'daniel')!;
+    expect(await tickets.get(hidden.id)).toBeNull();
+  });
+
+  it('lets him move his own ticket', async () => {
+    const mine = BOARD.find((t) => t.assignee === 'junho' && t.status === 'todo')!;
+    expect(await tickets.update(mine.id, { status: 'doing' })).toMatchObject({ id: mine.id, status: 'doing' });
+    expect(await tickets.update(mine.id, { status: mine.status })).toMatchObject({ status: mine.status });
+  });
+
+  it('denies an update to someone else’s ticket, even one he can see', async () => {
+    const shared = BOARD.find((t) => t.shared && t.assignee === 'seoyeon')!;
+    expect(await tickets.get(shared.id)).toMatchObject({ title: shared.title });
+    const attempt = tickets.update(shared.id, { status: 'done' });
+    await expect(attempt).rejects.toBeInstanceOf(KelayError);
+    await expect(attempt).rejects.toMatchObject({ code: 'denied', status: 403 });
+    expect(await tickets.get(shared.id)).toMatchObject({ status: shared.status });
+  });
+
+  it('rejects a call without the app runtime’s caller token', async () => {
+    const res = await fetch(`${config.dataApiUrl}/v1/apps/${APP}/query`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${junhoToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'select', collection: 'tickets' }),
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: { code: 'forbidden_caller' } });
+  });
+});
+
+describe('Feedback and the builder’s ticket board (Control API)', () => {
+  const text = `The Done column is empty after I reload the board (e2e ${Date.now()})`;
+  let ticketId: string;
+
+  it('turns feedback sent through the SDK into a ticket', async () => {
+    ({ ticketId } = await sendFeedback({ controlApiUrl: config.controlApiUrl, app: APP, text, route: '/board', context: { column: 'done' }, ...auth }));
+    expect(ticketId).toMatch(/^FB-\d+$/);
+    const seededKeys = FEEDBACK.filter((f) => f.app === APP).map((f) => Number(f.key.slice(3)));
+    expect(Number(ticketId.slice(3))).toBeGreaterThan(Math.max(...seededKeys));
+  });
+
+  it('shows the builder that ticket next to the seeded ones', async () => {
+    const { status, body } = await builderGet(`/v1/apps/${APP}/tickets`);
+    expect(status).toBe(200);
+    const keys = body.tickets.map((t: { key: string }) => t.key);
+    expect(keys).toEqual(expect.arrayContaining(FEEDBACK.filter((f) => f.app === APP).map((f) => f.key)));
+    expect(body.total).toBe(keys.length);
+    expect(body.tickets.find((t: { key: string }) => t.key === ticketId)).toMatchObject({
+      app: APP,
+      text,
+      route: '/board',
+      source: 'in-app',
+      status: 'new',
+      reporter: users.junho,
+      reporterOrg: ORG,
+    });
+  });
+
+  it('lists the builder’s apps and keeps an app user off the builder routes', async () => {
+    const apps = await builderGet('/v1/apps');
+    expect(apps.body.apps.find((a: { slug: string }) => a.slug === APP)).toMatchObject({ handle: HANDLE, owner: builderId, status: 'live', members: TEAM.length });
+    const res = await fetch(`${config.controlApiUrl}/v1/apps/${APP}/tickets`, { headers: { authorization: `Bearer ${junhoToken}` } });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('MCP gateway with a token from the OAuth authorization-code flow', () => {
+  const client: oauth.Client = { client_id: ASSISTANT_CLIENT_ID, token_endpoint_auth_method: 'none' };
+  const insecure = { [oauth.allowInsecureRequests]: true };
+  let accessToken: string;
+
+  it('challenges a call without a token and points at Kelay ID', async () => {
+    const res = await fetch(resource, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    expect(res.status).toBe(401);
+    const metadataUrl = /resource_metadata="([^"]+)"/.exec(res.headers.get('www-authenticate') ?? '')?.[1];
+    expect(metadataUrl).toBeTruthy();
+    expect(await (await fetch(metadataUrl!)).json()).toMatchObject({ resource, authorization_servers: [config.issuer] });
+  });
+
+  it('refuses the screen token: it is not bound to the MCP resource', async () => {
+    const res = await fetch(resource, { method: 'POST', headers: { authorization: `Bearer ${junhoToken}`, 'content-type': 'application/json' }, body: '{}' });
+    expect(res.status).toBe(401);
+  });
+
+  it('issues a resource-bound token after Junho consents', async () => {
+    const issuer = new URL(config.issuer);
+    const as = await oauth.processDiscoveryResponse(issuer, await oauth.discoveryRequest(issuer, { algorithm: 'oauth2', ...insecure }));
+    const verifier = oauth.generateRandomCodeVerifier();
+    const state = oauth.generateRandomState();
+    const authorize = new URL(as.authorization_endpoint!);
+    authorize.search = new URLSearchParams({
+      response_type: 'code',
+      client_id: ASSISTANT_CLIENT_ID,
+      redirect_uri: ASSISTANT_REDIRECT_URI,
+      scope: 'offline_access',
+      state,
+      code_challenge: await oauth.calculatePKCECodeChallenge(verifier),
+      code_challenge_method: 'S256',
+      resource,
+    }).toString();
+
+    // Junho is already signed in, so Kelay ID goes straight to the consent page for this app.
+    const consent = await redirectTarget(await junho.get(authorize.toString()), config.issuer);
+    expect(consent.pathname).toBe('/consent');
+    const page = await (await junho.get(consent.toString())).text();
+    expect(page).toContain(`<strong>E2E Assistant</strong> wants to use <strong>${HANDLE}/${APP}</strong> as you.`);
+    expect(page).toContain('member, team plan');
+
+    const callback = await redirectTarget(await junho.postForm('/consent', { oauth_query: consent.search.slice(1), accept: 'yes' }), config.issuer);
+    expect(callback.toString().startsWith(ASSISTANT_REDIRECT_URI)).toBe(true);
+    const params = oauth.validateAuthResponse(as, client, callback, state);
+    const res = await oauth.authorizationCodeGrantRequest(as, client, oauth.None(), params, ASSISTANT_REDIRECT_URI, verifier, {
+      ...insecure,
+      additionalParameters: { resource },
+    });
+    const tokens = await oauth.processAuthorizationCodeResponse(as, client, res);
+    accessToken = tokens.access_token;
+
+    const claims = await verifyKelayToken(accessToken, { jwks: remoteJwks(config.jwksUrl), issuer: config.issuer, audience: resource, app: APP });
+    expect(claims).toMatchObject({ sub: users.junho, azp: ASSISTANT_CLIENT_ID, org: ORG, role: 'member' });
+  });
+
+  it('lists the app’s tools and returns the same tickets the screen sees', async () => {
+    const mcp = new Client({ name: 'e2e-assistant', version: '1.0.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(resource), { authProvider: { token: async () => accessToken } }));
+    try {
+      const { tools } = await mcp.listTools();
+      expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(['tickets_list', 'tickets_update', 'comments_create', 'action_summarize_overdue']));
+
+      const listed = await mcp.callTool({ name: 'tickets_list', arguments: {} });
+      expect(listed.isError).toBeFalsy();
+      const viaMcp = (listed.structuredContent as { rows: { id: string; title: string }[] }).rows;
+      const viaScreen = await createKelayClient({ dataApiUrl: config.dataApiUrl, app: APP, ...auth }).collection('tickets').list();
+      expect(viaMcp.map((r) => r.id).sort()).toEqual(viaScreen.map((r) => r.id).sort());
+      expect(titles(viaMcp)).toEqual(titles(visibleToJunho));
+
+      const shared = BOARD.find((t) => t.shared && t.assignee === 'seoyeon')!;
+      const denied = await mcp.callTool({ name: 'tickets_update', arguments: { id: shared.id, values: { status: 'done' } } });
+      expect(denied.isError).toBe(true);
+      expect(JSON.stringify(denied.content)).toContain('permission');
+    } finally {
+      await mcp.close();
+    }
+  });
+});
