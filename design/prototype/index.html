@@ -348,15 +348,17 @@
   .mini-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; font-size: 13px; line-height: 1.5; }
   .mini-card b { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 
-  /* Agent VM */
-  .vm-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 16px; position: relative; }
-  .zone { border: 1.5px dashed #d6d3cb; border-radius: 12px; padding: 12px; }
-  .zone.shared { border-color: #c9cff8; background: #f8f9ff; }
-  .zone h5 { margin: 0 0 2px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
-  .zone .d { font-size: 12px; color: var(--muted); }
-  .vm { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px; display: flex; gap: 10px; align-items: center; margin-top: 8px; }
-  .vm .files { font-size: 11px; color: var(--muted); }
-  .res { display: flex; gap: 8px; align-items: center; padding: 9px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; font-size: 13px; }
+  /* Assistant connections (MCP) */
+  .conn-steps { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+  .conn-step { display: grid; grid-template-columns: 22px 1fr; gap: 10px; font-size: 13px; line-height: 1.45; }
+  .conn-step .n { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); display: grid; place-items: center; font-size: 11px; font-weight: 600; color: var(--muted); }
+  .asst { width: 20px; height: 20px; border-radius: 6px; display: inline-grid; place-items: center; font-size: 10px; font-weight: 700; color: #fff; flex: none; }
+  .asst.claude { background: #c96442; }
+  .asst.cursor { background: var(--text); }
+  .cost-row { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--border); }
+  .cost-row > div { padding: 12px 16px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+  .cost-row > div + div { border-left: 1px solid var(--border); }
+  .cost-row b { display: block; color: var(--text); font-size: 13px; margin-bottom: 2px; }
   .act-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 1.45; }
   .act-row:last-child { border-bottom: none; }
 
@@ -398,7 +400,8 @@
     .graph-page { grid-template-columns: 1fr; }
     .app-graph { height: 460px; overflow-x: auto; }
     .side-list { display: none; }
-    .vm-wrap, .three { grid-template-columns: 1fr; }
+    .three, .cost-row { grid-template-columns: 1fr; }
+    .cost-row > div + div { border-left: none; border-top: 1px solid var(--border); }
     .story { bottom: 110px; }
   }
 
@@ -597,12 +600,12 @@ const APPS = [
 
 /* Customer team members (users of the builder's apps) */
 const MEMBERS = [
-  { id: 'u1', name: 'Mina Kim', email: 'mina@orum.studio', role: 'Member', prov: 'google', created: 'Oct 02, 2026', last: '2 min ago', status: 'active', color: '#4f6bff', key: '…9f2a' },
-  { id: 'u2', name: 'Daniel Park', email: 'daniel@orum.studio', role: 'Member', prov: 'google', created: 'Oct 02, 2026', last: '1 hour ago', status: 'active', color: '#1f9d55', key: '…c41e' },
-  { id: 'u3', name: 'Jiwoo Choi', email: 'jiwoo@orum.studio', role: 'Admin', prov: 'email', created: 'Oct 01, 2026', last: 'Yesterday', status: 'active', color: '#b7791f', key: null },
-  { id: 'u4', name: 'Seoyeon Lee', email: 'seoyeon@orum.studio', role: 'Member', prov: 'kakao', created: 'Oct 05, 2026', last: '3 days ago', status: 'active', color: '#8b5cf6', key: '…07bd' },
-  { id: 'u5', name: 'Hyunwoo Jang', email: 'hyunwoo@orum.studio', role: 'Member', prov: 'google', created: 'Nov 09, 2026', last: '—', status: 'unconfirmed', color: '#d64545', key: null },
-  { id: 'u6', name: 'Sora Han', email: 'sora@orum.studio', role: 'Member', prov: 'github', created: 'Oct 12, 2026', last: '1 week ago', status: 'active', color: '#0ea5e9', key: null },
+  { id: 'u1', name: 'Mina Kim', email: 'mina@orum.studio', role: 'Member', prov: 'google', created: 'Oct 02, 2026', last: '2 min ago', status: 'active', color: '#4f6bff', asst: 'Claude Desktop' },
+  { id: 'u2', name: 'Daniel Park', email: 'daniel@orum.studio', role: 'Member', prov: 'google', created: 'Oct 02, 2026', last: '1 hour ago', status: 'active', color: '#1f9d55', asst: 'Cursor' },
+  { id: 'u3', name: 'Jiwoo Choi', email: 'jiwoo@orum.studio', role: 'Admin', prov: 'email', created: 'Oct 01, 2026', last: 'Yesterday', status: 'active', color: '#b7791f', asst: null },
+  { id: 'u4', name: 'Seoyeon Lee', email: 'seoyeon@orum.studio', role: 'Member', prov: 'kakao', created: 'Oct 05, 2026', last: '3 days ago', status: 'active', color: '#8b5cf6', asst: 'Claude Desktop' },
+  { id: 'u5', name: 'Hyunwoo Jang', email: 'hyunwoo@orum.studio', role: 'Member', prov: 'google', created: 'Nov 09, 2026', last: '—', status: 'unconfirmed', color: '#d64545', asst: null },
+  { id: 'u6', name: 'Sora Han', email: 'sora@orum.studio', role: 'Member', prov: 'github', created: 'Oct 12, 2026', last: '1 week ago', status: 'active', color: '#0ea5e9', asst: null },
 ];
 const member = id => MEMBERS.find(m => m.id === id);
 const initials = n => n.split(' ').map(x => x[0]).join('');
@@ -658,9 +661,9 @@ const LINKS = [
   { id: 'l1', from: 'ticket-board', to: 'docs', kind: 'MCP', what: 'Attach documents to tickets', status: 'connected', calls: 38, since: 'Nov 6' },
   { id: 'l2', from: 'team-wiki', to: 'docs', kind: 'MCP', what: 'Embed documents in wiki pages', status: 'connected', calls: 21, since: 'Nov 8' },
   { id: 'l3', from: 'ticket-board', to: 'team-wiki', kind: 'A2A', what: 'Write finished tickets into weekly notes', status: 'pending', calls: 0, since: 'Nov 11' },
-  { id: 'l4', from: 'agents', to: 'ticket-board', kind: 'MCP', what: 'Members work on tickets from their own Claude', status: 'connected', calls: 64, since: 'Oct 20' },
-  { id: 'l5', from: 'agents', to: 'team-wiki', kind: 'MCP', what: 'Members read and write pages from their own Claude', status: 'connected', calls: 27, since: 'Oct 25' },
-  { id: 'l6', from: 'agents', to: 'docs', kind: 'MCP', what: 'Members draft documents from their own Claude', status: 'connected', calls: 15, since: 'Nov 5' },
+  { id: 'l4', from: 'agents', to: 'ticket-board', kind: 'MCP', what: 'Members work on tickets from their own AI assistant', status: 'connected', calls: 64, since: 'Oct 20' },
+  { id: 'l5', from: 'agents', to: 'team-wiki', kind: 'MCP', what: 'Members read and write pages from their own AI assistant', status: 'connected', calls: 27, since: 'Oct 25' },
+  { id: 'l6', from: 'agents', to: 'docs', kind: 'MCP', what: 'Members draft documents from their own AI assistant', status: 'connected', calls: 15, since: 'Nov 5' },
 ];
 const GPOS = {
   id: { x: 54, y: 45 },
@@ -678,7 +681,7 @@ const SCENES = [
   { k: 'access', title: 'Access rules', href: '#/app/ticket-board/access', need: 'No access rules. Members want to see only their own tickets.', ans: 'Plain-language access rules (RLS) per collection, with “Preview as” any member.' },
   { k: 'ship', title: 'Ship', href: '#/app/ticket-board/screen/ship', need: 'Shipping is hard. The builder wants to share it right away.', ans: 'Deploy runs the checks and hands back a link in one step.' },
   { k: 'qa', title: 'QA', href: '#/app/ticket-board/qa', need: 'After sharing, moving a ticket threw a simple error.', ans: 'Typed actions, safe fallbacks and pre-deploy checks keep screens from breaking.' },
-  { k: 'agent', title: 'Own agent', href: '#/app/ticket-board/agent', need: 'Members want to use it through their own agent (BYOK).', ans: 'A VM per person running their own Claude, split into single and shared areas — under the same access rules.' },
+  { k: 'agent', title: 'Own agent', href: '#/app/ticket-board/agent', need: 'Members want to use Ticket Board from their own AI assistant.', ans: 'They add it over MCP. Every call runs with their Kelay ID and the same access rules.' },
   { k: 'feedback', title: 'Feedback loop', href: '#/app/ticket-board/feedback', need: 'Feedback should turn into improvements right away.', ans: '/feedback → tickets → a daily report from the Self-Improvement Agent → you approve.' },
   { k: 'graph', title: 'App graph', href: '#/graph', need: 'Ticket Board, a wiki and docs should work together.', ans: 'MCP and A2A connect the apps, one Kelay ID opens all of them — small software compounds.' },
 ];
@@ -705,6 +708,7 @@ const state = {
   buildStep: 0, buildKey: null,
   shipStep: 0, shipKey: null,
   story: true,
+  disconnected: {},
 };
 
 /* ============ Router ============ */
@@ -1024,7 +1028,7 @@ function tabAccess() {
         <div style="display:flex;align-items:center;gap:10px">${av(viewer.id, 30)}<div><b>${viewer.name}</b> sees <b>${vis.length}</b> of ${BOARD.length} tickets</div></div>
       </div>
       ${vis.map(t => `<div class="vis-row"><span class="mono">${t.key}</span><span style="flex:1">${t.t}</span>${t.a === viewer.id ? '<span class="pill">Assigned</span>' : t.by === viewer.id ? '<span class="pill">Created</span>' : ''}</div>`).join('')}
-      <div class="node-detail" style="padding-top:10px"><div class="small muted">${ic('cpu', 13)} ${viewer.name.split(' ')[0]}’s own Claude sees exactly the same tickets. <a class="linkish" href="#/app/ticket-board/agent">Agent →</a></div></div>
+      <div class="node-detail" style="padding-top:10px"><div class="small muted">${ic('cpu', 13)} ${viewer.name.split(' ')[0]}’s AI assistant sees exactly the same tickets. <a class="linkish" href="#/app/ticket-board/agent">Agent →</a></div></div>
     </div>
   </div>`;
 }
@@ -1075,54 +1079,77 @@ function tabQA() {
   </div>`;
 }
 
-/* --- Agent tab (BYOK, single / shared VM areas) --- */
-function tabAgent() {
-  const withKey = MEMBERS.filter(m => m.key);
+/* --- Agent tab: members' own AI assistants connect over MCP --- */
+const ASSISTANTS = [
+  { id: 'a1', m: 'u1', kind: 'claude', name: 'Claude Desktop', scopes: 'tickets: read, write · comments: write', since: 'Nov 3', last: '2 min ago' },
+  { id: 'a2', m: 'u2', kind: 'cursor', name: 'Cursor', scopes: 'tickets: read, write', since: 'Nov 5', last: '1 hour ago' },
+  { id: 'a3', m: 'u4', kind: 'claude', name: 'Claude Desktop', scopes: 'tickets: read', since: 'Nov 8', last: '3 days ago' },
+];
+const TOOL_CALLS = [
+  { a: 'a1', t: '10:41', tool: 'move_ticket', arg: 'TCK-36 → Review', res: 'ok' },
+  { a: 'a2', t: '10:12', tool: 'create_ticket', arg: '×3', res: 'ok' },
+  { a: 'a2', t: '09:58', tool: 'update_ticket', arg: 'TCK-38', res: 'denied', note: 'not the assignee · access rule “Members edit own tickets”' },
+  { a: 'a1', t: '09:44', tool: 'list_tickets', arg: 'status: open', res: 'ok', note: '4 rows · only Mina’s tickets' },
+  { a: 'a3', t: '09:30', tool: 'summarize_sprint', arg: 'Sprint 14', res: 'ok', note: 'ran the agent graph · $0.04 from app LLM budget' },
+];
+const asstIc = k => `<span class="asst ${k}">${k === 'claude' ? 'C' : 'Cu'}</span>`;
+function tabAgent(app) {
+  const endpoint = `https://ticket-board.${ME.handle}.kelay.app/mcp`;
+  const live = ASSISTANTS.filter(x => !state.disconnected[x.id]);
+  const byId = id => ASSISTANTS.find(x => x.id === id);
   return `
   <div class="banner">
     <span class="switch on"></span>
-    <span><b>Members can use Ticket Board through their own Claude</b> <span class="muted">· bring your own key (BYOK), runs in a VM per person</span></span>
-  </div>
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-head"><h3>Agent VM areas</h3><span class="muted small">same access rules as the app</span><span class="spacer"></span><a class="linkish" href="#/app/ticket-board/access">Access rules →</a></div>
-    <div class="vm-wrap">
-      <div class="zone">
-        <h5>${ic('lock', 14)} Single area <span class="pill">one per person</span></h5>
-        <div class="d">Private VM with the member’s own Claude, memory and drafts. Nobody else — not even other agents — can read it.</div>
-        ${withKey.map(m => `
-          <div class="vm">${av(m.id, 28)}<div style="flex:1;min-width:0"><div><b>${m.name.split(' ')[0]}’s VM</b> <span class="pill green" style="margin-left:4px"><span class="dot"></span>running</span></div>
-          <div class="files">Claude · key ${m.key} · drafts/, memory/, notes.md</div></div></div>`).join('')}
-      </div>
-      <div class="zone shared">
-        <h5>${ic('users', 14)} Shared area <span class="pill blue">team</span></h5>
-        <div class="d">What the team works on together. Every agent reads and writes here <b>as its member</b>, filtered by access rules.</div>
-        <div class="res">${ic('inbox', 14)} <span style="flex:1">tickets</span><span class="small muted">Mina’s agent sees 4 of 9</span></div>
-        <div class="res">${ic('msg', 14)} <span style="flex:1">comments</span><span class="small muted">follows ticket access</span></div>
-        <div class="res">${ic('folder', 14)} <span style="flex:1">team files</span><span class="small muted">read / write</span></div>
-        <div class="res">${ic('share', 14)} <span style="flex:1">Team Wiki, Docs</span><span class="small muted">via MCP</span></div>
-      </div>
-    </div>
+    <span><b>Members can use Ticket Board from their own AI assistant</b> <span class="muted">· over MCP · every call runs with their Kelay ID and the same access rules</span></span>
   </div>
   <div class="two">
     <div class="card">
-      <div class="card-head"><h3>${ic('key', 15)} Keys (BYOK)</h3><span class="muted small">Kelay never bills model tokens</span></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Member</th><th>Provider</th><th>Key</th><th>Status</th></tr></thead>
-        <tbody>${MEMBERS.filter(m => m.status === 'active').map(m => `
-          <tr><td><span style="display:inline-flex;align-items:center;gap:8px">${av(m.id)} ${m.name}</span></td>
-          <td>${m.key ? 'Anthropic · Claude' : '<span class="muted">—</span>'}</td>
-          <td class="mono">${m.key ? 'sk-ant-' + m.key : '—'}</td>
-          <td>${m.key ? '<span class="pill green">Connected</span>' : '<button class="btn sm">Send setup link</button>'}</td></tr>`).join('')}
-        </tbody>
-      </table></div>
+      <div class="card-head"><h3>${ic('link', 15)} MCP endpoint</h3><span class="spacer"></span><a class="linkish" href="#/app/ticket-board/access">Access rules →</a></div>
+      <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+        <div class="copy-field"><span class="muted">${ic('globe', 14)}</span><span class="v mono" style="color:var(--text)">${endpoint}</span>${copyBtn('mcp', endpoint)}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sm" data-add-asst="Claude">${asstIc('claude')} Add to Claude</button>
+          <button class="btn sm" data-add-asst="Cursor">${asstIc('cursor')} Add to Cursor</button>
+          <span class="small muted" style="align-self:center">or paste the endpoint into any MCP client</span>
+        </div>
+        <div class="small muted" style="line-height:1.5">Conversations stay inside the member’s assistant. Ticket Board only sees the tool calls.</div>
+      </div>
+      <div class="cost-row">
+        <div><b>Assistant model cost</b>Paid by each member, in their own Claude or Cursor plan.</div>
+        <div><b>App LLM budget</b>Used only when a tool runs this app’s agent graph.</div>
+      </div>
     </div>
     <div class="card">
-      <div class="card-head"><h3>Agent activity</h3><span class="muted small">today</span></div>
-      <div class="act-row">${av('u1')}<div style="flex:1"><b>Mina’s Claude</b> moved <span class="mono">TCK-36</span> to Review<div class="small muted">10:41 · shared area</div></div></div>
-      <div class="act-row">${av('u2')}<div style="flex:1"><b>Daniel’s Claude</b> created 3 tickets from meeting notes in Team Wiki<div class="small muted">10:12 · via MCP</div></div></div>
-      <div class="act-row"><span class="st-ic bad">${ic('lock', 11)}</span><div style="flex:1"><b>Blocked:</b> Daniel’s Claude tried to read Mina’s drafts<div class="small muted">09:58 · single areas are private</div></div></div>
-      <div class="act-row">${av('u4')}<div style="flex:1"><b>Seoyeon’s Claude</b> drafted release notes in Docs<div class="small muted">09:30 · via MCP</div></div></div>
+      <div class="card-head"><h3>How a member connects</h3></div>
+      <div class="conn-steps">
+        <div class="conn-step"><span class="n">1</span><div><b>Add the endpoint</b> to their assistant.</div></div>
+        <div class="conn-step"><span class="n">2</span><div><b>Sign in with Kelay ID.</b> <span class="muted">The same account they use in the app.</span></div></div>
+        <div class="conn-step"><span class="n">3</span><div><b>Approve access to this app only.</b> <span class="muted">The consent screen names the assistant and the scopes it asks for.</span></div></div>
+        <div class="conn-step"><span class="n">4</span><div><b>Connected.</b> <span class="muted">The token is bound to this app × this member and can’t be used for any other app.</span></div></div>
+      </div>
     </div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><h3>Connected assistants</h3><span class="muted small">${live.length}</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Member</th><th>Assistant</th><th>Scopes</th><th>Connected</th><th>Last call</th><th></th></tr></thead>
+      <tbody>${live.length ? live.map(x => { const m = member(x.m); return `
+        <tr><td><span style="display:inline-flex;align-items:center;gap:8px">${av(m.id)} ${m.name}</span></td>
+        <td><span style="display:inline-flex;align-items:center;gap:8px">${asstIc(x.kind)} ${x.name}</span></td>
+        <td class="muted">${x.scopes}</td><td class="muted">${x.since}</td><td class="muted">${x.last}</td>
+        <td style="text-align:right"><button class="btn sm" data-disconnect="${x.id}">Disconnect</button></td></tr>`; }).join('')
+        : '<tr><td colspan="6" class="muted">No assistants connected.</td></tr>'}
+      </tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>Tool call activity</h3><span class="muted small">today</span><span class="spacer"></span><span class="small muted">${ic('lock', 12)} Tool calls only — no conversation content</span></div>
+    ${TOOL_CALLS.map(c => { const x = byId(c.a), m = member(x.m); return `
+      <div class="act-row">${av(m.id)}
+        <div style="flex:1;min-width:0"><b>${m.name.split(' ')[0]}’s ${x.name}</b> called <span class="mono" style="color:var(--text)">${c.tool}</span> <span class="muted">${c.arg}</span>
+          <div class="small muted">${c.t}${c.note ? ' · ' + c.note : ''}</div></div>
+        ${c.res === 'ok' ? '<span class="pill green">OK</span>' : '<span class="pill red">Denied</span>'}
+      </div>`; }).join('')}
   </div>`;
 }
 
@@ -1156,8 +1183,8 @@ function tabMonitoring(app) {
     <div class="kpi"><div class="label">Active members (7d)</div><div class="val">11 / 12</div><div class="delta up">▲ 2</div></div>
     <div class="kpi"><div class="label">Actions today</div><div class="val">210</div><div class="delta up">▲ 7%</div></div>
     <div class="kpi"><div class="label">Screen errors (7d)</div><div class="val">0</div><div class="delta muted">3 caught on Nov 10</div></div>
-    <div class="kpi"><div class="label">Agent actions today</div><div class="val">106</div><div class="delta muted">via members’ Claude</div></div>
-    <div class="kpi"><div class="label">Model cost on Kelay</div><div class="val">$0</div><div class="delta muted">BYOK</div></div>
+    <div class="kpi"><div class="label">Agent actions today</div><div class="val">106</div><div class="delta muted">via members’ AI assistants</div></div>
+    <div class="kpi"><div class="label">App LLM budget today</div><div class="val">$0.42</div><div class="delta muted">assistant model cost is on members</div></div>
   </div>
   <div class="two">
     <div class="card">
@@ -1181,7 +1208,7 @@ function tabMonitoring(app) {
     <div class="table-wrap"><table>
       <thead><tr><th>Action</th><th>By</th><th>Status</th><th>Time</th><th>Called from</th></tr></thead>
       <tbody>
-        <tr><td>Move TCK-36 → Review</td><td>Mina Kim</td><td><span class="pill green">ok</span></td><td>120ms</td><td>Mina’s Claude (MCP)</td></tr>
+        <tr><td>Move TCK-36 → Review</td><td>Mina Kim</td><td><span class="pill green">ok</span></td><td>120ms</td><td>Mina’s Claude Desktop (MCP)</td></tr>
         <tr><td>Create ticket</td><td>Daniel Park</td><td><span class="pill green">ok</span></td><td>90ms</td><td>App</td></tr>
         <tr><td>Attach “Q4 plan.docx”</td><td>Jiwoo Choi</td><td><span class="pill green">ok</span></td><td>310ms</td><td>Docs (MCP)</td></tr>
         <tr><td>Move TCK-42 → Done</td><td>Daniel Park</td><td><span class="pill amber">blocked by rule</span></td><td>40ms</td><td>App</td></tr>
@@ -1220,13 +1247,13 @@ function tabUsers() {
       </div>
       <div class="card table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Provider</th><th>Own Claude</th><th>Last sign in</th><th>Status</th></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Provider</th><th>AI assistant</th><th>Last sign in</th><th>Status</th></tr></thead>
           <tbody>
             ${rows.map(u => `
               <tr data-user="${u.id}" style="cursor:pointer">
                 <td><span style="display:inline-flex;align-items:center;gap:8px">${av(u.id)} ${u.name}</span></td>
                 <td class="muted">${u.email}</td><td>${u.role}</td><td>${provBadge(u.prov)}</td>
-                <td>${u.key ? '<span class="pill green">Connected</span>' : '<span class="muted">—</span>'}</td>
+                <td>${u.asst ? u.asst : '<span class="muted">—</span>'}</td>
                 <td class="muted">${u.last}</td>
                 <td>${u.status === 'active' ? '<span class="pill green">Active</span>' : '<span class="pill amber">Unconfirmed</span>'}</td>
               </tr>`).join('')}
@@ -1247,7 +1274,7 @@ function userDrawer() {
       <div style="display:flex;gap:12px;align-items:center">${av(u.id, 44)}<div><b>${u.name}</b><div class="small muted">${u.email}</div></div></div>
       <div><h4>Account</h4><dl class="kv"><dt>Role</dt><dd>${u.role}</dd><dt>Provider</dt><dd>${provBadge(u.prov)}</dd><dt>Created</dt><dd>${u.created}</dd><dt>Last sign in</dt><dd>${u.last}</dd></dl></div>
       <div><h4>Kelay ID</h4><dl class="kv"><dt>Ticket Board</dt><dd>${u.role}</dd><dt>Team Wiki</dt><dd>${u.role === 'Admin' ? 'Admin' : 'Editor'}</dd><dt>Docs</dt><dd>Member</dd></dl></div>
-      <div><h4>Own agent</h4><dl class="kv"><dt>Claude key</dt><dd>${u.key ? 'sk-ant-' + u.key : 'Not connected'}</dd><dt>VM</dt><dd>${u.key ? 'Running · single area' : '—'}</dd></dl></div>
+      <div><h4>AI assistant</h4><dl class="kv"><dt>Ticket Board</dt><dd>${u.asst ? u.asst + ' · over MCP' : 'Not connected'}</dd><dt>Runs as</dt><dd>${u.asst ? 'Their Kelay ID · same access rules' : '—'}</dd></dl></div>
       <div><h4>Actions</h4><div style="display:flex;flex-direction:column;gap:8px">
         <button class="btn sm">Change role</button>
         <button class="btn sm">Send password recovery</button>
@@ -1388,8 +1415,8 @@ function chatPanel(app, tab) {
   } else if (tab === 'agent') {
     msgs = `
       <div class="msg agent">${who('Builder')}
-        <div>Mina, Daniel and Seoyeon connected their own Claude keys. Each runs in a private VM area.</div>
-        <div>In the shared area their agents act <b>as them</b>, so access rules still apply.</div>
+        <div>Mina, Daniel and Seoyeon added Ticket Board to their own assistants over MCP.</div>
+        <div>Each call runs <b>as them</b> with their Kelay ID, so the same access rules apply. Their chats stay in their assistant.</div>
       </div>`;
   } else if (tab === 'feedback') {
     msgs = `
@@ -1469,6 +1496,10 @@ function bindApp(r) {
   document.querySelectorAll('[data-rule]').forEach(b => b.onclick = () => { state.rulesOn[b.dataset.rule] = !state.rulesOn[b.dataset.rule]; render(); });
   document.querySelectorAll('[data-policy]').forEach(b => b.onclick = () => { state.showPolicy = state.showPolicy === b.dataset.policy ? null : b.dataset.policy; render(); });
   document.querySelectorAll('[data-as]').forEach(b => b.onclick = () => { state.previewAs = b.dataset.as; render(); });
+  document.querySelectorAll('[data-disconnect]').forEach(b => b.onclick = () => { state.disconnected[b.dataset.disconnect] = true; toast('Assistant disconnected — its token no longer works'); render(); });
+  document.querySelectorAll('[data-add-asst]').forEach(b => b.onclick = () => toast(`Opening ${b.dataset.addAsst} to add the endpoint…`));
+  document.querySelectorAll('[data-disconnect]').forEach(b => b.onclick = () => { state.disconnected[b.dataset.disconnect] = true; toast('Assistant disconnected — its token no longer works'); render(); });
+  document.querySelectorAll('[data-add-asst]').forEach(b => b.onclick = () => toast(`Opening ${b.dataset.addAsst} to add the endpoint…`));
   const rc = document.getElementById('runChecks'); if (rc) rc.onclick = () => toast('24 of 24 checks passed');
   document.getElementById('shareApp').onclick = () => openShare('app', r.id);
   document.getElementById('toggleChat').onclick = () => { state.chatOpen = !state.chatOpen; render(); };
@@ -1533,7 +1564,7 @@ function appGraph() {
   const node = (k, inner, cls = '') => `<div class="anode ${cls} ${sel.type === 'node' && sel.id === k ? 'sel' : ''} ${rel && !rel.nodes.has(k) ? 'dim' : ''}" data-gnode="${k}" style="left:${P[k].x}%;top:${P[k].y}%">${inner}</div>`;
   const nodes = [
     node('id', `<div class="app-icon">${ic('user', 14)}</div><div><div class="n">Kelay ID</div><div class="s">${IDENTITY_USERS} people · one sign-in</div></div>`, 'identity'),
-    node('agents', `<div class="app-icon" style="background:var(--surface-2)">${ic('cpu', 14)}</div><div><div class="n">Personal agents</div><div class="s">members’ own Claude (BYOK)</div></div>`, 'external'),
+    node('agents', `<div class="app-icon" style="background:var(--surface-2)">${ic('cpu', 14)}</div><div><div class="n">Personal agents</div><div class="s">members’ own AI assistants</div></div>`, 'external'),
     ...APPS.map(a => node(a.id, `<div class="app-icon" style="background:${a.color}">${a.emoji}</div><div><div class="n">${a.name}</div><div class="s">${a.status === 'live' ? '<span class="dot" style="color:var(--green)"></span>' : ''}${a.users} users${a.status !== 'live' ? ' · ' + a.status : ''}</div></div>`, a.status === 'live' ? '' : 'off')),
   ].join('');
   return `<div class="app-graph"><svg viewBox="0 0 100 100" preserveAspectRatio="none">${identEdges}${linkEdges}</svg>${labels}${nodes}</div>`;
@@ -1584,10 +1615,10 @@ function graphPanel() {
   if (k === 'agents') {
     const ls = LINKS.filter(l => l.from === 'agents');
     return `
-    <div class="card-head"><h3>Personal agents</h3><span class="spacer"></span><span class="pill">BYOK</span></div>
+    <div class="card-head"><h3>Personal agents</h3><span class="spacer"></span><span class="pill">External</span></div>
     <div class="node-detail">
-      <div class="muted" style="line-height:1.5">Each member’s own Claude runs in their VM and reaches your apps over MCP, signed in as that member.</div>
-      <dl class="kv"><dt>Apps reached</dt><dd>${ls.length}</dd><dt>Calls / day</dt><dd>${ls.reduce((s, l) => s + l.calls, 0)}</dd><dt>Members</dt><dd>3 with a key</dd></dl>
+      <div class="muted" style="line-height:1.5">Members’ own AI assistants (Claude Desktop, Cursor…) call your apps over MCP. Each call runs with that member’s Kelay ID and the same access rules.</div>
+      <dl class="kv"><dt>Apps reached</dt><dd>${ls.length}</dd><dt>Calls / day</dt><dd>${ls.reduce((s, l) => s + l.calls, 0)}</dd><dt>Members</dt><dd>3 connected</dd></dl>
       <a class="btn sm" href="#/app/ticket-board/agent" style="align-self:flex-start">Agent settings</a>
     </div>`;
   }
