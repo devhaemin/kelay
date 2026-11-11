@@ -7,6 +7,7 @@ const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  agentRules: false,
   transpilePackages: ['@kelay/contracts'],
   turbopack: { root: workspaceRoot },
   outputFileTracingRoot: workspaceRoot,

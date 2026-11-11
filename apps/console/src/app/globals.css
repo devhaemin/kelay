@@ -554,6 +554,9 @@ button.avatar { cursor: pointer; }
 .drawer.open { animation: drawer-in .2s; }
 @keyframes drawer-in { from { transform: translateX(100%); } }
 
+.proto .proto-btn { padding: 6px 9px; border-radius: 8px; color: #d8d6cf; white-space: nowrap; font-size: 12px; }
+.proto .proto-btn:hover { background: rgba(255,255,255,.14); color: #fff; }
+
 /* Menus */
 .menu { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 4px; min-width: 220px; z-index: 70; font-size: 13px; }
 .menu-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; cursor: pointer; outline: none; }
