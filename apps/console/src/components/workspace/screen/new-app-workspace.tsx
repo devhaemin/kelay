@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import type { ActionResult } from '@/lib/action-result';
 import type { AppSummary, ChatMessage, DeployResult } from '@/lib/api/types';
-import { BUILD_STEPS } from '@/lib/build';
+import { buildPlan } from '@/lib/build';
 import { Icon } from '../../ui';
 import { ChatPanel } from '../chat-panel';
 import { WorkspaceShell } from '../workspace-shell';
@@ -14,7 +14,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * `/app/new/screen`: creates the app from the Home prompt and shows the build steps. Once the
- * app exists the URL switches to `?created=<slug>`, so a reload shows the result instead of
+ * app exists `?created=<slug>` joins the URL, so a reload shows the result instead of
  * building a second app.
  */
 export function NewAppWorkspace({
@@ -28,7 +28,8 @@ export function NewAppWorkspace({
   onCreate: (prompt: string) => Promise<ActionResult<AppSummary>>;
   onDeploy: (app: string, env: 'dev') => Promise<ActionResult<DeployResult>>;
 }) {
-  const [step, setStep] = useState(initialCreated ? BUILD_STEPS.length : 0);
+  const { reply, steps } = buildPlan(prompt);
+  const [step, setStep] = useState(initialCreated ? steps.length : 0);
   const [created, setCreated] = useState(initialCreated);
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState<number | null>(null);
@@ -40,22 +41,22 @@ export function NewAppWorkspace({
     const t0 = Date.now();
     void (async () => {
       const creating = onCreate(prompt);
-      for (let i = 1; i < BUILD_STEPS.length; i++) {
+      for (let i = 1; i < steps.length; i++) {
         await wait(STEP_MS);
         setStep(i);
       }
       const r = await creating;
       if (!r.ok) return setError(r.error);
       setCreated(r.data);
-      window.history.replaceState(null, '', `/app/new/screen?created=${encodeURIComponent(r.data.id)}`);
+      window.history.replaceState(null, '', `/app/new/screen?${new URLSearchParams({ prompt, created: r.data.id })}`);
       const [d] = await Promise.all([onDeploy(r.data.id, 'dev'), wait(STEP_MS)]);
       if (!d.ok) return setError(d.error);
       setSeconds(Math.max(1, Math.round((Date.now() - t0) / 1000)));
-      setStep(BUILD_STEPS.length);
+      setStep(steps.length);
     })();
   }, [initialCreated, onCreate, onDeploy, prompt]);
 
-  const ready = step >= BUILD_STEPS.length ? created : null;
+  const ready = step >= steps.length ? created : null;
   const done = ready !== null;
   const messages: ChatMessage[] = [
     { id: 'prompt', role: 'user', author: null, parts: [{ kind: 'text', text: prompt }] },
@@ -64,12 +65,12 @@ export function NewAppWorkspace({
       role: 'agent',
       author: 'Builder',
       parts: [
-        { kind: 'text', text: 'On it. I’ll make a board with four columns, tickets with assignees and comments, and drag to move.' },
+        { kind: 'text', text: reply },
         done
           ? { kind: 'text', text: 'Done — open it to look around. When you’re happy, **Deploy** gives you a link to share.' }
           : error
             ? { kind: 'text', text: `That didn’t work: ${error}` }
-            : { kind: 'step', text: BUILD_STEPS[Math.min(step, BUILD_STEPS.length - 1)] ?? '', done: false },
+            : { kind: 'step', text: steps[Math.min(step, steps.length - 1)] ?? '', done: false },
       ],
     },
   ];
@@ -99,7 +100,7 @@ export function NewAppWorkspace({
             {error ?? (done ? (seconds ? `Built in ${seconds} seconds from one paragraph.` : 'Built from one paragraph.') : 'Planning data, wiring actions and generating the first screen.')}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, textAlign: 'left' }}>
-            {BUILD_STEPS.map((t, i) =>
+            {steps.map((t, i) =>
               i < step || done ? (
                 <div key={t} className="step done"><Icon name="check" size={14} /> {t}</div>
               ) : i === step && !error ? (

@@ -41,7 +41,7 @@ export async function Workspace({ id, tab, ship = false, prompt, created }: Work
   if (id === NEW_APP) {
     if (tab !== 'screen' || ship) notFound();
     const app: AppSummary | null = created ? await orNotFound(api.getApp(created)) : null;
-    return <NewAppWorkspace key={created ?? prompt ?? ''} prompt={prompt?.trim() || DEFAULT_PROMPT} created={app} onCreate={createAppAction} onDeploy={deployAction} />;
+    return <NewAppWorkspace key={prompt ?? created ?? ''} prompt={prompt?.trim() || DEFAULT_PROMPT} created={app} onCreate={createAppAction} onDeploy={deployAction} />;
   }
 
   const app = await orNotFound(api.getApp(id));
