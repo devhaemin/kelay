@@ -19,6 +19,11 @@ function required(name: string): string {
 const controlApiUrl = production ? required('CONTROL_API_URL') : env.CONTROL_API_URL;
 const callerSecret = production ? required('KELAY_CALLER_SECRET') : env.KELAY_CALLER_SECRET;
 
+const list = (value: string | undefined) => (value ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+// In production the service sits behind Cloudflare and an ALB that only Cloudflare can reach
+// (docs/deploy.md), so the client IP is the one Cloudflare reports.
+const clientIpHeader = env.KELAY_ID_CLIENT_IP_HEADER ?? (production ? 'cf-connecting-ip' : undefined);
+
 const database = new pg.Pool({ connectionString: required('CONTROL_DATABASE_URL') });
 const deps: IdentityDeps = {
   database,
@@ -28,6 +33,8 @@ const deps: IdentityDeps = {
   mcpPublicBaseUrl: required('MCP_PUBLIC_BASE_URL'),
   emailPassword: !production || env.KELAY_ID_EMAIL_PASSWORD === 'true',
   social: socialFromEnv(env),
+  corsOrigins: list(env.KELAY_ID_CORS_ORIGINS),
+  ...(clientIpHeader ? { clientIpHeader } : {}),
   ...(controlApiUrl && callerSecret ? { consents: controlApiConsents({ controlApiUrl, callerSecret }) } : {}),
 };
 

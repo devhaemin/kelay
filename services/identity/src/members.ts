@@ -18,7 +18,7 @@ export function pgMemberStore(pool: Pool): MemberStore {
   };
 }
 
-/** Members may get tokens unless banned. */
+/** Only active members get tokens: not banned ones, and not `unconfirmed` ones who have yet to be let in. */
 export function mayUseApp(member: AppMemberRow | undefined): member is AppMemberRow {
-  return member !== undefined && member.status !== 'banned';
+  return member?.status === 'active';
 }

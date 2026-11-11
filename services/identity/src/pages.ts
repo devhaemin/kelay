@@ -21,6 +21,8 @@ export interface PageDeps {
   social: SocialProvider[];
   /** Where granted consents are recorded. Without it, consents live in Kelay ID only. */
   consents?: ConsentRecorder;
+  /** The header better-auth reads the client IP from, when it is not x-forwarded-for. */
+  clientIpHeader?: string;
 }
 
 type Markup = HtmlEscapedString | Promise<HtmlEscapedString>;
@@ -82,7 +84,7 @@ const FORWARDED_HEADERS = ['cookie', 'origin', 'referer', 'user-agent', 'x-forwa
 
 function callAuth(deps: PageDeps, path: string, body: Record<string, unknown>, from: Request): Promise<Response> {
   const headers = new Headers({ 'content-type': 'application/json', accept: 'application/json' });
-  for (const name of FORWARDED_HEADERS) {
+  for (const name of deps.clientIpHeader ? [...FORWARDED_HEADERS, deps.clientIpHeader] : FORWARDED_HEADERS) {
     const value = from.headers.get(name);
     if (value !== null) headers.set(name, value);
   }
@@ -190,9 +192,12 @@ function consentBody(view: ConsentView, oauthQuery: string) {
   const { target, member, clientName } = view;
   const appName = `${target.handle}/${target.app}`;
   const allowed = mayUseApp(member);
-  const refusal = member?.status === 'banned'
-    ? `Your access to ${appName} is suspended, so ${clientName} cannot use it as you.`
-    : `You are not a member of ${appName}, so ${clientName} cannot use it as you.`;
+  const refusal =
+    member?.status === 'banned'
+      ? `Your access to ${appName} is suspended, so ${clientName} cannot use it as you.`
+      : member?.status === 'unconfirmed'
+        ? `Your membership of ${appName} is not confirmed yet, so ${clientName} cannot use it as you.`
+        : `You are not a member of ${appName}, so ${clientName} cannot use it as you.`;
   return html`<p><strong>${clientName}</strong> wants to use <strong>${appName}</strong> as you.</p>
     ${allowed ? '' : alert(refusal)}
     <dl>

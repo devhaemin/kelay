@@ -265,6 +265,18 @@ describe('MCP authorization with a Client ID Metadata Document client', () => {
     expect(controlApi.recorded.map((c) => c.app)).not.toContain('notes');
   });
 
+  it('does not let a member who is not confirmed yet connect an app', async () => {
+    await t.setMember({ app: 'notes', user_id: userId, org: 'acme', role: 'member', plan: 'free', status: 'unconfirmed' });
+    const notes = await authorization(RESOURCE.notes);
+    const consent = redirectTarget(await browser.get(notes.url));
+    const page = await (await browser.get(consent.toString())).text();
+    expect(page).toContain('Your membership of acme/notes is not confirmed yet');
+    expect(page).not.toContain('value="yes"');
+    const callback = redirectTarget(await browser.postForm('/consent', { oauth_query: signedQuery(consent), accept: 'yes' }));
+    expect(callback.searchParams.get('error')).toBe('access_denied');
+    expect(controlApi.recorded.map((c) => c.app)).not.toContain('notes');
+  });
+
   it('rejects requests that do not name exactly one known app resource', async () => {
     const unknown = redirectTarget(await browser.get((await authorization(`${MCP_BASE}/orum/nope/mcp`)).url));
     expect(unknown.toString().startsWith(REDIRECT_URI)).toBe(true);

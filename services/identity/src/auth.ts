@@ -50,6 +50,8 @@ export interface AuthDeps {
   social: SocialConfig;
   fetchClientMetadataResource?: ClientMetadataResourceFetch;
   trustedOrigins?: string[];
+  /** Header that carries the client IP for rate limiting; unset keeps better-auth's x-forwarded-for. */
+  clientIpHeader?: string;
 }
 
 const invalidGrant = (description: string) =>
@@ -97,6 +99,9 @@ export function authOptions(deps: AuthDeps) {
     secret: deps.secret,
     database: deps.database,
     ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
+    // Rate limits are per client IP. Behind Cloudflare and the ALB, x-forwarded-for is a chain whose first
+    // entry the client chooses, so better-auth finds no IP it can trust there and limits nothing.
+    ...(deps.clientIpHeader ? { advanced: { ipAddress: { ipAddressHeaders: [deps.clientIpHeader] } } } : {}),
     disabledPaths: [
       // The jwt plugin's session-token route would mint JWTs a resource server could mistake for access tokens.
       '/token',

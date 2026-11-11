@@ -1,5 +1,6 @@
 // Kelay ID (contract §8): better-auth on Hono, app-scoped tokens and MCP authorization.
 import { Hono, type Context } from 'hono';
+import { cors } from 'hono/cors';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { getMigrations } from 'better-auth/db/migration';
 import type { ClientMetadataResourceFetch } from '@better-auth/oauth-provider';
@@ -42,6 +43,17 @@ export interface IdentityDeps {
   /** Defaults to reading `app_members` from `database`. */
   members?: MemberStore;
   /**
+   * Other origins whose pages may call `POST /v1/token` with the person's session cookie, e.g. the
+   * console. The issuer's own origin always may. @default none
+   */
+  corsOrigins?: string[];
+  /**
+   * Request header that holds the client IP, for better-auth's rate limits. Set it to the single-value
+   * header the edge writes (`cf-connecting-ip` behind Cloudflare). Trust it only when clients cannot
+   * reach the service except through that edge. Unset reads x-forwarded-for.
+   */
+  clientIpHeader?: string;
+  /**
    * Records each consent a person grants an assistant, normally `controlApiConsents`. A consent the
    * recorder refuses is not granted. Unset keeps consents in Kelay ID only (tests, a stack without a control API).
    */
@@ -65,6 +77,7 @@ function resolveDeps(deps: IdentityDeps): AuthDeps {
     social: deps.social ?? {},
     ...(deps.fetchClientMetadataResource ? { fetchClientMetadataResource: deps.fetchClientMetadataResource } : {}),
     ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
+    ...(deps.clientIpHeader ? { clientIpHeader: deps.clientIpHeader.toLowerCase() } : {}),
   };
 }
 
@@ -89,7 +102,24 @@ export function createIdentity(deps: IdentityDeps) {
   // gateway at each resource's own origin (contract §7), so the identity host does not publish it.
   app.on(['GET', 'HEAD'], '/.well-known/oauth-authorization-server', (c) => auth.handler(c.req.raw));
 
+  // The session cookie is what authenticates this route, so which pages may use it is decided here:
+  // listed origins get CORS headers, and a browser request from any other origin is refused outright
+  // rather than left to the browser to block. Callers that send no Origin (servers, CLIs) are unaffected.
+  const tokenOrigins = new Set([new URL(issuer).origin, ...(deps.corsOrigins ?? []).map((o) => new URL(o).origin)]);
+  app.use(
+    '/v1/token',
+    cors({
+      origin: (origin) => (tokenOrigins.has(origin) ? origin : null),
+      credentials: true,
+      allowMethods: ['POST'],
+      allowHeaders: ['content-type'],
+      maxAge: 600,
+    }),
+  );
+
   app.post('/v1/token', async (c) => {
+    const origin = c.req.header('origin');
+    if (origin && !tokenOrigins.has(origin)) return fail(c, 'denied', `${origin} may not request tokens`);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     if (!session) return fail(c, 'unauthenticated', 'sign in to Kelay ID first');
     const body = TokenRequest.safeParse(await c.req.json().catch(() => null));
@@ -124,6 +154,7 @@ export function createIdentity(deps: IdentityDeps) {
       emailPassword,
       social: Object.keys(social) as SocialProvider[],
       ...(deps.consents ? { consents: deps.consents } : {}),
+      ...(resolved.clientIpHeader ? { clientIpHeader: resolved.clientIpHeader } : {}),
     }),
   );
 
