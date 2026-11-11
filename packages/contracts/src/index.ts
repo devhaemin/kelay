@@ -190,7 +190,7 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   internal: 500,
 };
 
-// ---------------------------------------------------------------- §6 app registry (MVP file)
+// ---------------------------------------------------------------- §6 app registry
 
 export const AppRegistryEntry = z.object({
   handle: AppSlug,
@@ -201,6 +201,14 @@ export const AppRegistryEntry = z.object({
 export const AppRegistry = z.object({ apps: z.record(AppSlug, AppRegistryEntry) });
 export type AppRegistry = z.infer<typeof AppRegistry>;
 export type AppRegistryEntry = z.infer<typeof AppRegistryEntry>;
+
+/** An app environment: every app has a dev and a prod one. */
+export type AppEnvName = 'dev' | 'prod';
+
+/** `GET /internal/v1/apps?env=` of the control API: every app that has a deployment and a database in that env. */
+export const AppList = z.object({ apps: z.array(z.object({ app: AppSlug, handle: AppSlug })) });
+export type AppList = z.infer<typeof AppList>;
+export type AppSummary = AppList['apps'][number];
 
 // ---------------------------------------------------------------- §7 MCP · A2A gateway
 

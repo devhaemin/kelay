@@ -10,20 +10,20 @@ import {
   AppSlug,
   HTTP_STATUS,
   audienceForApp,
-  type AppRegistry,
   type ErrorCode,
   type ErrorResponse,
 } from '@kelay/contracts';
-import { appResources } from './apps.ts';
+import { appResources, type AppDirectory } from './apps.ts';
 import { authOptions, createAuth, type AuthDeps, type SocialConfig, type SocialProvider } from './auth.ts';
 import type { ConsentRecorder } from './consents.ts';
 import { mayUseApp, pgMemberStore, type MemberStore } from './members.ts';
 import { pageRoutes } from './pages.ts';
 
-export { mcpResourceUrl, type AppResource, type AppResources } from './apps.ts';
+export { mcpResourceUrl, type AppDirectory, type AppResource, type AppResources } from './apps.ts';
 export { MCP_SCOPES, SOCIAL_PROVIDERS, socialFromEnv, type KelayAuth, type SocialConfig } from './auth.ts';
 export { controlApiConsents, type ConsentRecord, type ConsentRecorder, type ControlApiConsentsOptions } from './consents.ts';
 export { pgMemberStore, type MemberStore } from './members.ts';
+export { createReloadingIdentity, type ReloadingIdentity, type ReloadingIdentityOptions } from './reloading.ts';
 
 export interface IdentityDeps {
   /** Control DB pool: better-auth's tables live here, and `app_members` is read from it. */
@@ -31,7 +31,8 @@ export interface IdentityDeps {
   /** KELAY_ID_ISSUER: the public origin of Kelay ID and the `iss` of every token. */
   issuer: string;
   secret: string;
-  registry: AppRegistry;
+  /** The apps people can connect assistants to. It is fixed for the life of the instance; see `createReloadingIdentity`. */
+  registry: AppDirectory;
   /** MCP_PUBLIC_BASE_URL: app MCP resources are `<base>/<handle>/<app>/mcp`. */
   mcpPublicBaseUrl: string;
   /** @default true */
@@ -71,6 +72,7 @@ function resolveDeps(deps: IdentityDeps): AuthDeps {
     database: deps.database,
     issuer: deps.issuer.replace(/\/+$/, ''),
     secret: deps.secret,
+    mcpPublicBaseUrl: deps.mcpPublicBaseUrl,
     apps: appResources(deps.registry, deps.mcpPublicBaseUrl),
     members: deps.members ?? pgMemberStore(deps.database),
     emailPassword: deps.emailPassword ?? true,

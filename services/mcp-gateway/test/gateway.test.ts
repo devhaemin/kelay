@@ -2,10 +2,11 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { serve } from '@hono/node-server';
-import { audienceForApp } from '@kelay/contracts';
+import { audienceForApp, type AppRegistryEntry } from '@kelay/contracts';
+import { RegistryUnavailableError, type AppRegistrySource } from '@kelay/contracts/registry';
 import { createDevSigner } from '@kelay/tokens';
 import type { ActionRunner, buildAgentCard } from '../src/index.ts';
-import { BASE, CLIENT_ID, METADATA_URL, OAUTH, RESOURCE, denied, setup } from './harness.ts';
+import { BASE, CLIENT_ID, METADATA_URL, OAUTH, RESOURCE, denied, registry, setup } from './harness.ts';
 
 type AgentCard = ReturnType<typeof buildAgentCard>;
 
@@ -72,6 +73,65 @@ describe('authentication and discovery', () => {
   it('reports health', async () => {
     const { gateway } = await setup();
     expect(await (await gateway.request('/healthz')).json()).toEqual({ ok: true });
+  });
+});
+
+describe('apps from the control API', () => {
+  const board = registry.apps['ticket-board']!;
+
+  /** A registry whose answer for ticket-board in prod the test changes, as deploys do. */
+  function liveRegistry() {
+    const state: { entry: AppRegistryEntry | undefined; down: boolean; asked: string[] } = { entry: undefined, down: false, asked: [] };
+    const source: AppRegistrySource = {
+      kind: 'control-api',
+      list: async () => [],
+      async get(app, env) {
+        state.asked.push(`${app}:${env}`);
+        if (state.down) throw new RegistryUnavailableError('registry: the control API did not answer');
+        return app === 'ticket-board' ? state.entry : undefined;
+      },
+    };
+    return { state, source };
+  }
+
+  it('serves an app published after the gateway started, from its production deployment', async () => {
+    const { state, source } = liveRegistry();
+    const { gateway, connect, token } = await setup({ registry: source });
+    expect((await gateway.request('/.well-known/oauth-protected-resource/orum/ticket-board/mcp')).status).toBe(404);
+
+    state.entry = board;
+    expect((await gateway.request('/.well-known/oauth-protected-resource/orum/ticket-board/mcp')).status).toBe(200);
+    const client = await connect(await token());
+    expect((await client.listTools()).tools.length).toBeGreaterThan(0);
+    await client.close();
+    expect(new Set(state.asked)).toEqual(new Set(['ticket-board:prod']));
+  });
+
+  it('offers the tools of the schema that is deployed now', async () => {
+    const { state, source } = liveRegistry();
+    const { connect, token } = await setup({ registry: source });
+    state.entry = board;
+    const before = await connect(await token());
+    const names = (await before.listTools()).tools.map((t) => t.name);
+    await before.close();
+
+    const [first, ...rest] = board.schema.collections;
+    state.entry = { ...board, schema: { ...board.schema, collections: rest } };
+    const after = await connect(await token());
+    const remaining = (await after.listTools()).tools.map((t) => t.name);
+    await after.close();
+    expect(names.some((n) => n.startsWith(`${first!.name}_`) || n.includes(first!.name.replace(/s$/, '')))).toBe(true);
+    expect(remaining.length).toBeLessThan(names.length);
+  });
+
+  it('answers 500 while the registry cannot be reached, not "no such app"', async () => {
+    const { state, source } = liveRegistry();
+    const { gateway, errors } = await setup({ registry: source });
+    state.down = true;
+    const res = await gateway.request('/orum/ticket-board/.well-known/agent-card.json');
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: { code: 'internal' } });
+    expect(errors.map((e) => e.name)).toEqual(['RegistryUnavailableError']);
   });
 });
 

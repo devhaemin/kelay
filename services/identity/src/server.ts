@@ -2,8 +2,9 @@
 import { serve } from '@hono/node-server';
 import pg from 'pg';
 import { LOCAL_PORTS } from '@kelay/contracts';
-import { loadAppRegistry } from '@kelay/contracts/registry';
-import { controlApiConsents, createIdentity, migrateIdentity, socialFromEnv, type IdentityDeps } from './index.ts';
+import { registrySourceFromEnv } from '@kelay/contracts/registry';
+import { signCallerToken } from '@kelay/tokens';
+import { controlApiConsents, createReloadingIdentity, migrateIdentity, socialFromEnv, type IdentityDeps } from './index.ts';
 
 const env = process.env;
 const production = env.NODE_ENV === 'production';
@@ -24,12 +25,17 @@ const list = (value: string | undefined) => (value ?? '').split(',').map((v) => 
 // (docs/deploy.md), so the client IP is the one Cloudflare reports.
 const clientIpHeader = env.KELAY_ID_CLIENT_IP_HEADER ?? (production ? 'cf-connecting-ip' : undefined);
 
+// Apps come from KELAY_APPS_FILE, or from the control API with KELAY_APPS_SOURCE=control-api (contract §6).
+const registry = registrySourceFromEnv(env, {
+  callerToken: () => signCallerToken({ kind: 'service', svc: 'identity' }, required('KELAY_CALLER_SECRET')),
+});
+const refreshSeconds = Number(env.KELAY_APPS_TTL_SECONDS ?? 30);
+
 const database = new pg.Pool({ connectionString: required('CONTROL_DATABASE_URL') });
-const deps: IdentityDeps = {
+const deps: Omit<IdentityDeps, 'registry'> = {
   database,
   issuer: required('KELAY_ID_ISSUER'),
   secret: production ? required('BETTER_AUTH_SECRET') : (env.BETTER_AUTH_SECRET ?? 'kelay-identity-dev-secret-not-for-production'),
-  registry: loadAppRegistry(required('KELAY_APPS_FILE')),
   mcpPublicBaseUrl: required('MCP_PUBLIC_BASE_URL'),
   emailPassword: !production || env.KELAY_ID_EMAIL_PASSWORD === 'true',
   social: socialFromEnv(env),
@@ -38,15 +44,22 @@ const deps: IdentityDeps = {
   ...(controlApiUrl && callerSecret ? { consents: controlApiConsents({ controlApiUrl, callerSecret }) } : {}),
 };
 
-await migrateIdentity(deps);
-const identity = createIdentity(deps);
+// The tables do not depend on which apps exist.
+await migrateIdentity({ ...deps, registry: { apps: {} } });
+const identity = await createReloadingIdentity(deps, {
+  source: registry,
+  refreshMs: refreshSeconds * 1000,
+  onError: (error) => console.error(JSON.stringify({ type: 'registry_error', service: 'identity', message: error.message })),
+  onReload: (apps) => console.log(JSON.stringify({ type: 'apps', service: 'identity', count: apps.length })),
+});
 
-const server = serve({ fetch: identity.app.fetch, port: Number(env.PORT ?? LOCAL_PORTS.identity) }, (info) => {
-  console.log(JSON.stringify({ type: 'listening', service: 'identity', port: info.port, issuer: identity.issuer }));
+const server = serve({ fetch: identity.fetch, port: Number(env.PORT ?? LOCAL_PORTS.identity) }, (info) => {
+  console.log(JSON.stringify({ type: 'listening', service: 'identity', port: info.port, issuer: deps.issuer, apps: registry.kind }));
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
+    identity.stop();
     server.close(() => void database.end().finally(() => process.exit(0)));
   });
 }

@@ -2,9 +2,9 @@
 // Kelay ID, consent records, grant checks for the MCP · A2A gateway, intake from other channels, and the
 // improvement-run worker protocol.
 import { Hono } from 'hono';
-import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { AppRegistryEntry, AppSlug, Ident } from '@kelay/contracts';
+import { AppRegistryEntry, AppSlug, Ident, type AppList } from '@kelay/contracts';
 import { requireService, type AppEnv } from '../auth.ts';
 import { appMembers, apps, consents, envs, ENV_NAMES, GRANT_KINDS, grants, TICKET_SOURCES, versions } from '../db/schema.ts';
 import type { Ctx } from '../deps.ts';
@@ -63,6 +63,18 @@ export function internalRoutes(ctx: Ctx) {
     if (!app || app.status === 'archived') throw new ApiError('unknown_app', `unknown app ${slug}`);
     return app;
   };
+
+  // What the HTTP app registry lists (contract §6): the apps `GET /internal/v1/apps/:app` would answer for.
+  r.get('/internal/v1/apps', queryParams(z.object({ env: EnvParam.optional() })), async (c) => {
+    const rows = await db
+      .select({ app: apps.slug, handle: apps.handle })
+      .from(apps)
+      .innerJoin(envs, and(eq(envs.app, apps.slug), eq(envs.name, c.req.valid('query').env ?? 'prod')))
+      .innerJoin(versions, eq(versions.id, envs.activeVersionId))
+      .where(and(ne(apps.status, 'archived'), isNotNull(envs.databaseUrl), isNotNull(versions.schema)))
+      .orderBy(apps.slug);
+    return c.json({ apps: rows } satisfies AppList);
+  });
 
   r.get('/internal/v1/apps/:app', queryParams(z.object({ env: EnvParam.optional() })), async (c) => {
     const app = await liveApp(c.req.param('app'));

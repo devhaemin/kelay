@@ -4,7 +4,7 @@ import pg from 'pg';
 import { pino } from 'pino';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import { audienceForApp, type AppRegistry, type CallerClaims } from '@kelay/contracts';
-import { loadAppRegistry } from '@kelay/contracts/registry';
+import { RegistryUnavailableError, loadAppRegistry, staticRegistrySource, type AppRegistrySource } from '@kelay/contracts/registry';
 import { createDevSigner, signCallerToken, type DevSigner } from '@kelay/tokens';
 import { createApp, createDatabases, type Databases } from '../src/app.ts';
 
@@ -110,6 +110,18 @@ beforeAll(async () => {
       },
     },
   };
+  // The file registry answers the same for every env. These two apps behave like the control API's:
+  // env-board is deployed to dev only, and down-board is asked about while the control API is away.
+  const files = staticRegistrySource(registry);
+  const source: AppRegistrySource = {
+    kind: 'control-api',
+    list: files.list,
+    async get(app, env) {
+      if (app === 'down-board') throw new RegistryUnavailableError('registry: the control API did not answer');
+      if (app === 'env-board') return env === 'dev' ? { ...board, schema: { ...board.schema, app }, databaseUrl } : undefined;
+      return files.get(app, env);
+    },
+  };
   databases = createDatabases();
   const sink = new Writable({
     write(chunk, _encoding, done) {
@@ -117,7 +129,7 @@ beforeAll(async () => {
       done();
     },
   });
-  api = createApp({ jwks: signer.verifier, issuer: signer.issuer, callerSecret: SECRET, registry, databases, logger: pino(sink) });
+  api = createApp({ jwks: signer.verifier, issuer: signer.issuer, callerSecret: SECRET, registry: source, databases, logger: pino(sink) });
   superuser = new pg.Client({ connectionString: databaseUrl });
   await superuser.connect();
 });
@@ -314,6 +326,24 @@ describe('validation', () => {
     const r = await call(selectTickets(), { app: 'wiki' });
     expect(r.status).toBe(404);
     expect(r.body.error?.code).toBe('unknown_app');
+  });
+
+  it('queries the database of the env the app runtime was deployed to', async () => {
+    const app = 'env-board';
+    const dev = await call(selectTickets(), { app, as: adam });
+    expect(dev.status).toBe(200);
+    expect(dev.body.count).toBeGreaterThan(0);
+    for (const caller of [await callerToken({ kind: 'app-runtime', app, env: 'prod' }), await callerToken({ kind: 'app-runtime', app }), await callerToken({ kind: 'service', svc: 'mcp-gateway' })]) {
+      const prod = await call(selectTickets(), { app, as: adam, caller });
+      expect(prod.status).toBe(404);
+      expect(prod.body.error?.code).toBe('unknown_app');
+    }
+  });
+
+  it('answers 500, not 404, when the registry cannot be reached', async () => {
+    const r = await call(selectTickets(), { app: 'down-board' });
+    expect(r.status).toBe(500);
+    expect(r.body.error?.code).toBe('internal');
   });
 
   it.each([
