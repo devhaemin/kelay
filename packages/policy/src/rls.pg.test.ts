@@ -209,6 +209,61 @@ describe.skipIf(!canRun)('ticket-board RLS on Postgres', () => {
     expect(await ticketIds(alice)).toEqual([T.alicePrivate, T.bobShared].sort());
   });
 
+  it('adds the column of a field introduced later and leaves existing rows alone', async () => {
+    const withEstimate = {
+      ...schema,
+      collections: schema.collections.map((c: { name: string; fields: object }) =>
+        c.name === 'tickets' ? { ...c, fields: { ...c.fields, estimate: { type: 'number', required: true } } } : c,
+      ),
+    };
+    await db.query(migrationSql(withEstimate, policy));
+    const rows = await db.query<{ estimate: number | null }>('SELECT estimate FROM app.tickets');
+    expect(rows.rowCount).toBe(5);
+    expect(rows.rows.every((r) => r.estimate === null)).toBe(true);
+    await as(alice, (c) => c.query(`UPDATE app.tickets SET estimate = 3 WHERE id = $1`, [T.alicePrivate]));
+  });
+
+  it('sets updated_at on every update, whatever the writer sends', async () => {
+    await as(alice, async (c) => {
+      const before = await c.query<{ updated_at: Date }>(`SELECT updated_at FROM app.tickets WHERE id = $1`, [T.alicePrivate]);
+      const after = await c.query<{ updated_at: Date; now: Date }>(
+        `UPDATE app.tickets SET status = 'doing', updated_at = '2000-01-01' WHERE id = $1 RETURNING updated_at, now() AS now`,
+        [T.alicePrivate],
+      );
+      expect(after.rows[0]!.updated_at).toEqual(after.rows[0]!.now);
+      expect(after.rows[0]!.updated_at.getTime()).toBeGreaterThan(before.rows[0]!.updated_at.getTime());
+    });
+  });
+
+  it('lets a plain login role that ran the migration act as kelay_runtime', async () => {
+    await db.query(`DROP ROLE IF EXISTS kelay_app_login`);
+    await db.query(`CREATE ROLE kelay_app_login LOGIN PASSWORD 'kelay' CREATEROLE`);
+    await db.query(`CREATE DATABASE kelay_login_test OWNER kelay_app_login`);
+    const loginUrl = new URL(url);
+    loginUrl.username = 'kelay_app_login';
+    loginUrl.password = 'kelay';
+    loginUrl.pathname = '/kelay_login_test';
+    const login = new pg.Client({ connectionString: loginUrl.toString() });
+    await login.connect();
+    try {
+      // kelay_runtime already exists in the cluster, so this role did not create it and holds no membership yet.
+      await expect(login.query('SET ROLE kelay_runtime')).rejects.toMatchObject({ code: '42501' });
+      await db.query('GRANT kelay_runtime TO kelay_app_login WITH ADMIN OPTION, SET FALSE, INHERIT FALSE');
+      await login.query(migrationSql(schema, policy));
+      await login.query(migrationSql(schema, policy));
+      await login.query('BEGIN');
+      await login.query(`SELECT set_config('request.jwt.claims', $1, true)`, [JSON.stringify(alice)]);
+      await login.query('SET LOCAL ROLE kelay_runtime');
+      expect((await login.query('SELECT 1 FROM app.tickets')).rowCount).toBe(0);
+      await login.query('ROLLBACK');
+    } finally {
+      await login.end();
+      await db.query('DROP DATABASE kelay_login_test WITH (FORCE)');
+      await db.query('DROP OWNED BY kelay_app_login');
+      await db.query('DROP ROLE kelay_app_login');
+    }
+  });
+
   it('drops policies of removed roles and keeps policies that do not follow the kelay pattern', async () => {
     await db.query(`CREATE POLICY "audit_read" ON app.tickets FOR SELECT TO kelay_runtime USING (false)`);
     const { guest: _removed, ...withoutGuest } = policy;

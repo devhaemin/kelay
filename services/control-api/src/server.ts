@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { LOCAL_PORTS } from '@kelay/contracts';
 import { remoteJwks } from '@kelay/tokens';
 import { createControlApi } from './app.ts';
+import { createAppDatabases } from './appdb.ts';
 import { createDatabase } from './db/client.ts';
 import { AwsDeployDriver } from './deploy/aws.ts';
 import { LocalDeployDriver, type DeployDriver } from './deploy/driver.ts';
@@ -54,8 +55,11 @@ const improvements: ImprovementQueue = env.IMPROVEMENT_QUEUE_URL
   ? new SqsImprovementQueue({ queueUrl: env.IMPROVEMENT_QUEUE_URL })
   : new PgImprovementQueue(database.db);
 
+const appDbs = createAppDatabases({ onPoolError: (err) => log.error({ type: 'app_db', err: err.message }, 'app database connection failed') });
+
 const app = createControlApi({
   db: database.db,
+  appDbs,
   auth: { issuer: need('KELAY_ID_ISSUER'), jwks: remoteJwks(need('KELAY_ID_JWKS_URL')), callerSecret: need('KELAY_CALLER_SECRET') },
   llm,
   deploy,
@@ -63,6 +67,7 @@ const app = createControlApi({
   logger: log,
   ...(env.APP_DATABASE_URL_TEMPLATE ? { databaseUrlTemplate: env.APP_DATABASE_URL_TEMPLATE } : {}),
   ...(env.FEEDBACK_DEDUPE_THRESHOLD ? { dedupeThreshold: Number(env.FEEDBACK_DEDUPE_THRESHOLD) } : {}),
+  ...(env.CALLER_TOKEN_TTL_SECONDS ? { callerTokenTtlSeconds: Number(env.CALLER_TOKEN_TTL_SECONDS) } : {}),
 });
 
 const port = Number(env.PORT ?? LOCAL_PORTS.controlApi);
@@ -72,7 +77,7 @@ const server = serve({ fetch: app.fetch, port }, (info) => {
 
 const shutdown = (signal: string) => {
   log.info({ type: 'shutdown', signal }, 'shutting down');
-  server.close(() => void database.close().finally(() => process.exit(0)));
+  server.close(() => void Promise.allSettled([database.close(), appDbs.close()]).finally(() => process.exit(0)));
 };
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));

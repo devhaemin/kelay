@@ -1,5 +1,5 @@
 // GraphSpec → AWS Step Functions ASL (contract §10), using the JSONata query language.
-import type { GraphNode, GraphSpec, NodeInvocation } from '@kelay/contracts';
+import type { GraphExecutionInput, GraphNode, GraphSpec, NodeInvocation } from '@kelay/contracts';
 import { retryPolicy } from './retry.ts';
 import { validateGraph } from './validate.ts';
 
@@ -53,17 +53,15 @@ export interface AslStateMachine extends AslBranch {
   QueryLanguage: 'JSONata';
 }
 
-/** Input a compiled state machine expects when an execution starts. */
-export interface GraphExecutionInput {
-  input?: unknown;
-  /** The user's Kelay ID token, handed to every node invocation. */
-  userToken: string;
-}
+export type { GraphExecutionInput };
 
 export interface CompileOptions {
   app: string;
   env: NodeInvocation['env'];
-  /** One function for every node (it dispatches on `node`), or one per node. */
+  /**
+   * One function for every node (it dispatches on `node`), or one per node. Pass
+   * `NODE_FUNCTION_ARN_PLACEHOLDER` from @kelay/contracts when the control API deploys the result.
+   */
   functionArn: string | ((node: string, def: GraphNode) => string);
 }
 

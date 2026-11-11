@@ -16,7 +16,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import type { AppSchema, PolicyMatrix } from '@kelay/contracts';
+import type { AppSchema, Op, PolicyMatrix } from '@kelay/contracts';
 
 export const APP_STATUSES = ['draft', 'live', 'paused', 'archived'] as const;
 export const ENV_NAMES = ['dev', 'prod'] as const;
@@ -31,6 +31,10 @@ export const IMPACTS = ['High', 'Med', 'Low'] as const;
 export const EFFORTS = ['S', 'M', 'L'] as const;
 export const PROPOSAL_STATUSES = ['pending', 'approved', 'rejected', 'built'] as const;
 export const RUN_STATUSES = ['queued', 'running', 'succeeded', 'failed'] as const;
+export const VERSION_STATUSES = ['draft', 'deployed'] as const;
+export const ACTION_STATUSES = ['ok', 'blocked', 'error'] as const;
+export const CALLER_KINDS = ['user', 'agent', 'app'] as const;
+export const QA_STATUSES = ['passed', 'failed', 'error'] as const;
 
 export type AppStatus = (typeof APP_STATUSES)[number];
 export type EnvName = (typeof ENV_NAMES)[number];
@@ -45,6 +49,10 @@ export type Impact = (typeof IMPACTS)[number];
 export type Effort = (typeof EFFORTS)[number];
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 export type RunStatus = (typeof RUN_STATUSES)[number];
+export type VersionStatus = (typeof VERSION_STATUSES)[number];
+export type ActionStatus = (typeof ACTION_STATUSES)[number];
+export type CallerKind = (typeof CALLER_KINDS)[number];
+export type QaStatus = (typeof QA_STATUSES)[number];
 
 /** Cloud resources a deploy produced; empty for the local driver. */
 export interface DeployResources {
@@ -62,6 +70,19 @@ export interface GraphDefinition {
   /** Amazon States Language JSON from @kelay/graph. `${NodeFunctionArn}` is replaced with the node function alias ARN. */
   definition: string;
   type?: 'EXPRESS' | 'STANDARD';
+}
+
+/** One access check of a QA run: does `role` get the expected answer for `op` on `collection`? */
+export interface QaCheckResult {
+  role: string;
+  collection: string;
+  op: Op;
+  expected: 'allow' | 'deny';
+  /** `error` when the check itself could not run. */
+  actual: 'allow' | 'deny' | 'error';
+  ok: boolean;
+  ms: number;
+  note: string | null;
 }
 
 export interface ReportStats {
@@ -131,12 +152,21 @@ export const versions = pgTable(
     policy: jsonb('policy').$type<PolicyMatrix>(),
     /** Kept so a publish can recreate the same state machines in prod. */
     graphs: jsonb('graphs').$type<GraphDefinition[]>().notNull().default([]),
+    /**
+     * `draft` holds access rules saved in the console and not deployed yet: a copy of the dev version it
+     * was edited from, with the new policy. Deploying to dev turns the draft into that deployed version.
+     */
+    status: text('status').$type<VersionStatus>().notNull().default('deployed'),
+    /** Where the app-runtime caller token minted for this deploy is kept; never the token itself. */
+    callerTokenRef: text('caller_token_ref'),
     sourceVersionId: uuid('source_version_id').references((): AnyPgColumn => versions.id, { onDelete: 'set null' }),
     createdBy: text('created_by').notNull(),
     createdAt: createdAt(),
   },
   (t) => [
     check('versions_env_check', sql`${t.env} in (${oneOf(ENV_NAMES)})`),
+    check('versions_status_check', sql`${t.status} in (${oneOf(VERSION_STATUSES)})`),
+    uniqueIndex('versions_one_draft_idx').on(t.app, t.env).where(sql`${t.status} = 'draft'`),
     uniqueIndex('versions_app_env_number_idx').on(t.app, t.env, t.number),
   ],
 );
@@ -387,6 +417,70 @@ export const budgets = pgTable(
   ],
 );
 
+/**
+ * One thing done in an app: a screen action, a tool call from a member's assistant, or a call from
+ * another app. Monitoring and the Agent tab read this table; services record into it through
+ * POST /internal/v1/runs and POST /internal/v1/mcp-calls.
+ */
+export const runs = pgTable(
+  'runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    app: text('app')
+      .notNull()
+      .references(() => apps.slug, { onDelete: 'cascade' }),
+    env: text('env').$type<EnvName>().notNull().default('prod'),
+    /** Action or tool name, e.g. `tickets_update` or `summarize_overdue`. */
+    action: text('action').notNull(),
+    /** Short summary of the arguments, for display. */
+    args: text('args'),
+    /** Member the run acted for. */
+    userId: text('user_id'),
+    /** `blocked`: the member's role did not allow it. */
+    status: text('status').$type<ActionStatus>().notNull(),
+    ms: integer('ms').notNull().default(0),
+    callerKind: text('caller_kind').$type<CallerKind>().notNull().default('user'),
+    /** MCP client id for `agent`, source app slug for `app`. */
+    callerId: text('caller_id'),
+    callerName: text('caller_name'),
+    consentId: uuid('consent_id').references(() => consents.id, { onDelete: 'set null' }),
+    note: text('note'),
+    costUsd: numeric('cost_usd', { precision: 12, scale: 6 }).notNull().default('0'),
+    at: tstz('at').notNull().defaultNow(),
+  },
+  (t) => [
+    check('runs_env_check', sql`${t.env} in (${oneOf(ENV_NAMES)})`),
+    check('runs_status_check', sql`${t.status} in (${oneOf(ACTION_STATUSES)})`),
+    check('runs_caller_kind_check', sql`${t.callerKind} in (${oneOf(CALLER_KINDS)})`),
+    index('runs_app_at_idx').on(t.app, t.at),
+    index('runs_app_caller_at_idx').on(t.app, t.callerKind, t.at),
+  ],
+);
+
+export const qaRuns = pgTable(
+  'qa_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    app: text('app')
+      .notNull()
+      .references(() => apps.slug, { onDelete: 'cascade' }),
+    env: text('env').$type<EnvName>().notNull(),
+    versionId: uuid('version_id').references(() => versions.id, { onDelete: 'set null' }),
+    /** `failed`: at least one check got the wrong answer. `error`: the run could not finish. */
+    status: text('status').$type<QaStatus>().notNull(),
+    checks: jsonb('checks').$type<QaCheckResult[]>().notNull().default([]),
+    error: text('error'),
+    startedBy: text('started_by').notNull(),
+    startedAt: tstz('started_at').notNull(),
+    finishedAt: tstz('finished_at').notNull(),
+  },
+  (t) => [
+    check('qa_runs_env_check', sql`${t.env} in (${oneOf(ENV_NAMES)})`),
+    check('qa_runs_status_check', sql`${t.status} in (${oneOf(QA_STATUSES)})`),
+    index('qa_runs_app_started_idx').on(t.app, t.startedAt),
+  ],
+);
+
 export type AppRow = typeof apps.$inferSelect;
 export type EnvRow = typeof envs.$inferSelect;
 export type VersionRow = typeof versions.$inferSelect;
@@ -398,3 +492,5 @@ export type TicketEventRow = typeof ticketEvents.$inferSelect;
 export type ReportRow = typeof reports.$inferSelect;
 export type ProposalRow = typeof proposals.$inferSelect;
 export type ImprovementRunRow = typeof improvementRuns.$inferSelect;
+export type RunRow = typeof runs.$inferSelect;
+export type QaRunRow = typeof qaRuns.$inferSelect;

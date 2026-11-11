@@ -36,7 +36,7 @@ describe('authentication and discovery', () => {
       authorization_servers: [signer.issuer],
       bearer_methods_supported: ['header'],
     });
-    expect(doc.scopes_supported).toEqual(expect.arrayContaining(['openid', 'offline_access']));
+    expect(doc.scopes_supported).toEqual(['offline_access']);
   });
 
   it('rejects screen tokens, other resources, other apps, missing azp and foreign signers', async () => {
@@ -270,8 +270,8 @@ describe('metering', () => {
     data.reply(() => denied());
     await client.callTool({ name: 'tickets_delete', arguments: { id: TICKET_ID } });
     expect(calls).toEqual([
-      { type: 'mcp_call', app: 'ticket-board', sub: 'u_1', client: CLIENT_ID, tool: 'tickets_list', ms: 25, ok: true },
-      { type: 'mcp_call', app: 'ticket-board', sub: 'u_1', client: CLIENT_ID, tool: 'tickets_delete', ms: 0, ok: false },
+      { type: 'mcp_call', app: 'ticket-board', sub: 'u_1', client: CLIENT_ID, tool: 'tickets_list', ms: 25, ok: true, args: '{}' },
+      { type: 'mcp_call', app: 'ticket-board', sub: 'u_1', client: CLIENT_ID, tool: 'tickets_delete', ms: 0, ok: false, denied: true, args: `{"id":"${TICKET_ID}"}` },
     ]);
     await client.close();
   });
@@ -306,7 +306,7 @@ describe('rate limits', () => {
     expect(await limited.json()).toMatchObject({ error: { code: 'rate_limited' } });
   });
 
-  it('shares one bucket across all users of the same assistant client', async () => {
+  it('shares one bucket across all users of the same assistant client in one app', async () => {
     const { rpc, token } = await setup({ ratePerMin: 2 });
     const alice = await token({ sub: 'u_1' });
     expect((await rpc(alice, 'tools/list')).status).toBe(200);
@@ -340,7 +340,7 @@ describe('A2A agent card', () => {
           },
         },
       },
-      securityRequirements: [{ schemes: { kelayId: { list: ['openid'] } } }],
+      securityRequirements: [{ schemes: { kelayId: { list: ['offline_access'] } } }],
     });
     expect(card.description).toContain(RESOURCE);
     expect(card.skills.map((s) => s.id)).toEqual(['projects', 'tickets', 'comments', 'action_summarize_overdue']);
