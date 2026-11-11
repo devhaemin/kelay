@@ -135,7 +135,7 @@ export function internalRoutes(ctx: Ctx) {
     const consent = await db.transaction(async (tx) => {
       const [current] = await tx
         .update(consents)
-        .set({ scopes: body.scopes, clientName: body.clientName ?? null })
+        .set({ scopes: body.scopes, ...(body.clientName ? { clientName: body.clientName } : {}) })
         .where(and(eq(consents.userId, body.userId), eq(consents.app, body.app), eq(consents.clientId, body.clientId), isNull(consents.revokedAt)))
         .returning();
       if (current) return current;
