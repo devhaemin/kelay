@@ -14,12 +14,13 @@ locals {
   }
 
   # Execution roles are granted the bare secret ARN, without a ":json-key:stage:version" suffix.
+  # No distinct(): ARNs are unknown at plan time and the list length must stay known.
   secret_base_arns = {
-    for k, refs in local.secret_refs : k => distinct([for r in values(refs) : join(":", slice(split(":", r), 0, 7))])
+    for k, refs in local.secret_refs : k => [for r in values(refs) : join(":", slice(split(":", r), 0, 7))]
   }
 
   service_ports = toset([for s in var.services : tostring(s.port)])
-  lb_ports      = toset([for s in local.lb_services : tostring(s.port)])
+  lb_ports      = toset(flatten([for s in local.lb_services : [tostring(s.port), tostring(coalesce(s.health_port, s.port))]]))
 
   internal_domain = "${var.env}.kelay.internal"
 }
@@ -225,6 +226,7 @@ module "alb" {
 
       health_check = {
         enabled             = true
+        port                = s.health_port != null ? tostring(s.health_port) : "traffic-port"
         path                = s.health_path
         matcher             = s.health_matcher
         interval            = 15
@@ -316,12 +318,10 @@ module "service" {
       essential = true
       command   = each.value.command
 
-      portMappings = [{
-        name          = "http"
-        containerPort = each.value.port
-        hostPort      = each.value.port
-        protocol      = "tcp"
-      }]
+      portMappings = concat(
+        [{ name = "http", containerPort = each.value.port, hostPort = each.value.port, protocol = "tcp" }],
+        [for p in(each.value.health_port != null ? [each.value.health_port] : []) : { name = "health", containerPort = p, hostPort = p, protocol = "tcp" } if p != each.value.port],
+      )
 
       environment = [
         for k, v in merge(var.shared_env, { KELAY_SERVICE = each.key, PORT = tostring(each.value.port) }, each.value.env) : { name = k, value = v }

@@ -113,6 +113,7 @@ variable "services" {
     env                      = optional(map(string), {})
     secrets                  = optional(map(string), {})
     health_path              = optional(string, "/healthz")
+    health_port              = optional(number)
     health_matcher           = optional(string, "200-399")
     host_headers             = optional(list(string), [])
     path_patterns            = optional(list(string), [])
