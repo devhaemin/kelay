@@ -68,3 +68,11 @@ export class LlmError extends Error {
     this.name = 'LlmError';
   }
 }
+
+/** Stands in when the service has no LLM gateway: every model call fails, and says why. */
+export function unconfiguredLlm(missing: string): Llm {
+  const fail = async (): Promise<never> => {
+    throw new LlmError(`LLM gateway not configured: ${missing} is not set, so the Control API cannot call a model`);
+  };
+  return { triage: fail, report: fail };
+}

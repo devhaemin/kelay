@@ -140,10 +140,16 @@ The control API serves the same `AppRegistryEntry` to service callers at `GET /i
 - **Tools generated from `AppSchema`:**
   - `<collection>_list` (where, limit), `<collection>_get` (id), `<collection>_create`, `<collection>_update` (id + values), `<collection>_delete` (id);
   - `action_<name>` for each action.
-  - Every tool calls the Data API with the user's token, so RLS applies.
+  - Every collection tool calls the Data API with the user's token, so RLS applies.
+  - An action tool starts the action's agent graph through the run orchestrator (§13) with the same token and `caller: { kind: "agent", id: <azp> }`, waits up to `MCP_ACTION_WAIT_MS` (default 45 seconds) and returns the run's output. A failed run, a run still going after the wait, and the per-user run cap come back as tool errors the assistant can read. Without `RUNNER_URL` an action tool answers "not available yet".
 - **Limits.** Two token buckets, each set by `MCP_RATE_PER_MIN` (default 60): one per `sub × app` and one per `azp × app`. A request takes a token from both. The client bucket is per app so that one busy app cannot use up an assistant's budget for every other app.
 - **Metering.** One `McpCallRecord` per tool call, written as a JSON log line: `{type:"mcp_call", app, sub, client, tool, ms, ok, denied?, args?}`. `denied` is set when the user's role refused the call; `args` is the arguments as JSON, cut to 200 characters. When `CONTROL_API_URL` is set, the gateway also posts the records to `POST {CONTROL_API_URL}/internal/v1/mcp-calls` as `{ calls: McpCallRecord[] }` (at most 500 per request, each stamped with `at`). It sends them in batches in the background, so a slow control API never delays a tool call.
-- **A2A.** The gateway serves an A2A agent card at `/:handle/:app/.well-known/agent-card.json`. Its OAuth security scheme points at Kelay ID's real endpoints (§8).
+- **A2A.** The gateway serves an A2A agent card at `/:handle/:app/.well-known/agent-card.json`. Its OAuth security scheme points at Kelay ID's real endpoints (§8). The card's JSON-RPC interface, `POST /:handle/:app/a2a`, implements `SendMessage` of A2A 1.0:
+  - **Callers.** Without `x-kelay-caller` the caller is a member's own agent: the bearer token is the resource-bound token of an MCP client (`aud` = the MCP resource URL, with `azp`). With an `app-runtime` caller token of another app, the caller is that app acting for the user: the bearer token is the user's token for the target app, and the control API must report a `connected` A2A grant from the calling app (`GET /internal/v1/grants`). No such grant answers `403 denied`; a grant that cannot be checked answers `500`. Each call over a grant is counted with `POST /internal/v1/grants/calls`.
+  - **Message → action.** A data part `{ action, input? }` names the action (by name or by its skill id `action_<name>`); else `metadata.skillId` does; else the app's default action runs: its first one with an agent graph. A data part without `action` is the input. The input is validated like the action tool's arguments.
+  - **Answer.** The run's output comes back as a direct agent `Message`: `result.message` with `role: "ROLE_AGENT"`, one data part (or a text part for a string output) and `metadata: { action, runId }`. The gateway keeps no tasks and does not stream, so every other operation is `UnsupportedOperationError` (-32004). A failed run is a JSON-RPC error -32603 whose `data` names the reason.
+  - **Versions.** `A2A-Version` may be `1.0` or `0.3`; anything else is `VersionNotSupportedError` (-32009). The 0.3 method name `message/send` is accepted and answered in the 0.3 shape.
+  - The same two rate-limit buckets apply. The runner records the run with `caller.kind` `agent` or `app`.
 
 ## 8. Kelay ID
 
@@ -170,7 +176,7 @@ In the other direction, the control API reads Kelay ID's `user`, `account` and `
 
 **Runs.** The control API also owns `runs`, the record of what was done in each app; Monitoring reads it. Services write to it through the control API (service caller), never directly:
 
-- `POST /internal/v1/runs { runs: [{ app, action, status: "ok" | "blocked" | "error", env?, userId?, args?, ms?, note?, costUsd?, at?, caller?: { kind: "user" | "agent" | "app", id?, name? } }] }`, 1 to 500 per request;
+- `POST /internal/v1/runs { runs: [{ app, action, status: "ok" | "blocked" | "error", env?, userId?, args?, ms?, note?, costUsd?, nodes?, at?, caller?: { kind: "user" | "agent" | "app", id?, name? } }] }`, 1 to 500 per request. `nodes` is the per-node record of an agent-graph run: `[{ node, status: "ok" | "error" | "timeout" | "aborted", ms, attempt?, loop?, costUsd? }]`. A run whose caller is an assistant (`kind: "agent"`, `id` = its client id) is tied to the member's consent, which also gives it the assistant's name;
 - `POST /internal/v1/mcp-calls { calls: McpCallRecord[] }` from the MCP gateway (§7). Each call becomes a run whose caller is the member's assistant.
 
 Both answer `201 { recorded, skipped }`; records for apps that do not exist are skipped. The builder routes over this data are listed in [`services/control-api/README.md`](../services/control-api/README.md).
@@ -194,6 +200,7 @@ Both answer `201 { recorded, skipped }`; records for apps that do not exist are 
 | Data API | 4002 |
 | Control API | 4003 |
 | MCP gateway | 4004 |
+| Run orchestrator | 4007 |
 | Router (wrangler dev) | 8787 |
 | Postgres (compose) | 54320 |
 
@@ -203,4 +210,40 @@ Postgres ports for parallel test containers: policy and SDK 54331, data-api 5433
 
 - All model calls go through the LLM gateway. They use the official Anthropic SDK (`@anthropic-ai/sdk`) with `baseURL = LLM_GATEWAY_URL` and the gateway key.
 - The default model is `claude-opus-5-5`; override it with env vars.
+- A service or node function without `LLM_GATEWAY_URL` and `LLM_GATEWAY_KEY` still starts. Its model calls fail with an error that begins "LLM gateway not configured". Locally, `pnpm dev:up` starts the gateway only when `ANTHROPIC_API_KEY` is set.
 - No consumer subscription logins anywhere.
+
+## 13. Run orchestrator
+
+`services/runner` starts an app's agent graph as the calling user, follows it to the end and records it.
+
+- **Start.** `POST /v1/apps/:app/runs { graph, input?, action? }` → `202 { runId }`.
+  - Headers: `authorization: Bearer <user token>` (the `app` claim must equal `:app`; the audience is not checked, as in the Data API, so a screen token and an assistant's MCP token both work) and `x-kelay-caller`.
+  - An `app-runtime` caller may start runs of its own app only; the run is a `user` run in that runtime's env.
+  - A `service` caller (the MCP · A2A gateway) may also send `env` and `caller: { kind: "agent" | "app", id?, name? }`, naming on whose behalf it starts the run.
+  - `action` is the name Monitoring lists the run under; it defaults to the graph name.
+  - An app without that graph answers `not_found`.
+- **Concurrency.** One user may have `RUNNER_MAX_CONCURRENT_RUNS_PER_USER` runs in progress (default 2), counted across apps. One more answers `rate_limited` with `Retry-After`.
+- **Read.** `GET /v1/runs/:id` → `{ run: { id, app, env, graph, action, status: "running" | "succeeded" | "failed", caller, output, error: { name, message, node? } | null, trace, costUsd, startedAt, finishedAt, ms } }`. `?wait=<seconds>` (at most 60) holds the request until the run finishes. Same two headers; only the user who started the run can read it, and anyone else gets `not_found`.
+  - `trace` has one entry per node invocation: `{ node, status: "ok" | "error" | "timeout" | "aborted", ms, startedAt, attempt?, loop?, error?, message?, llmCalls?, costUsd? }`.
+- **Events.** `GET /v1/runs/:id/events` is a server-sent event stream: `run_started`, `node_started`, `node_finished`, then `run_finished` (with `status`, `ms`, `output` or `error`), after which the stream closes. Events carry increasing ids, and `Last-Event-ID` resumes after one.
+- **Drivers** (`RUNNER_DRIVER`):
+  - `local` runs the graph in the runner's process with `runLocal` from `@kelay/graph`. `RUNNER_LOCAL_NODES` lists the node code as `<app>=<module>` pairs; each module exports `nodes`, built with `createLocalNodes` from `@kelay/runtime`. The runner mints the app-runtime caller token the nodes call the Data API with.
+  - `sfn` runs the state machine `kelay-app-<app>-<env>-<graph>` under `KELAY_STATE_MACHINE_ARN_PREFIX`, with the execution input of §10 and the run id as the execution name. An Express machine is run with `StartSyncExecution`; a Standard one is started, polled, and its history gives the trace. Express executions keep no history, so their trace is empty.
+- **Record.** Every finished run goes to `POST /internal/v1/runs` (§9) with its status, duration, caller, per-node metrics and, when the LLM gateway priced the model calls, its cost.
+- **State.** Runs in progress and the last hour of finished ones live in the runner's memory, so one runner process serves them. The lasting record is the control API's.
+
+## 14. Node runtime (`@kelay/runtime`)
+
+An app's agent-node function is written against `packages/runtime`. `examples/ticket-board-nodes` implements Ticket Board's `overdue-summary` graph with it.
+
+- **Nodes.** `defineNode(async (ctx) => output)`. The output must be JSON; it becomes the next node's input. `defineNodes(spec, { <node>: … })` pairs a `GraphSpec` with the code of exactly its nodes.
+- **Context:**
+  - `ctx.input`: the previous node's output; for a join, the branch outputs in `next` order; for the start node, the run input.
+  - `ctx.data`: a `@kelay/sdk` client that sends the run's `userToken` and the function's caller token, so every read and write goes through that user's RLS.
+  - `ctx.llm`: the official Anthropic SDK client (§12) with `baseURL = LLM_GATEWAY_URL` and the app's gateway key `LLM_GATEWAY_KEY`. Reading it without both throws `Kelay.LlmGatewayNotConfigured` ("LLM gateway not configured: …"), so only nodes that call a model need a gateway.
+  - `ctx.model`: the graph node's `model`, else `LLM_MODEL`, else `claude-opus-5-5`.
+  - `ctx.run`: `{ runId, app, env, graph, node, attempt, loop }`.
+- **Function environment.** `DATA_API_URL` and `KELAY_CALLER_TOKEN` are required; `LLM_GATEWAY_URL`, `LLM_GATEWAY_KEY` and `LLM_MODEL` are optional.
+- **Hosts.** `createLambdaHandler(graphs)` is the node function's handler: it takes a `NodeInvocation` (§10) and returns the node's output. A thrown error fails the invocation under the error's name. `createLocalNodes(graphs)` is the same code for the run orchestrator's local driver (§13), which supplies the caller token.
+- **Usage.** The runtime counts each node's model calls and adds up the cost the gateway reports for them (LiteLLM's `x-litellm-response-cost` response header). The local driver puts both on the run's trace.

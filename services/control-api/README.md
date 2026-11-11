@@ -133,7 +133,9 @@ This is the console's `GraphOverview`. The apps, the links and the connected ass
         "status": "ok" | "blocked" | "error", "ms": 120,
         "source": "App" | "Claude Desktop (MCP)" | "<other app's name>",
         "caller": { "kind": "user" | "agent" | "app", "id": "<client id or app slug>" | null, "name": string | null },
-        "env": "prod", "note": null, "at": "2026-11-11T01:41:00.000Z"
+        "env": "prod", "note": null, "costUsd": 0,
+        "nodes": null | [{ "node": "summarize", "status": "ok" | "error" | "timeout" | "aborted", "ms": 900, "attempt"?: 1, "loop"?: 0, "costUsd"?: 0.012 }],  // agent-graph runs only
+        "at": "2026-11-11T01:41:00.000Z"
       }
     ]
   }
@@ -141,7 +143,7 @@ This is the console's `GraphOverview`. The apps, the links and the connected ass
 ```
 
 - `series` has 24 UTC hours for `24h`, and 14 or 30 UTC days otherwise, oldest first. The three arrays have the same length.
-- This is the console's `AppMetrics`. `recent[]` is `RecentAction` plus `args`, `caller`, `env`, `note` and `at`. `by` is a user id; the console resolves the name.
+- This is the console's `AppMetrics`. `recent[]` is `RecentAction` plus `args`, `caller`, `env`, `note`, `costUsd`, `nodes` and `at`. `by` is a user id; the console resolves the name.
 - An app with no runs answers `200` with zeros.
 
 **`GET /v1/apps/:app/tool-calls?limit=100`** (max 500) → `200`
@@ -239,12 +241,13 @@ Kelay ID records a consent here (`PUT /internal/v1/consents`) each time a person
     { "app": "ticket-board", "action": "tickets_update", "status": "ok" | "blocked" | "error",
       "env"?: "dev" | "prod",                  // default "prod"
       "userId"?: "u1", "args"?: "…", "ms"?: 120, "note"?: "…", "costUsd"?: 0.04, "at"?: "<ISO>",
+      "nodes"?: [{ "node", "status", "ms", "attempt"?, "loop"?, "costUsd"? }],  // per-node metrics of an agent-graph run, at most 200
       "caller"?: { "kind": "user" | "agent" | "app", "id"?: "<client id or app slug>", "name"?: "…" } }  // default { kind: "user" }
   ]
 }
 ```
 
-Records for apps that do not exist are skipped and counted in `skipped`.
+Records for apps that do not exist are skipped and counted in `skipped`. The run orchestrator posts one record per agent-graph run. A run whose caller is `{ kind: "agent", id: <client id> }` is linked to the member's consent for that client, which gives it the assistant's name when the record has none.
 
 **`POST /internal/v1/mcp-calls`** with `{ "calls": McpCallRecord[] }` (1 to 500; contracts §7) → `201 { "recorded", "skipped" }`. Each call becomes a run with `caller.kind = "agent"`, linked to the member's consent for that client, and moves that consent's `lastUsedAt`. The MCP gateway posts here when `CONTROL_API_URL` is set.
 

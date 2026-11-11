@@ -120,10 +120,10 @@ describe('metrics', () => {
     const { recent } = (await h.req('GET', `/v1/apps/${APP}/metrics`, { token: builder })).body.metrics;
     expect(recent).toHaveLength(10);
     expect(recent.slice(0, 4)).toEqual([
-      { id: expect.any(String), action: 'summarize_overdue', args: null, by: 'mina', status: 'ok', ms: 4200, source: 'App', caller: { kind: 'user', id: null, name: null }, env: 'dev', note: null, at: expect.any(String) },
-      { id: expect.any(String), action: 'documents_get', args: null, by: 'jiwoo', status: 'ok', ms: 310, source: 'Docs', caller: { kind: 'app', id: 'docs', name: 'Docs' }, env: 'prod', note: null, at: expect.any(String) },
-      { id: expect.any(String), action: 'tickets_create', args: null, by: 'jiwoo', status: 'error', ms: 300, source: 'App', caller: { kind: 'user', id: null, name: null }, env: 'prod', note: 'resolution is required', at: expect.any(String) },
-      { id: expect.any(String), action: 'tickets_update', args: null, by: 'daniel', status: 'blocked', ms: 40, source: 'App', caller: { kind: 'user', id: null, name: null }, env: 'prod', note: null, at: expect.any(String) },
+      { id: expect.any(String), action: 'summarize_overdue', args: null, by: 'mina', status: 'ok', ms: 4200, source: 'App', caller: { kind: 'user', id: null, name: null }, env: 'dev', note: null, costUsd: 0.04, nodes: null, at: expect.any(String) },
+      { id: expect.any(String), action: 'documents_get', args: null, by: 'jiwoo', status: 'ok', ms: 310, source: 'Docs', caller: { kind: 'app', id: 'docs', name: 'Docs' }, env: 'prod', note: null, costUsd: 0, nodes: null, at: expect.any(String) },
+      { id: expect.any(String), action: 'tickets_create', args: null, by: 'jiwoo', status: 'error', ms: 300, source: 'App', caller: { kind: 'user', id: null, name: null }, env: 'prod', note: 'resolution is required', costUsd: 0, nodes: null, at: expect.any(String) },
+      { id: expect.any(String), action: 'tickets_update', args: null, by: 'daniel', status: 'blocked', ms: 40, source: 'App', caller: { kind: 'user', id: null, name: null }, env: 'prod', note: null, costUsd: 0, nodes: null, at: expect.any(String) },
     ]);
     const agent = recent.find((x: { action: string }) => x.action === 'tickets_delete');
     expect(agent).toMatchObject({ by: 'mina', status: 'blocked', source: 'Claude Desktop (MCP)', caller: { kind: 'agent', id: CLAUDE, name: 'Claude Desktop' } });
@@ -146,5 +146,29 @@ describe('metrics', () => {
     expect((await h.req('GET', `/v1/apps/${APP}/metrics?range=1y`, { token: builder })).status).toBe(400);
     expect((await h.req('GET', `/v1/apps/${APP}/metrics`, { token: await h.builder('stranger') })).status).toBe(403);
     expect((await h.req('GET', '/v1/apps', { token: builder })).body.apps.find((a: { slug: string }) => a.slug === APP).runs).toBe(10);
+  });
+});
+
+describe('agent-graph runs from the run orchestrator', () => {
+  it('keeps per-node metrics and model cost, and names the assistant from the member’s consent', async () => {
+    const nodes = [
+      { node: 'collect', status: 'ok', ms: 40, attempt: 1, loop: 0 },
+      { node: 'summarize', status: 'ok', ms: 900, attempt: 1, loop: 0, costUsd: 0.012 },
+      { node: 'prioritize', status: 'error', ms: 300, attempt: 1, loop: 0 },
+    ];
+    const run = { app: APP, action: 'summarize_overdue', userId: 'mina', status: 'error', ms: 1300, costUsd: 0.012, note: 'prioritize: TypeError: no tickets', nodes, caller: { kind: 'agent', id: CLAUDE } };
+    const runner = await h.service('runner');
+    expect((await h.req('POST', '/internal/v1/runs', { caller: runner, body: { runs: [run, { ...run, userId: 'daniel', caller: { kind: 'app', id: 'docs' }, nodes: undefined }] } })).body).toEqual({ recorded: 2, skipped: 0 });
+    expect((await h.req('POST', '/internal/v1/runs', { caller: runner, body: { runs: [{ ...run, nodes: [{ node: 'collect', status: 'fine', ms: 1 }] }] } })).status).toBe(400);
+
+    const { recent } = (await h.req('GET', `/v1/apps/${APP}/metrics`, { token: builder })).body.metrics;
+    const byAgent = recent.find((x: { action: string; caller: { kind: string } }) => x.action === 'summarize_overdue' && x.caller.kind === 'agent');
+    expect(byAgent).toMatchObject({ by: 'mina', status: 'error', ms: 1300, costUsd: 0.012, nodes, source: 'Claude Desktop (MCP)', caller: { kind: 'agent', id: CLAUDE, name: 'Claude Desktop' } });
+    const byApp = recent.find((x: { action: string; caller: { kind: string } }) => x.action === 'summarize_overdue' && x.caller.kind === 'app');
+    expect(byApp).toMatchObject({ by: 'daniel', nodes: null, source: 'Docs' });
+
+    const consent = (await h.req('GET', `/v1/apps/${APP}/consents`, { token: builder })).body.consents[0];
+    const calls = (await h.req('GET', `/v1/apps/${APP}/tool-calls`, { token: builder })).body.toolCalls;
+    expect(calls[0]).toMatchObject({ tool: 'summarize_overdue', consentId: consent.id, clientName: 'Claude Desktop', result: 'error' });
   });
 });

@@ -2,8 +2,18 @@
 // Users' own assistants call it with a Kelay ID token bound to the app's MCP resource; every tool call
 // reaches the Data API with that same token, so the user's RLS applies.
 import { createHash } from 'node:crypto';
-import { HTTP_STATUS, type AppRegistry, type AppRegistryEntry, type ErrorCode, type ErrorResponse } from '@kelay/contracts';
-import type { VerifyOptions } from '@kelay/tokens';
+import {
+  CALLER_HEADER,
+  HTTP_STATUS,
+  audienceForApp,
+  type AppRegistry,
+  type AppRegistryEntry,
+  type CallerClaims,
+  type ErrorCode,
+  type ErrorResponse,
+  type KelayClaims,
+} from '@kelay/contracts';
+import { verifyCallerToken, type VerifyOptions } from '@kelay/tokens';
 import {
   DEFAULT_MAX_REQUEST_BODY_SIZE,
   McpServer,
@@ -19,10 +29,12 @@ import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { unavailableActionRunner, type ActionRunner } from './actions.ts';
+import { A2A_ERROR, A2A_VERSIONS, A2aError, errorResponse, readSendRequest, requestId, sendResponse } from './a2a.ts';
+import { unavailableActionRunner, type ActionCaller, type ActionRunner } from './actions.ts';
 import { buildAgentCard, kelayIdOAuthEndpoints, type OAuthEndpoints } from './agent-card.ts';
-import { appUrls, authenticate, challengeHeader, protectedResourceMetadata, type AppUrls, type AuthResult } from './auth.ts';
+import { appUrls, authenticate, authenticateUser, challengeHeader, protectedResourceMetadata, type AppUrls, type AuthResult } from './auth.ts';
 import { createDataApi, type DataApi } from './data-api.ts';
+import { noAppLinks, type AppLinks } from './links.ts';
 import { stdoutMeter, type MeterSink } from './metering.ts';
 import { createRateLimiter, type RateLimiter } from './rate-limit.ts';
 import { buildTools, present, toQuery, toolError, type ToolDef } from './tools.ts';
@@ -53,6 +65,8 @@ export interface GatewayDeps {
   now?: () => number;
   meter?: MeterSink;
   actions?: ActionRunner;
+  /** App-to-app grants, asked of the control API. Without it no app is connected to another. */
+  links?: AppLinks;
   onError?: (error: Error) => void;
 }
 
@@ -74,11 +88,11 @@ interface PreparedApp {
   version: string;
   card: ReturnType<typeof buildAgentCard>;
   mcp: McpHttpHandler;
+  /** Action name → its tool, whose schema also validates the input of an A2A message. */
+  actionTools: Map<string, PreparedTool>;
 }
 
 const INTERNAL_FAILURE = 'Something went wrong on Kelay while handling this request. Try again shortly.';
-/** A2A JSON-RPC UnsupportedOperationError (A2A specification 1.0, §5.4 error mappings). */
-const A2A_UNSUPPORTED_OPERATION = -32004;
 
 const errorBody = (code: ErrorCode, message: string): ErrorResponse => ({ error: { code, message } });
 
@@ -103,6 +117,7 @@ export function createGateway(deps: GatewayDeps): Hono {
   const now = deps.now ?? (() => performance.now());
   const meter = deps.meter ?? stdoutMeter;
   const actions = deps.actions ?? unavailableActionRunner;
+  const links = deps.links ?? noAppLinks;
   const onError = deps.onError ?? ((error: Error) => console.error(error));
   const ratePerMin = config.ratePerMin ?? 60;
   const limiter: RateLimiter = createRateLimiter({ perMinute: ratePerMin, now });
@@ -128,7 +143,14 @@ export function createGateway(deps: GatewayDeps): Hono {
     const args = checked.value;
     const { target } = def;
     if (target.kind === 'action') {
-      const ran = await actions.run({ app: app.slug, action: target.action, input: args, claims: caller.claims, userToken: caller.token });
+      const ran = await actions.run({
+        app: app.slug,
+        action: target.action,
+        input: args,
+        claims: caller.claims,
+        userToken: caller.token,
+        caller: { kind: 'agent', id: caller.claims.azp },
+      });
       if (!ran.ok) return toolError(ran.message);
       const { output } = ran;
       const isObject = typeof output === 'object' && output !== null && !Array.isArray(output);
@@ -187,6 +209,7 @@ export function createGateway(deps: GatewayDeps): Hono {
       urls,
       version,
       card: buildAgentCard({ schema: entry.schema, urls, version, oauth }),
+      actionTools: new Map(tools.flatMap((tool) => (tool.def.target.kind === 'action' ? [[tool.def.target.action.name, tool] as const] : []))),
       mcp: createMcpHandler(
         (ctx) => {
           const caller = ctx.authInfo?.extra?.caller as Caller | undefined;
@@ -282,16 +305,89 @@ export function createGateway(deps: GatewayDeps): Hono {
   });
   http.all('/:handle/:app/mcp', (c) => c.body(null, 405, { Allow: 'POST' }));
 
+  /**
+   * Who is behind an A2A request. With a caller token it is another Kelay app acting for a user: the
+   * token names the app, and a connected A2A grant must link it to this one. Without one it is a
+   * member's own agent, holding the same resource-bound token an MCP client gets.
+   */
+  async function a2aCaller(c: Context, app: PreparedApp): Promise<{ token: string; claims: KelayClaims; caller: ActionCaller } | Response> {
+    const challenge = (failure: Extract<AuthResult, { ok: false }>) =>
+      fail(c, 'unauthenticated', failure.message, { 'WWW-Authenticate': challengeHeader(app.urls.resourceMetadata, failure) });
+    const callerToken = c.req.header(CALLER_HEADER);
+    if (!callerToken) {
+      const auth = await authenticate(c.req.header('authorization'), { jwks, issuer: config.issuer, resource: app.urls.resource, app: app.slug });
+      return auth.ok ? { token: auth.token, claims: auth.claims, caller: { kind: 'agent', id: auth.claims.azp } } : challenge(auth);
+    }
+
+    let from: CallerClaims;
+    try {
+      from = await verifyCallerToken(callerToken, config.callerSecret);
+    } catch (e) {
+      return fail(c, 'forbidden_caller', (e as Error).message);
+    }
+    if (from.kind !== 'app-runtime' || !from.app || from.app === app.slug) {
+      return fail(c, 'forbidden_caller', 'An app-to-app call must come from the runtime of another app.');
+    }
+    const auth = await authenticateUser(c.req.header('authorization'), {
+      jwks,
+      issuer: config.issuer,
+      audiences: [audienceForApp(app.slug), app.urls.resource, app.urls.a2a],
+      app: app.slug,
+    });
+    if (!auth.ok) return challenge(auth);
+    let connected: boolean;
+    try {
+      connected = await links.connected(from.app, app.slug, 'A2A');
+    } catch (e) {
+      onError(e as Error);
+      return fail(c, 'internal', INTERNAL_FAILURE);
+    }
+    if (!connected) {
+      return fail(c, 'denied', `${from.app} is not connected to ${app.slug} over A2A. The owner of ${app.slug} allows the link on the App Graph.`);
+    }
+    return { token: auth.token, claims: auth.claims, caller: { kind: 'app', id: from.app } };
+  }
+
   http.post('/:handle/:app/a2a', async (c) => {
     const app = resolve(c);
     if (!app) return unknownApp(c);
-    const request: unknown = await c.req.json().catch(() => undefined);
-    const id = typeof request === 'object' && request !== null ? ((request as { id?: unknown }).id ?? null) : null;
-    return c.json({
-      jsonrpc: '2.0',
-      id,
-      error: { code: A2A_UNSUPPORTED_OPERATION, message: `A2A messaging is not available yet. Connect over MCP at ${app.urls.resource}.` },
-    });
+    const who = await a2aCaller(c, app);
+    if (who instanceof Response) return who;
+
+    const verdict = limiter.take([`user:${app.slug}:${who.claims.sub}`, `client:${app.slug}:${who.caller.kind === 'app' ? `app:${who.caller.id}` : who.caller.id}`]);
+    if (!verdict.ok) {
+      return fail(c, 'rate_limited', `Rate limit reached (${ratePerMin} requests per minute).`, { 'Retry-After': String(verdict.retryAfterSeconds) });
+    }
+
+    const body = await readRequestBody(c.req.raw, DEFAULT_MAX_REQUEST_BODY_SIZE);
+    if (body.tooLarge) return c.json(errorBody('invalid_request', 'Request body is too large.'), 413);
+    let request: unknown;
+    try {
+      request = JSON.parse(body.text);
+    } catch {
+      return c.json(errorResponse(null, new A2aError(A2A_ERROR.parse, 'Invalid JSON payload.')));
+    }
+    const id = requestId(request);
+    try {
+      // An absent A2A-Version means 0.3 (specification §3.6).
+      const version = c.req.header('a2a-version')?.trim() || '0.3';
+      if (!(A2A_VERSIONS as readonly string[]).includes(version)) {
+        throw new A2aError(A2A_ERROR.versionNotSupported, `A2A version ${version} is not supported. Supported: ${A2A_VERSIONS.join(', ')}.`);
+      }
+      const send = readSendRequest(app.entry.schema, request);
+      const checked = await app.actionTools.get(send.action.name)!.strict['~standard'].validate(send.input);
+      if (checked.issues) {
+        throw new A2aError(A2A_ERROR.invalidParams, `Invalid input for ${send.action.name}: ${checked.issues.map((i) => i.message).join('; ')}`);
+      }
+      const ran = await actions.run({ app: app.slug, action: send.action, input: checked.value, claims: who.claims, userToken: who.token, caller: who.caller });
+      if (!ran.ok) throw new A2aError(A2A_ERROR.internal, ran.message, (ran.reason ?? 'failed').toUpperCase());
+      if (who.caller.kind === 'app') links.recordCall(who.caller.id, app.slug, 'A2A');
+      return c.json(sendResponse(id, send, ran.output, ran.runId));
+    } catch (e) {
+      if (e instanceof A2aError) return c.json(errorResponse(id, e));
+      onError(e as Error);
+      return c.json(errorResponse(id, new A2aError(A2A_ERROR.internal, INTERNAL_FAILURE)));
+    }
   });
 
   http.notFound((c) => fail(c, 'not_found', 'Not found.'));

@@ -1,0 +1,15 @@
+{
+  "name": "@kelay/ticket-board-nodes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./testing": "./src/testing.ts" },
+  "scripts": { "typecheck": "tsc -p tsconfig.json", "test": "vitest run" },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@kelay/contracts": "workspace:*",
+    "@kelay/runtime": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": { "@kelay/graph": "workspace:*" }
+}

@@ -32,6 +32,20 @@ const RunRecord = z.object({
     .optional(),
   note: z.string().max(1000).optional(),
   costUsd: z.number().min(0).max(100_000).optional(),
+  /** Per-node metrics of an agent-graph run, from the run orchestrator. */
+  nodes: z
+    .array(
+      z.object({
+        node: z.string().min(1).max(200),
+        status: z.enum(['ok', 'error', 'timeout', 'aborted']),
+        ms: z.number().int().min(0),
+        attempt: z.number().int().min(1).optional(),
+        loop: z.number().int().min(0).optional(),
+        costUsd: z.number().min(0).optional(),
+      }),
+    )
+    .max(200)
+    .optional(),
   at: z.iso.datetime().optional(),
 });
 
@@ -61,12 +75,40 @@ export function monitoringRoutes(ctx: Ctx) {
     return new Set(rows.map((a) => a.slug));
   };
 
+  const consentKey = (app: string, user: string, client: string) => `${app}\n${user}\n${client}`;
+
+  /**
+   * The consent behind each app × member × assistant: it names the assistant ("Claude Desktop") and ties a
+   * call to the connection it used. A live consent wins over a revoked one, then the newest.
+   */
+  const consentsFor = async (appSlugs: string[], clientIds: string[]) => {
+    const found = new Map<string, typeof consents.$inferSelect>();
+    if (appSlugs.length === 0 || clientIds.length === 0) return found;
+    const granted = await db
+      .select()
+      .from(consents)
+      .where(and(inArray(consents.app, [...new Set(appSlugs)]), inArray(consents.clientId, [...new Set(clientIds)])))
+      .orderBy(desc(consents.createdAt));
+    for (const g of granted) {
+      const k = consentKey(g.app, g.userId, g.clientId);
+      const seen = found.get(k);
+      if (!seen || (seen.revokedAt && !g.revokedAt)) found.set(k, g);
+    }
+    return found;
+  };
+
   r.post('/internal/v1/runs', service, jsonBody(RunsBody), async (c) => {
     const records = c.req.valid('json').runs;
     const known = await knownApps(records.map((x) => x.app));
-    const rows = records
-      .filter((x) => known.has(x.app))
-      .map((x) => ({
+    const accepted = records.filter((x) => known.has(x.app));
+    // A run an assistant started through the gateway carries only the assistant's client id.
+    const consentOf = await consentsFor(
+      [...known],
+      accepted.flatMap((x) => (x.caller?.kind === 'agent' && x.caller.id ? [x.caller.id] : [])),
+    );
+    const rows = accepted.map((x) => {
+      const consent = x.caller?.kind === 'agent' && x.caller.id && x.userId ? consentOf.get(consentKey(x.app, x.userId, x.caller.id)) : undefined;
+      return {
         app: x.app,
         env: x.env ?? 'prod',
         action: x.action,
@@ -76,11 +118,14 @@ export function monitoringRoutes(ctx: Ctx) {
         ms: x.ms ?? 0,
         callerKind: x.caller?.kind ?? 'user',
         callerId: x.caller?.id ?? null,
-        callerName: x.caller?.name ?? null,
+        callerName: x.caller?.name ?? consent?.clientName ?? null,
+        consentId: consent?.id ?? null,
         note: x.note ?? null,
         costUsd: String(x.costUsd ?? 0),
+        nodes: x.nodes ?? null,
         at: x.at ? new Date(x.at) : ctx.now(),
-      }));
+      };
+    });
     if (rows.length) await db.insert(runs).values(rows);
     return c.json({ recorded: rows.length, skipped: records.length - rows.length }, 201);
   });
@@ -91,24 +136,15 @@ export function monitoringRoutes(ctx: Ctx) {
     const accepted = calls.filter((x) => known.has(x.app));
     if (accepted.length === 0) return c.json({ recorded: 0, skipped: calls.length }, 201);
 
-    // The consent names the assistant ("Claude Desktop") and ties each call to the connection it used.
-    const granted = await db
-      .select()
-      .from(consents)
-      .where(and(inArray(consents.app, [...known]), inArray(consents.clientId, [...new Set(accepted.map((x) => x.client))])))
-      .orderBy(desc(consents.createdAt));
-    const key = (app: string, user: string, client: string) => `${app}\n${user}\n${client}`;
-    const consentOf = new Map<string, (typeof granted)[number]>();
-    for (const g of granted) {
-      const k = key(g.app, g.userId, g.clientId);
-      const seen = consentOf.get(k);
-      if (!seen || (seen.revokedAt && !g.revokedAt)) consentOf.set(k, g);
-    }
+    const consentOf = await consentsFor(
+      [...known],
+      accepted.map((x) => x.client),
+    );
 
     const now = ctx.now();
     const lastUsed = new Map<string, Date>();
     const rows = accepted.map((x) => {
-      const consent = consentOf.get(key(x.app, x.sub, x.client));
+      const consent = consentOf.get(consentKey(x.app, x.sub, x.client));
       const at = x.at ? new Date(x.at) : now;
       if (consent && !consent.revokedAt && at > (lastUsed.get(consent.id) ?? new Date(0))) lastUsed.set(consent.id, at);
       return {
@@ -218,6 +254,8 @@ export function monitoringRoutes(ctx: Ctx) {
           caller: { kind: run.callerKind, id: run.callerId, name: run.callerKind === 'app' ? (callerAppName ?? run.callerName) : run.callerName },
           env: run.env,
           note: run.note,
+          costUsd: Number(run.costUsd),
+          nodes: run.nodes,
           at: run.at,
         })),
       },

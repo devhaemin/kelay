@@ -6,7 +6,7 @@ import { loadAppRegistry } from '@kelay/contracts/registry';
 import { createDevSigner, verifyCallerToken } from '@kelay/tokens';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Hono } from 'hono';
-import { createGateway, type ActionRunner, type McpCallRecord, type OAuthEndpoints } from '../src/index.ts';
+import { createGateway, type ActionRunner, type AppLinks, type McpCallRecord, type OAuthEndpoints } from '../src/index.ts';
 
 const require = createRequire(import.meta.url);
 export const registry = loadAppRegistry(require.resolve('@kelay/contracts/fixtures/apps.local.json'));
@@ -56,7 +56,7 @@ export function fakeDataApi() {
 
 export const denied = (message = 'permission denied') => Response.json({ error: { code: 'denied', message } }, { status: 403 });
 
-export async function setup(opts: { ratePerMin?: number; actions?: ActionRunner } = {}) {
+export async function setup(opts: { ratePerMin?: number; actions?: ActionRunner | ((signer: Awaited<ReturnType<typeof createDevSigner>>) => ActionRunner); links?: AppLinks } = {}) {
   const signer = await createDevSigner();
   const data = fakeDataApi();
   const calls: McpCallRecord[] = [];
@@ -77,7 +77,8 @@ export async function setup(opts: { ratePerMin?: number; actions?: ActionRunner 
     now: () => clock.now,
     meter: (record) => calls.push(record),
     onError: (error) => errors.push(error),
-    ...(opts.actions ? { actions: opts.actions } : {}),
+    ...(opts.actions ? { actions: typeof opts.actions === 'function' ? opts.actions(signer) : opts.actions } : {}),
+    ...(opts.links ? { links: opts.links } : {}),
   });
 
   const token = (claims: Partial<KelayClaims> = {}) =>

@@ -10,7 +10,7 @@ export { AwsDeployDriver, type AwsDeployOptions } from './deploy/aws.ts';
 export { DeployError, LocalDeployDriver, resourcePrefix, type DeployDriver, type DeployInput, type DeployResult } from './deploy/driver.ts';
 export { PgAppDatabaseMigrator, type AppDatabaseMigrator, type AppMigrationInput } from './deploy/migrator.ts';
 export { AnthropicLlm, DEFAULT_MODEL, type AnthropicLlmOptions } from './llm/anthropic.ts';
-export { LlmError, type Llm, type ReportDraft, type ReportRequest, type TriageItem, type TriageLabel } from './llm/types.ts';
+export { LlmError, unconfiguredLlm, type Llm, type ReportDraft, type ReportRequest, type TriageItem, type TriageLabel } from './llm/types.ts';
 export { createLogger, type Logger } from './log.ts';
 export {
   IMPROVEMENT_CHANNEL,

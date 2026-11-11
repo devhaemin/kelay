@@ -72,6 +72,18 @@ export interface GraphDefinition {
   type?: 'EXPRESS' | 'STANDARD';
 }
 
+/** One node invocation of an agent-graph run, as the run orchestrator reports it. */
+export interface RunNode {
+  node: string;
+  status: 'ok' | 'error' | 'timeout' | 'aborted';
+  ms: number;
+  /** 1 on the first try. */
+  attempt?: number;
+  /** Review rejections before this invocation. */
+  loop?: number;
+  costUsd?: number;
+}
+
 /** One access check of a QA run: does `role` get the expected answer for `op` on `collection`? */
 export interface QaCheckResult {
   role: string;
@@ -446,6 +458,8 @@ export const runs = pgTable(
     consentId: uuid('consent_id').references(() => consents.id, { onDelete: 'set null' }),
     note: text('note'),
     costUsd: numeric('cost_usd', { precision: 12, scale: 6 }).notNull().default('0'),
+    /** Per-node metrics when the run executed an agent graph; null for plain actions and tool calls. */
+    nodes: jsonb('nodes').$type<RunNode[]>(),
     at: tstz('at').notNull().defaultNow(),
   },
   (t) => [

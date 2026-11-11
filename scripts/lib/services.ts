@@ -38,6 +38,7 @@ function services(cfg: StackConfig, opts: StartOptions): Service[] {
     { name: 'identity', dir: 'services/identity', entry: opts.identityEntry ? resolve(ROOT, opts.identityEntry) : 'src/server.ts', port: portOf(cfg.issuer), health: `${cfg.issuer}/healthz`, color: 'magenta' },
     { name: 'data-api', dir: 'services/data-api', entry: 'src/server.ts', port: portOf(cfg.dataApiUrl), health: `${cfg.dataApiUrl}/healthz`, color: 'green' },
     { name: 'control-api', dir: 'services/control-api', entry: 'src/server.ts', port: portOf(cfg.controlApiUrl), health: `${cfg.controlApiUrl}/healthz`, color: 'blue' },
+    { name: 'runner', dir: 'services/runner', entry: 'src/server.ts', port: portOf(cfg.runnerUrl), health: `${cfg.runnerUrl}/healthz`, color: 'red' },
     { name: 'mcp-gateway', dir: 'services/mcp-gateway', entry: 'src/server.ts', port: portOf(cfg.mcpPublicBaseUrl), health: `${cfg.mcpPublicBaseUrl}/healthz`, color: 'yellow' },
   ];
   if (opts.console) {

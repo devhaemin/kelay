@@ -1,8 +1,10 @@
 // `pnpm dev:up`: Postgres, migrations, seed, then every service plus the console on real data.
+// With ANTHROPIC_API_KEY set it also starts the LLM gateway (LiteLLM); without it the stack runs
+// with no gateway, and whatever needs a model says so.
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { execa } from 'execa';
-import { ROOT, loadConfig } from './lib/config.ts';
+import { COMPOSE_FILES, ROOT, loadConfig } from './lib/config.ts';
 import { BUILDER, HANDLE, PASSWORD, TEAM } from './lib/data.ts';
 import { migrate } from './lib/migrate.ts';
 import { PID_FILE } from './lib/pid.ts';
@@ -21,6 +23,11 @@ await migrate(cfg);
 step('Seed');
 await seed(cfg, (line) => console.log(`  ${line}`));
 
+if (cfg.startLlmGateway) {
+  step('LLM gateway (LiteLLM, docker compose)');
+  await execa('docker', ['compose', ...COMPOSE_FILES, 'up', '-d', '--wait', 'litellm'], { cwd: ROOT, stdio: 'inherit' });
+}
+
 step('Services');
 const stack = await startStack(cfg, { watch: true, console: true });
 mkdirSync(dirname(PID_FILE), { recursive: true });
@@ -34,6 +41,12 @@ Kelay is running on local data.
   Data API       ${cfg.dataApiUrl}
   Control API    ${cfg.controlApiUrl}
   MCP gateway    ${cfg.mcpPublicBaseUrl}/${HANDLE}/ticket-board/mcp
+  Runner         ${cfg.runnerUrl}
+  LLM gateway    ${
+    cfg.llmGatewayUrl
+      ? `${cfg.llmGatewayUrl}${cfg.startLlmGateway ? ' (LiteLLM, started here)' : ''}`
+      : 'not configured: set ANTHROPIC_API_KEY in .env to start it. Until then triage, reports and agent nodes that call a model fail with "LLM gateway not configured".'
+  }
 
   Builder        ${BUILDER.email}
   Team           ${TEAM.map((p) => `${p.email} (${p.role})`).join(', ')}

@@ -8,6 +8,7 @@ import { AwsDeployDriver } from './deploy/aws.ts';
 import { LocalDeployDriver, type DeployDriver } from './deploy/driver.ts';
 import { PgAppDatabaseMigrator } from './deploy/migrator.ts';
 import { AnthropicLlm } from './llm/anthropic.ts';
+import { unconfiguredLlm, type Llm } from './llm/types.ts';
 import { createLogger } from './log.ts';
 import { PgImprovementQueue, SqsImprovementQueue, type ImprovementQueue } from './queue/improvement.ts';
 
@@ -26,16 +27,20 @@ const env = process.env;
 const database = createDatabase(need('CONTROL_DATABASE_URL'));
 
 const effort = (v: string | undefined) => (v as 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined) || undefined;
-const llm = new AnthropicLlm({
-  baseURL: need('LLM_GATEWAY_URL'),
-  apiKey: need('LLM_GATEWAY_KEY'),
-  ...(env.LLM_MODEL ? { model: env.LLM_MODEL } : {}),
-  ...(env.LLM_TRIAGE_MODEL ? { triageModel: env.LLM_TRIAGE_MODEL } : {}),
-  ...(env.LLM_REPORT_MODEL ? { reportModel: env.LLM_REPORT_MODEL } : {}),
-  ...(effort(env.LLM_TRIAGE_EFFORT) ? { triageEffort: effort(env.LLM_TRIAGE_EFFORT)! } : {}),
-  ...(effort(env.LLM_REPORT_EFFORT) ? { reportEffort: effort(env.LLM_REPORT_EFFORT)! } : {}),
-  fallbacks: env.LLM_FALLBACKS !== 'off',
-});
+// Only triage and the daily report call a model, so the service starts without a gateway and those two fail with the reason.
+const missingLlm = ['LLM_GATEWAY_URL', 'LLM_GATEWAY_KEY'].find((name) => !env[name]);
+const llm: Llm = missingLlm
+  ? unconfiguredLlm(missingLlm)
+  : new AnthropicLlm({
+      baseURL: need('LLM_GATEWAY_URL'),
+      apiKey: need('LLM_GATEWAY_KEY'),
+      ...(env.LLM_MODEL ? { model: env.LLM_MODEL } : {}),
+      ...(env.LLM_TRIAGE_MODEL ? { triageModel: env.LLM_TRIAGE_MODEL } : {}),
+      ...(env.LLM_REPORT_MODEL ? { reportModel: env.LLM_REPORT_MODEL } : {}),
+      ...(effort(env.LLM_TRIAGE_EFFORT) ? { triageEffort: effort(env.LLM_TRIAGE_EFFORT)! } : {}),
+      ...(effort(env.LLM_REPORT_EFFORT) ? { reportEffort: effort(env.LLM_REPORT_EFFORT)! } : {}),
+      fallbacks: env.LLM_FALLBACKS !== 'off',
+    });
 
 const deploy: DeployDriver =
   env.KELAY_DEPLOY_DRIVER === 'aws'
@@ -76,7 +81,7 @@ const app = createControlApi({
 
 const port = Number(env.PORT ?? LOCAL_PORTS.controlApi);
 const server = serve({ fetch: app.fetch, port }, (info) => {
-  log.info({ type: 'listen', port: info.port, deployDriver: deploy.name, improvementQueue: improvements.kind }, 'control-api listening');
+  log.info({ type: 'listen', port: info.port, deployDriver: deploy.name, improvementQueue: improvements.kind, llmGateway: missingLlm ? 'not configured' : env.LLM_GATEWAY_URL }, 'control-api listening');
 });
 
 const shutdown = (signal: string) => {

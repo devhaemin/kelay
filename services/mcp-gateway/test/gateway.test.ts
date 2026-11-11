@@ -349,14 +349,4 @@ describe('A2A agent card', () => {
     expect(tickets?.description).toContain('status (text, required: todo | doing | review | done)');
     for (const skill of card.skills) expect(Object.keys(skill)).toEqual(expect.arrayContaining(['id', 'name', 'description', 'tags']));
   });
-
-  it('answers the advertised A2A interface with UnsupportedOperationError for now', async () => {
-    const { gateway } = await setup();
-    const res = await gateway.request('/orum/ticket-board/a2a', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'SendMessage', params: {} }),
-    });
-    expect(await res.json()).toMatchObject({ jsonrpc: '2.0', id: 7, error: { code: -32004 } });
-  });
 });

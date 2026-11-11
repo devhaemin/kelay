@@ -23,9 +23,15 @@ importers:
       '@kelay/policy':
         specifier: workspace:*
         version: link:packages/policy
+      '@kelay/runtime':
+        specifier: workspace:*
+        version: link:packages/runtime
       '@kelay/sdk':
         specifier: workspace:*
         version: link:packages/sdk
+      '@kelay/ticket-board-nodes':
+        specifier: workspace:*
+        version: link:examples/ticket-board-nodes
       '@kelay/tokens':
         specifier: workspace:*
         version: link:packages/tokens
@@ -155,6 +161,25 @@ importers:
         specifier: ^8.11.10
         version: 8.23.1
 
+  examples/ticket-board-nodes:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^1.8.0
+        version: 1.8.0(zod@4.6.7)
+      '@kelay/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@kelay/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@kelay/graph':
+        specifier: workspace:*
+        version: link:../../packages/graph
+
   packages/contracts:
     dependencies:
       zod:
@@ -186,6 +211,24 @@ importers:
       pg:
         specifier: ^8.23.1
         version: 8.23.1
+
+  packages/runtime:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^1.8.0
+        version: 1.8.0(zod@4.6.7)
+      '@kelay/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@kelay/graph':
+        specifier: workspace:*
+        version: link:../graph
+      '@kelay/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/sdk:
     dependencies:
@@ -401,6 +444,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@kelay/runner':
+        specifier: workspace:*
+        version: link:../runner
       '@modelcontextprotocol/client':
         specifier: ^2.4.0
         version: 2.4.0
@@ -429,6 +475,37 @@ importers:
       wrangler:
         specifier: ^4.160.0
         version: 4.160.0(@cloudflare/workers-types@5.20261110.1)(@types/node@26.6.6)
+
+  services/runner:
+    dependencies:
+      '@aws-sdk/client-sfn':
+        specifier: ^3.1166.0
+        version: 3.1166.0
+      '@hono/node-server':
+        specifier: ^2.1.7
+        version: 2.1.7(hono@4.13.18)
+      '@kelay/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@kelay/graph':
+        specifier: workspace:*
+        version: link:../../packages/graph
+      '@kelay/tokens':
+        specifier: workspace:*
+        version: link:../../packages/tokens
+      hono:
+        specifier: ^4.13.18
+        version: 4.13.18
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      aws-sdk-client-mock:
+        specifier: ^4.1.0
+        version: 4.1.0
+      tsup:
+        specifier: ^9.0.0
+        version: 9.0.0(postcss@8.5.32)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
 
 packages:
 

@@ -62,6 +62,24 @@ export async function authenticate(
   return { ok: true, token, claims: { ...claims, azp }, scopes };
 }
 
+/**
+ * The user behind an app-to-app call. The calling app is named by its caller token, so the user token
+ * needs no client (`azp`); it must be for this app and carry one of `audiences`.
+ */
+export async function authenticateUser(
+  authorization: string | undefined,
+  opts: { jwks: VerifyOptions['jwks']; issuer: string; audiences: string[]; app: string },
+): Promise<{ ok: true; token: string; claims: KelayClaims } | Extract<AuthResult, { ok: false }>> {
+  if (!authorization) return { ok: false, reason: 'missing', message: 'Bearer token required' };
+  const token = BEARER.exec(authorization)?.[1];
+  if (!token) return { ok: false, reason: 'invalid', message: 'Authorization header must be "Bearer <token>"' };
+  try {
+    return { ok: true, token, claims: await verifyKelayToken(token, { jwks: opts.jwks, issuer: opts.issuer, audience: opts.audiences, app: opts.app }) };
+  } catch (e) {
+    return { ok: false, reason: 'invalid', message: (e as Error).message };
+  }
+}
+
 const quoted = (value: string): string => `"${value.replaceAll(/[\\"]/g, '\\$&').replaceAll(/[^\x20-\x7e]/g, ' ')}"`;
 
 /**
