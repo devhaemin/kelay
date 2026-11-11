@@ -25,7 +25,7 @@
     --red-soft: #fdecec;
     --violet: #8b5cf6;
     --radius: 14px;
-    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.04);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -38,7 +38,7 @@
   /* ---------- Global top bar ---------- */
   .topbar { height: 56px; display: flex; align-items: center; gap: 24px; padding: 0 24px; position: relative; z-index: 5; }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; }
-  .brand-mark { width: 24px; height: 24px; border-radius: 7px; background: conic-gradient(from 200deg, #4f6bff, #b46cff, #ff6fb1, #4f6bff); }
+  .brand-mark { width: 24px; height: 24px; border-radius: 7px; background: var(--text); }
   .topnav { display: flex; gap: 4px; }
   .topnav a { padding: 6px 12px; border-radius: 8px; color: var(--muted); font-weight: 500; }
   .topnav a.active, .topnav a:hover { color: var(--text); background: rgba(0,0,0,.05); }
@@ -61,30 +61,22 @@
   .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
   /* ---------- 1. Home ---------- */
-  .home { min-height: 100vh; position: relative; overflow: hidden; }
-  .home::before { content: ""; position: absolute; inset: 0; z-index: 0;
-    background:
-      radial-gradient(60% 45% at 50% 62%, rgba(180,200,255,.85), transparent 70%),
-      radial-gradient(70% 55% at 0% 70%, #6b8cff 0%, transparent 60%),
-      radial-gradient(70% 55% at 100% 70%, #6b8cff 0%, transparent 60%),
-      radial-gradient(80% 50% at 10% 100%, #f08bdc 0%, transparent 60%),
-      radial-gradient(80% 50% at 90% 100%, #f08bdc 0%, transparent 60%),
-      linear-gradient(180deg, var(--bg) 25%, #c9d3ff 60%, #ef9ad8 100%);
-  }
+  .home { min-height: 100vh; position: relative; }
   .hero { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 18vh 24px 48px; text-align: center; }
   .hero h1 { font-size: clamp(36px, 6vw, 64px); letter-spacing: -0.04em; margin: 0 0 12px; font-weight: 800; }
-  .hero p { color: #55534d; font-size: 18px; margin: 0 0 40px; }
-  .prompt { background: var(--surface); border-radius: 28px; box-shadow: 0 20px 60px rgba(60,60,140,.25); padding: 18px 18px 12px; text-align: left; }
+  .hero p { color: var(--muted); font-size: 18px; margin: 0 0 40px; }
+  .prompt { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; box-shadow: var(--shadow); padding: 18px 18px 12px; text-align: left; }
+  .prompt:focus-within { border-color: #cfcdc6; }
   .prompt textarea { width: 100%; border: none; outline: none; resize: none; font-size: 16px; min-height: 52px; padding: 4px 6px; background: transparent; }
   .prompt-row { display: flex; align-items: center; gap: 8px; }
   .round { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border); display: grid; place-items: center; color: var(--muted); }
   .send { width: 36px; height: 36px; border-radius: 50%; background: var(--text); color: #fff; display: grid; place-items: center; }
   .send:disabled { background: #cfcdc6; cursor: default; }
   .suggestions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
-  .suggestions button { background: rgba(255,255,255,.7); backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,.9); padding: 7px 14px; border-radius: 999px; font-size: 13px; color: #3a3935; }
-  .suggestions button:hover { background: #fff; }
+  .suggestions button { background: var(--surface); border: 1px solid var(--border); padding: 7px 14px; border-radius: 999px; font-size: 13px; color: #3a3935; }
+  .suggestions button:hover { background: var(--surface-2); }
   .home-recent { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 0 24px 64px; }
-  .home-recent-card { background: rgba(255,255,255,.85); backdrop-filter: blur(10px); border-radius: 20px; padding: 20px; }
+  .home-recent-card { padding: 20px 0; border-top: 1px solid var(--border); }
   .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
   .section-head h2 { font-size: 16px; margin: 0; }
 
@@ -102,10 +94,10 @@
   .seg button { height: 28px; padding: 0 12px; border-radius: 8px; color: var(--muted); font-weight: 500; font-size: 13px; }
   .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-  .app-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; transition: transform .15s, box-shadow .15s; display: flex; flex-direction: column; }
-  .app-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
-  .app-thumb { height: 140px; position: relative; display: grid; place-items: center; }
-  .app-thumb .mini { width: 70%; height: 78%; background: rgba(255,255,255,.92); border-radius: 10px 10px 0 0; align-self: end; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .app-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; transition: border-color .15s; display: flex; flex-direction: column; }
+  .app-card:hover { border-color: #cfcdc6; }
+  .app-thumb { height: 140px; position: relative; display: grid; place-items: center; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+  .app-thumb .mini { width: 70%; height: 78%; background: var(--surface); border: 1px solid var(--border); border-bottom: none; border-radius: 10px 10px 0 0; align-self: end; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
   .mini i { display: block; height: 6px; border-radius: 3px; background: #e6e4de; }
   .app-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
   .app-row { display: flex; align-items: center; gap: 10px; }
@@ -146,14 +138,14 @@
   .preview-wrap { display: flex; flex-direction: column; height: 100%; }
   .preview-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .url { flex: 1; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); font-size: 13px; }
-  .stage { flex: 1; display: grid; place-items: start center; overflow: auto; background: repeating-conic-gradient(#f2f1ec 0% 25%, transparent 0% 50%) 0 0 / 16px 16px; border-radius: var(--radius); border: 1px solid var(--border); padding: 24px; }
-  .device { background: #fff; border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; width: 100%; max-width: 980px; transition: max-width .25s; }
+  .stage { flex: 1; display: grid; place-items: start center; overflow: auto; background: var(--surface-2); border-radius: var(--radius); border: 1px solid var(--border); padding: 24px; }
+  .device { background: #fff; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; width: 100%; max-width: 980px; transition: max-width .25s; }
   .device.mobile { max-width: 380px; border-radius: 28px; border: 8px solid #1b1b1a; }
   .mock-nav { display: flex; align-items: center; gap: 16px; padding: 14px 20px; border-bottom: 1px solid #eee; font-size: 13px; }
-  .mock-hero { padding: 36px 24px; background: linear-gradient(135deg, #fff4e6, #ffe3ef); }
+  .mock-hero { padding: 36px 24px; background: #faf9f6; border-bottom: 1px solid #eee; }
   .mock-hero h2 { margin: 0 0 8px; font-size: 26px; letter-spacing: -0.02em; }
-  .mock-hero p { margin: 0 0 18px; color: #6b5f57; }
-  .mock-input { display: flex; gap: 8px; background: #fff; border-radius: 12px; padding: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.06); max-width: 520px; }
+  .mock-hero p { margin: 0 0 18px; color: var(--muted); }
+  .mock-input { display: flex; gap: 8px; background: #fff; border-radius: 12px; padding: 6px; border: 1px solid var(--border); max-width: 520px; }
   .mock-input div { flex: 1; padding: 8px 10px; color: #aaa; font-size: 13px; }
   .mock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 20px 24px 28px; }
   .mock-item { border-radius: 10px; background: #f6f5f1; height: 150px; display: flex; flex-direction: column; justify-content: end; padding: 10px; font-size: 12px; color: #555; position: relative; outline: 2px solid transparent; outline-offset: 2px; }
@@ -179,7 +171,7 @@
   .app-graph { position: relative; height: 540px; background: radial-gradient(circle, #e4e2db 1px, transparent 1px) 0 0 / 18px 18px; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
   .app-graph > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   .app-graph > svg line { transition: opacity .15s; }
-  .anode { position: absolute; transform: translate(-50%, -50%); background: var(--surface); border: 1.5px solid #d6d3cb; border-radius: 12px; padding: 8px 12px 8px 8px; display: flex; gap: 8px; align-items: center; cursor: pointer; min-width: 150px; box-shadow: 0 2px 8px rgba(0,0,0,.05); transition: opacity .15s, box-shadow .15s; z-index: 2; }
+  .anode { position: absolute; transform: translate(-50%, -50%); background: var(--surface); border: 1.5px solid #d6d3cb; border-radius: 12px; padding: 8px 12px 8px 8px; display: flex; gap: 8px; align-items: center; cursor: pointer; min-width: 150px; transition: opacity .15s, border-color .15s; z-index: 2; }
   .anode:hover { border-color: #b9b6ad; }
   .anode .app-icon { width: 28px; height: 28px; font-size: 14px; border-radius: 8px; }
   .anode .n { font-weight: 600; font-size: 13px; white-space: nowrap; }
@@ -217,17 +209,17 @@
   .cb { width: 14px; height: 14px; border: 1.5px solid #cfcdc6; border-radius: 4px; display: inline-block; vertical-align: middle; }
   .prov { display: inline-flex; align-items: center; gap: 6px; }
   .prov i { width: 16px; height: 16px; border-radius: 4px; display: grid; place-items: center; font-style: normal; font-size: 10px; font-weight: 700; color: #fff; }
-  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 380px; background: var(--surface); border-left: 1px solid var(--border); box-shadow: -20px 0 40px rgba(0,0,0,.08); z-index: 30; transform: translateX(100%); transition: transform .2s; display: flex; flex-direction: column; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 380px; background: var(--surface); border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgba(0,0,0,.04); z-index: 30; transform: translateX(100%); transition: transform .2s; display: flex; flex-direction: column; }
   .drawer.open { transform: none; }
   .drawer-body { padding: 20px; overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 18px; }
   .drawer h4 { margin: 0 0 8px; font-size: 12px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; }
 
   /* Feedback */
-  .report { border: 1px solid #d9defd; background: linear-gradient(180deg, #f6f7ff, #fff 120px); border-radius: var(--radius); margin-bottom: 20px; }
+  .report { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); margin-bottom: 20px; }
   .report-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; }
-  .agent-badge { width: 36px; height: 36px; border-radius: 10px; background: conic-gradient(from 200deg, #4f6bff, #b46cff, #ff6fb1, #4f6bff); display: grid; place-items: center; color: #fff; }
+  .agent-badge { width: 36px; height: 36px; border-radius: 10px; background: var(--text); display: grid; place-items: center; color: #fff; }
   .report-summary { padding: 0 18px 14px; color: #3c3b37; line-height: 1.55; }
-  .proposal { border-top: 1px solid #e3e6fb; padding: 16px 18px; display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: start; }
+  .proposal { border-top: 1px solid var(--border); padding: 16px 18px; display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: start; }
   .proposal .num { width: 24px; height: 24px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; font-size: 12px; }
   .proposal h4 { margin: 0 0 4px; font-size: 14px; }
   .proposal p { margin: 0 0 8px; color: var(--muted); line-height: 1.5; }
@@ -237,7 +229,7 @@
   .proposal-actions { display: flex; gap: 6px; }
   .proposal.approved { background: #f5fbf7; }
   .proposal.rejected { opacity: .5; }
-  .report-foot { border-top: 1px solid #e3e6fb; padding: 12px 18px; display: flex; align-items: center; gap: 10px; }
+  .report-foot { border-top: 1px solid var(--border); padding: 12px 18px; display: flex; align-items: center; gap: 10px; }
   .report-foot .spacer { flex: 1; }
   .board { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 12px; overflow-x: auto; }
   .col { background: var(--surface-2); border-radius: 12px; padding: 10px; min-height: 200px; }
@@ -282,8 +274,27 @@
   .toast { position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 20px); background: var(--text); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 13px; opacity: 0; transition: .2s; z-index: 50; pointer-events: none; display: flex; align-items: center; gap: 8px; }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+  /* Share modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(20,20,18,.32); z-index: 60; display: grid; place-items: center; padding: 16px; animation: fade .15s; }
+  @keyframes fade { from { opacity: 0; } }
+  .modal { width: 540px; max-width: 100%; max-height: calc(100vh - 32px); overflow: auto; background: var(--surface); border-radius: 18px; box-shadow: 0 24px 80px rgba(0,0,0,.22); animation: pop .18s; }
+  @keyframes pop { from { transform: translateY(8px) scale(.98); opacity: 0; } }
+  .modal-head { display: flex; align-items: center; gap: 10px; padding: 18px 20px 6px; }
+  .modal-head h3 { margin: 0; font-size: 16px; }
+  .modal-head .spacer { flex: 1; }
+  .modal-sec { padding: 12px 20px; }
+  .modal-sec + .modal-sec { border-top: 1px solid var(--border); }
+  .sec-label { font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .copy-field { display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 6px 0 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+  .copy-field .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .copy-field .btn { height: 30px; }
+  .person { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+  .person .avatar { width: 30px; height: 30px; font-size: 12px; }
+  .modal-foot { display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); }
+  .modal-foot .spacer { flex: 1; }
+
   /* Proto nav (design review helper) */
-  .proto { position: fixed; left: 16px; bottom: 16px; z-index: 40; background: rgba(27,27,26,.92); color: #fff; border-radius: 12px; padding: 6px; display: flex; gap: 2px; font-size: 12px; }
+  .proto { position: fixed; left: 16px; bottom: 16px; z-index: 40; background: var(--text); color: #fff; border-radius: 12px; padding: 6px; display: flex; gap: 2px; font-size: 12px; }
   .proto span { padding: 6px 8px; color: #9a9890; }
   .proto a { padding: 6px 10px; border-radius: 8px; color: #d8d6cf; }
   .proto a:hover, .proto a.on { background: rgba(255,255,255,.12); color: #fff; }
@@ -333,6 +344,7 @@ const I = {
   bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   msg: '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
 };
 const ic = (n, s = 16) => `<svg class="icon" viewBox="0 0 24 24" style="width:${s}px;height:${s}px">${I[n]}</svg>`;
@@ -414,6 +426,8 @@ const state = {
   userFilter: 'all',
   drawerUser: null,
   appFilter: 'all',
+  lastHash: null,
+  share: { open: false, target: 'app', appId: null, copied: null },
 };
 
 /* ============ Router ============ */
@@ -516,7 +530,7 @@ function bindHome() {
 function appCard(a) {
   return `
   <a class="app-card" href="#/app/${a.id}/screen">
-    <div class="app-thumb" style="background:${a.color}">
+    <div class="app-thumb">
       <div class="mini"><i style="width:40%"></i><i style="width:85%;height:28px;background:#efede7"></i><i style="width:70%"></i><i style="width:55%"></i></div>
     </div>
     <div class="app-body">
@@ -553,7 +567,7 @@ function viewApps() {
         </div>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn">${ic('share', 14)} Share store page</button>
+        <button class="btn" id="shareStore">${ic('share', 14)} Share store page</button>
         <a href="#/" class="btn primary">${ic('plus', 14)} New app</a>
       </div>
     </div>
@@ -570,6 +584,7 @@ function viewApps() {
   </main>`;
 }
 function bindApps() {
+  document.getElementById('shareStore').onclick = () => openShare('store');
   document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { state.appFilter = b.dataset.f; render(); });
 }
 
@@ -598,7 +613,7 @@ function viewApp(r) {
         <div class="app-icon" style="background:${app.color};width:30px;height:30px;font-size:15px">${app.emoji}</div>
         <div class="ws-title">${app.name} ${statusPill(app.status)}</div>
         <div style="flex:1"></div>
-        <button class="btn sm">${ic('share', 14)} Share</button>
+        <button class="btn sm" id="shareApp">${ic('share', 14)} Share</button>
         <button class="btn sm primary" id="deployBtn">${ic('rocket', 14)} Deploy</button>
         <button class="btn sm ghost" id="toggleChat" title="Toggle agent panel">${ic('panel', 16)}</button>
       </div>
@@ -1118,6 +1133,7 @@ function bindApp(r) {
   document.querySelectorAll('[data-uf]').forEach(b => b.onclick = () => { state.userFilter = b.dataset.uf; render(); });
   document.querySelectorAll('[data-user]').forEach(b => b.onclick = () => { state.drawerUser = +b.dataset.user; render(); });
   const cd = document.getElementById('closeDrawer'); if (cd) cd.onclick = () => { state.drawerUser = null; render(); };
+  document.getElementById('shareApp').onclick = () => openShare('app', r.id);
   document.getElementById('toggleChat').onclick = () => { state.chatOpen = !state.chatOpen; render(); };
   document.getElementById('deployBtn').onclick = () => toast('Deployed to production · keley.app/' + ME.handle + '/' + r.id);
   const ab = document.getElementById('applyBtn'); if (ab) ab.onclick = () => toast('Published to production');
@@ -1133,11 +1149,87 @@ function bindApp(r) {
   });
 }
 
+/* ============ Share modal ============ */
+function copyBtn(key, value) {
+  const done = state.share.copied === key;
+  return `<button class="btn sm ${done ? '' : 'primary'}" data-copy="${key}" data-value="${value.replace(/"/g, '&quot;')}">${ic(done ? 'check' : 'link', 13)} ${done ? 'Copied' : 'Copy'}</button>`;
+}
+function shareModal() {
+  const sh = state.share;
+  if (!sh.open) return '';
+  if (sh.target === 'store') {
+    const url = `https://keley.app/${ME.handle}`;
+    return `
+    <div class="modal-bg" id="shareBg">
+      <div class="modal" role="dialog" aria-label="Share store page">
+        <div class="modal-head"><h3>Share your store page</h3><span class="spacer"></span><button class="btn sm ghost" data-close-share>${ic('x', 16)}</button></div>
+        <div class="modal-sec">
+          <div class="muted" style="margin-bottom:12px;line-height:1.5">One page with all of your <b>live</b> apps. Drafts and paused apps stay hidden.</div>
+          <div class="copy-field"><span class="muted">${ic('globe', 14)}</span><span class="v">${url}</span>${copyBtn('store', url)}</div>
+        </div>
+        <div class="modal-sec">
+          <div class="sec-label">Shown on the page</div>
+          ${APPS.map(a => `
+            <div class="person">
+              <div class="app-icon" style="background:${a.color};width:30px;height:30px;font-size:14px">${a.emoji}</div>
+              <div style="flex:1"><div>${a.name}</div><div class="small muted">${a.users.toLocaleString()} users</div></div>
+              ${a.status === 'live' ? '<span class="pill green">Listed</span>' : '<span class="pill">Hidden · ' + a.status + '</span>'}
+            </div>`).join('')}
+        </div>
+        <div class="modal-foot">
+          <button class="btn sm ghost">${ic('ext', 13)} Preview page</button><span class="spacer"></span>
+          <button class="btn sm primary" data-close-share>Done</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  const app = getApp(sh.appId);
+  const url = `https://keley.app/${ME.handle}/${app.id}`;
+  return `
+  <div class="modal-bg" id="shareBg">
+    <div class="modal" role="dialog" aria-label="Share ${app.name}" style="width:480px">
+      <div class="modal-head">
+        <div class="app-icon" style="background:${app.color};width:30px;height:30px;font-size:15px">${app.emoji}</div>
+        <h3>Share ${app.name}</h3><span class="spacer"></span>
+        <button class="btn sm ghost" data-close-share>${ic('x', 16)}</button>
+      </div>
+      <div class="modal-sec">
+        <div class="muted" style="margin-bottom:12px">Anyone with this link can sign in and use the app.</div>
+        <div class="copy-field"><span class="muted">${ic('globe', 14)}</span><span class="v">${url.replace('https://', '')}</span>${copyBtn('link', url)}</div>
+      </div>
+      <div class="modal-foot">
+        <span class="small muted">${ic('rocket', 13)} Shares the Production version</span>
+        <span class="spacer"></span>
+        <a class="btn sm ghost" href="${url}" target="_blank" rel="noopener">${ic('ext', 13)} Open</a>
+      </div>
+    </div>
+  </div>`;
+}
+function openShare(target, appId) {
+  state.share = { open: true, target, appId, copied: null };
+  render();
+}
+function bindShare() {
+  if (!state.share.open) return;
+  const close = () => { state.share.open = false; render(); };
+  document.querySelectorAll('[data-close-share]').forEach(b => b.addEventListener('click', close));
+  document.getElementById('shareBg').onclick = (e) => { if (e.target.id === 'shareBg') close(); };
+  document.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => {
+    try { navigator.clipboard.writeText(b.dataset.value); } catch (e) {}
+    state.share.copied = b.dataset.copy; render();
+    clearTimeout(bindShare._t);
+    bindShare._t = setTimeout(() => { if (state.share.copied === b.dataset.copy) { state.share.copied = null; render(); } }, 1800);
+  });
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.share.open) { state.share.open = false; render(); } });
+
 /* ============ Render ============ */
 function render() {
   const r = parse();
   const root = document.getElementById('app');
   if (r.name !== 'app') { state.drawerUser = null; }
+  if (location.hash !== state.lastHash) { state.share.open = false; state.lastHash = location.hash; }
   if (r.name === 'home') { root.innerHTML = viewHome(); bindHome(); }
   else if (r.name === 'apps') { root.innerHTML = viewApps(); bindApps(); }
   else if (r.name === 'graph') {
@@ -1146,6 +1238,7 @@ function render() {
     root.innerHTML = viewGraph(); bindGraph();
   }
   else { root.innerHTML = viewApp(r); bindApp(r); }
+  if (state.share.open) { root.insertAdjacentHTML('beforeend', shareModal()); bindShare(); }
 
   const cur = r.name === 'app' ? r.tab : r.name;
   const links = [['home', '#/', '1 Home'], ['apps', '#/apps', '2 My Apps'], ['graph', '#/graph', 'App Graph'], ['screen', '#/app/detail-page/screen', '3 Screen'], ['monitoring', '#/app/detail-page/monitoring', 'Monitoring'], ['users', '#/app/detail-page/users', 'Users'], ['feedback', '#/app/detail-page/feedback', 'Feedback']];
