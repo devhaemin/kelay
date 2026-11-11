@@ -33,12 +33,12 @@ describe('policy view', () => {
 
   it('renders the policy SQL from contracts §3', () => {
     expect(policySql(tickets, 'member', 'read', 'mine_shared')).toBe(
-      `create policy "tickets_read_member"\non app.tickets for select\nusing (\n  org_id = kelay.org()\n  and kelay.role() = 'member'\n  and (assignee_id = kelay.uid() or shared)\n);`,
+      `CREATE POLICY "tickets_read_member"\nON "app"."tickets" FOR SELECT\nUSING (\n  kelay.role() = 'member'\n  AND "org_id" = kelay.org()\n  AND ("assignee_id" = kelay.uid() OR "shared")\n);`,
     );
     const update = policySql(tickets, 'member', 'update', 'mine_shared');
-    expect(update).toContain('using (\n  org_id = kelay.org()\n  and kelay.role() = \'member\'\n  and (assignee_id = kelay.uid() or shared)\n)');
-    expect(update).toContain('with check (\n  org_id = kelay.org()\n  and kelay.role() = \'member\'\n  and assignee_id = kelay.uid()\n);');
-    expect(policySql(tickets, 'member', 'create', 'all')).toContain('for insert\nwith check (');
+    expect(update).toContain('USING (\n  kelay.role() = \'member\'\n  AND "org_id" = kelay.org()\n  AND ("assignee_id" = kelay.uid() OR "shared")\n)');
+    expect(update).toContain('WITH CHECK (\n  kelay.role() = \'member\'\n  AND "org_id" = kelay.org()\n  AND "assignee_id" = kelay.uid()\n);');
+    expect(policySql(tickets, 'member', 'create', 'all')).toContain('FOR INSERT\nWITH CHECK (');
     expect(policySql(tickets, 'guest', 'delete', 'none')).toMatch(/^-- tickets_delete_guest: no policy/);
   });
 

@@ -77,6 +77,9 @@ importers:
       '@kelay/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@kelay/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       clsx:
         specifier: ^2.1.1
         version: 2.1.1

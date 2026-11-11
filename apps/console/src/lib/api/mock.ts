@@ -2,6 +2,7 @@
 // expected to: approving a proposal that carries a grant connects it, allowing a grant approves
 // its proposal, publishing bumps the version and clears the unpublished change.
 import { PolicyMatrix } from '@kelay/contracts';
+import { allowsRow, effectiveScope, scopeOf, visibleSamples } from '../policy';
 import { ApiError, notFound } from './errors';
 import {
   APPS,
@@ -39,6 +40,7 @@ import type {
   Proposal,
   ProposalDecision,
   QaSummary,
+  TicketReply,
   ToolCall,
   WorkspaceTab,
 } from './types';
@@ -57,6 +59,8 @@ export interface MockState {
   toolCalls: Record<string, ToolCall[]>;
   threads: Record<string, ChatMessage[]>;
   qa: Record<string, QaSummary>;
+  /** Replies the builder sent, keyed by `app:ticket key`. */
+  replies: Record<string, TicketReply[]>;
 }
 
 const KST_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -81,6 +85,7 @@ export function createMockState(now: number = Date.now()): MockState {
     toolCalls,
     threads: {},
     qa: QA,
+    replies: {},
   });
 }
 
@@ -159,6 +164,18 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
 
   const decide = (p: Proposal, grant: Grant | null): ProposalDecision => clone({ proposal: p, grant });
 
+  const findTicket = (app: string, key: string): FeedbackTicket => {
+    const t = state.tickets.find((x) => x.app === app && x.key === key);
+    if (!t) throw notFound(`Ticket ${key}`);
+    return t;
+  };
+
+  const policyOf = (a: MockApp) => ({
+    ...a.policy,
+    version: a.version,
+    draft: a.rulesSavedAt ? { version: nextVersion(a.version), savedAt: a.rulesSavedAt } : null,
+  });
+
   const thread = (app: string, tab: WorkspaceTab): ChatMessage[] => {
     const key = `${app}:${tab}`;
     const existing = state.threads[key];
@@ -173,6 +190,7 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
     a.version = nextVersion(a.version);
     a.status = 'live';
     a.pendingChange = null;
+    a.rulesSavedAt = null;
     a.updatedAt = nowIso();
     return { app, env: 'prod' as const, version: a.version, status: 'live' as const, url: a.productionUrl, durationMs: 18000 };
   };
@@ -261,10 +279,28 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
     },
 
     async updateTicket(app, key, patch) {
-      const t = state.tickets.find((x) => x.app === app && x.key === key);
-      if (!t) throw notFound(`Ticket ${key}`);
+      const t = findTicket(app, key);
       Object.assign(t, patch);
       return clone(t);
+    },
+
+    async getTicketThread(app, key) {
+      const t = findTicket(app, key);
+      const auto: TicketReply[] = [
+        { id: `${t.id}-auto`, who: 'Kelay · auto-reply', at: null, text: `Thanks! Logged as ${t.key}. ${t.votes - 1} others asked for the same. We’ll tell you when it ships.` },
+      ];
+      if (t.fixedIn) {
+        auto.push({ id: `${t.id}-fixed`, who: 'Kelay · after you approved', at: null, text: `This is fixed in ${t.fixedIn}. Try it again — and send another /feedback if anything’s off.` });
+      }
+      return clone([...auto, ...(state.replies[`${app}:${key}`] ?? [])]);
+    },
+
+    async replyToTicket(app, key, text) {
+      const t = findTicket(app, key);
+      const reply: TicketReply = { id: id('reply'), who: `${state.me.name} · reply`, text, at: nowIso() };
+      (state.replies[`${app}:${key}`] ??= []).push(reply);
+      t.replies += 1;
+      return clone(reply);
     },
 
     async listReports(app) {
@@ -351,8 +387,8 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
       return clone(app ? state.consents.filter((c) => c.app === app) : state.consents);
     },
 
-    async revokeConsent(cid) {
-      if (!state.consents.some((c) => c.id === cid)) throw notFound(`Consent ${cid}`);
+    async revokeConsent(app, cid) {
+      if (!state.consents.some((c) => c.id === cid && c.app === app)) throw notFound(`Consent ${cid}`);
       state.consents = state.consents.filter((c) => c.id !== cid);
     },
 
@@ -364,13 +400,14 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
     async deploy(app, env) {
       const a = findApp(app);
       if (env === 'prod') return publish(app);
+      a.rulesSavedAt = null;
       return { app, env, version: a.version ?? 'v0', status: 'live', url: `https://dev.kelay.app/${a.handle}/${a.id}`, durationMs: 9000 };
     },
 
     publish,
 
     async getPolicy(app) {
-      return clone(findApp(app).policy);
+      return clone(policyOf(findApp(app)));
     },
 
     async savePolicy(app, matrix) {
@@ -384,13 +421,41 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
         }
       }
       a.policy.matrix = parsed;
+      a.rulesSavedAt = nowIso();
       a.pendingChange = { title: 'Access rules changed', count: (a.pendingChange?.count ?? 0) + 1 };
-      return clone(a.policy);
+      return clone(policyOf(a));
     },
 
-    async getAccessSamples(app, collection) {
+    // The mock has no database: rows come from the board fixture and the saved rules decide.
+    async previewAccess(app, userId) {
       const a = findApp(app);
-      return a.template === 'ticket-board' && collection === 'tickets' ? boardSamples(BOARD) : null;
+      const m = state.memberships.find((x) => x.app === app && x.userId === userId);
+      if (!m || a.template !== 'ticket-board') return null;
+      const { schema, matrix } = a.policy;
+      return {
+        userId,
+        role: m.role,
+        version: null,
+        collections: schema.collections.map((c) => {
+          const samples = c.name === 'tickets' ? boardSamples(BOARD) : [];
+          const scope = (op: 'update' | 'delete' | 'create') => effectiveScope(c, scopeOf(matrix, m.role, c.name, op));
+          const rows = visibleSamples(c, matrix, m.role, userId, samples).map((r) => ({
+            ...r,
+            canUpdate: allowsRow(scope('update'), r, userId),
+            canDelete: allowsRow(scope('delete'), r, userId),
+          }));
+          return {
+            collection: c.name,
+            label: c.label ?? c.name,
+            readable: rows.length,
+            editable: rows.filter((r) => r.canUpdate).length,
+            deletable: rows.filter((r) => r.canDelete).length,
+            canCreate: scope('create') !== 'none',
+            total: samples.length,
+            rows,
+          };
+        }),
+      };
     },
 
     async getMetrics(app, range) {
@@ -401,6 +466,14 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
     async getQa(app) {
       findApp(app);
       return clone(state.qa[app] ?? null);
+    },
+
+    async runQa(app) {
+      findApp(app);
+      const qa = state.qa[app];
+      if (!qa) throw new ApiError('conflict', 'Nothing to check yet. Checks are generated on the first deploy.', 409);
+      qa.finishedAt = nowIso();
+      return clone(qa);
     },
 
     async getBuilderThread(app, tab) {

@@ -9,6 +9,7 @@ import type { ActionResult } from '@/lib/action-result';
 import { isApiError } from '@/lib/api/errors';
 import { TOKEN_COOKIE, getConsoleApi } from '@/lib/api/server';
 import type {
+  AppMetrics,
   AppPolicy,
   AppSummary,
   ChatMessage,
@@ -19,6 +20,8 @@ import type {
   ImprovementReport,
   Member,
   ProposalDecision,
+  QaSummary,
+  TicketReply,
 } from '@/lib/api/types';
 
 const Id = z.string().min(1).max(200);
@@ -39,10 +42,14 @@ const GrantRequest = z.object({
   what: z.string().trim().min(1).max(200),
 });
 
-async function run<T>(fn: (api: ConsoleApi) => Promise<T>): Promise<ActionResult<T>> {
+const Range = z.enum(['24h', '14d', '30d']);
+const Text = z.string().trim().min(1).max(4000);
+
+/** `change` re-renders every page from fresh data; a read leaves the rendered pages alone. */
+async function call<T>(fn: (api: ConsoleApi) => Promise<T>, change: boolean): Promise<ActionResult<T>> {
   try {
     const data = await fn(await getConsoleApi());
-    revalidatePath('/', 'layout');
+    if (change) revalidatePath('/', 'layout');
     return { ok: true, data };
   } catch (e) {
     unstable_rethrow(e);
@@ -52,6 +59,9 @@ async function run<T>(fn: (api: ConsoleApi) => Promise<T>): Promise<ActionResult
     return { ok: false, error: 'Something went wrong. Try again.' };
   }
 }
+
+const run = <T>(fn: (api: ConsoleApi) => Promise<T>) => call(fn, true);
+const read = <T>(fn: (api: ConsoleApi) => Promise<T>) => call(fn, false);
 
 export async function createAppAction(prompt: string): Promise<ActionResult<AppSummary>> {
   return run((api) => api.createApp({ prompt: z.string().trim().min(1).max(4000).parse(prompt) }));
@@ -79,6 +89,14 @@ export async function sendRecoveryAction(app: string, userId: string): Promise<A
 
 export async function updateTicketAction(app: string, key: string, patch: z.input<typeof TicketPatch>): Promise<ActionResult<FeedbackTicket>> {
   return run((api) => api.updateTicket(AppSlug.parse(app), Id.parse(key), TicketPatch.parse(patch)));
+}
+
+export async function getTicketThreadAction(app: string, key: string): Promise<ActionResult<TicketReply[]>> {
+  return read((api) => api.getTicketThread(AppSlug.parse(app), Id.parse(key)));
+}
+
+export async function replyToTicketAction(app: string, key: string, text: string): Promise<ActionResult<TicketReply>> {
+  return run((api) => api.replyToTicket(AppSlug.parse(app), Id.parse(key), Text.parse(text)));
 }
 
 export async function runReportAction(app: string): Promise<ActionResult<ImprovementReport>> {
@@ -118,8 +136,16 @@ export async function rejectGrantAction(id: string): Promise<ActionResult<Grant>
   return run((api) => api.rejectGrant(Id.parse(id)));
 }
 
-export async function revokeConsentAction(id: string): Promise<ActionResult<void>> {
-  return run((api) => api.revokeConsent(Id.parse(id)));
+export async function revokeConsentAction(app: string, id: string): Promise<ActionResult<void>> {
+  return run((api) => api.revokeConsent(AppSlug.parse(app), Id.parse(id)));
+}
+
+export async function loadMetricsAction(app: string, range: string): Promise<ActionResult<AppMetrics | null>> {
+  return read((api) => api.getMetrics(AppSlug.parse(app), Range.parse(range)));
+}
+
+export async function runQaAction(app: string): Promise<ActionResult<QaSummary>> {
+  return run((api) => api.runQa(AppSlug.parse(app)));
 }
 
 export async function savePolicyAction(app: string, matrix: unknown): Promise<ActionResult<AppPolicy>> {
@@ -127,7 +153,7 @@ export async function savePolicyAction(app: string, matrix: unknown): Promise<Ac
 }
 
 export async function sendBuilderMessageAction(app: string, tab: string, text: string): Promise<ActionResult<ChatMessage[]>> {
-  return run((api) => api.sendBuilderMessage(AppSlug.parse(app), Tab.parse(tab), z.string().trim().min(1).max(4000).parse(text)));
+  return run((api) => api.sendBuilderMessage(AppSlug.parse(app), Tab.parse(tab), Text.parse(text)));
 }
 
 export async function signInAction(formData: FormData): Promise<void> {

@@ -23,7 +23,8 @@ function scopeSummary(scopes: readonly string[]): string {
     const [collection = s, op = ''] = s.split(':');
     byCollection.set(collection, [...(byCollection.get(collection) ?? []), op]);
   }
-  return [...byCollection].map(([c, ops]) => `${c}: ${ops.filter(Boolean).join(', ')}`).join(' · ');
+  // A scope without an op (`offline_access`) stands on its own.
+  return [...byCollection].map(([c, ops]) => (ops.some(Boolean) ? `${c}: ${ops.filter(Boolean).join(', ')}` : c)).join(' · ');
 }
 
 export default function AgentTab({
@@ -37,16 +38,23 @@ export default function AgentTab({
   /** The data props default to the mock team; pass `now` together with real consents. */
   members?: TabMember[];
   consents?: Consent[];
-  toolCalls?: ToolCall[] | null;
+  toolCalls?: ToolCall[];
   now?: number;
 }) {
   const notify = useToast();
   const members = membersProp ?? fixtureMembers(app.id);
   // Activity keeps naming an assistant after it is disconnected, so lookups use the full list.
-  const [consents] = useState<Consent[]>(() => consentsProp ?? fixtureConsents(app.id));
+  const [fixtures] = useState<Consent[]>(() => (consentsProp ? [] : fixtureConsents(app.id)));
+  const current = consentsProp ?? fixtures;
+  // The server stops listing a consent once it is revoked; `known` remembers every one seen in this visit.
+  const [known, setKnown] = useState(current);
+  const unseen = current.filter((c) => !known.some((k) => k.id === c.id));
+  if (unseen.length) setKnown([...known, ...unseen]);
   const [disconnected, setDisconnected] = useState<ReadonlySet<string>>(new Set());
-  const toolCalls = toolCallsProp === undefined ? fixtureToolCalls(app.id) : (toolCallsProp ?? []);
-  const live = consents.filter((c) => !disconnected.has(c.id));
+  const toolCalls = toolCallsProp ?? fixtureToolCalls(app.id);
+  const live = current.filter((c) => !disconnected.has(c.id));
+  const today = formatDay(new Date(now).toISOString());
+  const allToday = toolCalls.every((c) => formatDay(c.at) === today);
   const endpoint = app.mcpEndpoint;
 
   const memberOf = (userId: string): TabMember => members.find((m) => m.userId === userId) ?? { userId, name: 'Former member', role: '' };
@@ -54,7 +62,7 @@ export default function AgentTab({
   async function disconnect(id: string) {
     setDisconnected((prev) => new Set(prev).add(id));
     notify('Assistant disconnected — its token no longer works');
-    const res = await revokeConsentAction(id);
+    const res = await revokeConsentAction(app.id, id);
     if (!res.ok) {
       setDisconnected((prev) => {
         const next = new Set(prev);
@@ -153,26 +161,27 @@ export default function AgentTab({
       <section className="card" aria-label="Tool call activity">
         <div className="card-head">
           <h3>Tool call activity</h3>
-          <span className="muted small">today</span>
+          <span className="muted small">{allToday ? 'today' : 'latest'}</span>
           <span className="spacer" />
           <span className="small muted"><Icon name="lock" size={12} /> Tool calls only — no conversation content</span>
         </div>
         {toolCalls.map((call) => {
-          const consent = consents.find((c) => c.id === call.consentId);
-          const m = memberOf(consent?.userId ?? '');
+          const consent = known.find((c) => c.id === call.consentId);
+          const m = memberOf(call.userId ?? consent?.userId ?? '');
+          const assistant = call.clientName ?? consent?.client.name ?? 'assistant';
           return (
             <div className="act-row" key={call.id}>
               <Avatar id={m.userId} name={m.name} color={m.color} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <b>{firstName(m.name)}’s {consent?.client.name ?? 'assistant'}</b> called{' '}
+                <b>{firstName(m.name)}’s {assistant}</b> called{' '}
                 <span className="mono" style={{ color: 'var(--text)' }}>{call.tool}</span> <span className="muted">{call.args}</span>
-                <div className="small muted">{formatTime(call.at)}{call.note ? ` · ${call.note}` : ''}</div>
+                <div className="small muted">{allToday ? '' : `${formatDay(call.at)} · `}{formatTime(call.at)}{call.note ? ` · ${call.note}` : ''}</div>
               </div>
-              {call.result === 'ok' ? <span className="pill green">OK</span> : <span className="pill red">Denied</span>}
+              {call.result === 'ok' ? <span className="pill green">OK</span> : <span className="pill red">{call.result === 'denied' ? 'Denied' : 'Error'}</span>}
             </div>
           );
         })}
-        {toolCalls.length === 0 && <div className="empty">No tool calls yet today.</div>}
+        {toolCalls.length === 0 && <div className="empty">No tool calls yet.</div>}
       </section>
     </>
   );

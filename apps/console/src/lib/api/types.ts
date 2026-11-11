@@ -58,8 +58,10 @@ export interface Member {
   role: string;
   plan: string;
   status: MemberStatus;
-  provider: Provider;
-  createdAt: string;
+  /** Null when the API does not say how the member signs in. */
+  provider: Provider | null;
+  /** Null when the API does not record when the member joined. */
+  createdAt: string | null;
   lastSignInAt: string | null;
   /** Name of the AI assistant connected over MCP, if any. */
   assistant: string | null;
@@ -96,6 +98,15 @@ export interface FeedbackTicket {
 export interface TicketPatch {
   status?: TicketStatus;
   priority?: Priority;
+}
+
+/** A message under a ticket, after the reporter's own. */
+export interface TicketReply {
+  id: string;
+  /** Who wrote it, as shown above the bubble: "Kelay · auto-reply", "Jeongyun Lee · reply". */
+  who: string;
+  text: string;
+  at: string | null;
 }
 
 export type ProposalState = 'pending' | 'approved' | 'rejected';
@@ -175,12 +186,16 @@ export interface Consent {
 
 export interface ToolCall {
   id: string;
-  consentId: string;
+  /** Null when the member's consent for that assistant was never recorded. */
+  consentId: string | null;
   at: string;
   tool: string;
   args: string;
-  result: 'ok' | 'denied';
+  result: 'ok' | 'denied' | 'error';
   note: string | null;
+  /** The member the assistant acted for, and the assistant's name; the consent has both when they are absent. */
+  userId?: string | null;
+  clientName?: string | null;
 }
 
 export interface DeployResult {
@@ -202,17 +217,47 @@ export interface PolicyNote {
 
 export interface AppPolicy {
   schema: AppSchema;
+  /** The rules as the builder last saved them: the draft when there is one, else the deployed rules. */
   matrix: PolicyMatrix;
   notes: PolicyNote[];
+  /** Version whose rules are deployed to Development, e.g. "v3". */
+  version: string | null;
+  /** Rules saved and not deployed yet; they go live with the next deploy to Development. */
+  draft: { version: string; savedAt: string } | null;
 }
 
-/** A row the Access tab evaluates "Preview as" against. */
+/** A row "Preview as" shows: one the member can read. */
 export interface AccessSample {
   id: string;
   label: string;
   ownerId: string | null;
   createdBy: string | null;
   shared: boolean;
+  canUpdate?: boolean;
+  canDelete?: boolean;
+}
+
+export interface AccessPreviewCollection {
+  collection: string;
+  label: string;
+  /** Rows the member can read, edit and delete. */
+  readable: number;
+  editable: number;
+  deletable: number;
+  canCreate: boolean;
+  /** Rows in the collection, when known. */
+  total: number | null;
+  /** Newest readable rows (the API caps the list). */
+  rows: AccessSample[];
+}
+
+/** What one member can see and do, evaluated with the deployed rules. */
+export interface AccessPreview {
+  userId: string;
+  role: string;
+  /** Version whose rules were applied, e.g. "v3"; null when the preview follows the saved rules. */
+  version: string | null;
+  collections: AccessPreviewCollection[];
 }
 
 export type MetricsRange = '24h' | '14d' | '30d';
@@ -233,10 +278,13 @@ export interface AppMetrics {
 export interface RecentAction {
   id: string;
   action: string;
+  /** A member's name or user id; empty when nobody was signed in. */
   by: string;
   status: 'ok' | 'blocked' | 'error';
   ms: number;
   source: string;
+  args?: string | null;
+  at?: string | null;
 }
 
 export interface QaCheck {
@@ -244,12 +292,14 @@ export interface QaCheck {
   status: 'ok' | 'bad' | 'wait';
   durationMs: number;
   note: string | null;
+  /** Set on checks generated from the access rules. */
+  role?: string | null;
 }
 
 export interface QaIncident {
   title: string;
   resolved: boolean;
-  /** `text` uses `**bold**`, `` `mono` ``, `[[ref]]` and `_italic_`. */
+  /** `when` is an ISO timestamp or ready-made text. `text` uses `**bold**`, `` `mono` ``, `[[ref]]` and `_italic_`. */
   timeline: { when: string; tone: 'red' | 'green' | null; text: string }[];
 }
 
@@ -259,6 +309,11 @@ export interface QaSummary {
   errorsReachedUsers7d: number;
   checks: QaCheck[];
   incidents: QaIncident[];
+  /** Why the last run could not finish; null or absent when it did. */
+  error?: string | null;
+  /** Version the run checked, and when it finished. */
+  version?: string | null;
+  finishedAt?: string | null;
 }
 
 export interface GraphOverview {
@@ -310,6 +365,9 @@ export interface ConsoleApi {
 
   listTickets(app: string): Promise<FeedbackTicket[]>;
   updateTicket(app: string, key: string, patch: TicketPatch): Promise<FeedbackTicket>;
+  /** Replies under a ticket, oldest first. */
+  getTicketThread(app: string, key: string): Promise<TicketReply[]>;
+  replyToTicket(app: string, key: string, text: string): Promise<TicketReply>;
 
   /** Newest first. */
   listReports(app: string): Promise<ImprovementReport[]>;
@@ -324,19 +382,23 @@ export interface ConsoleApi {
   rejectGrant(id: string): Promise<Grant>;
   getGraphOverview(): Promise<GraphOverview | null>;
 
+  /** Assistants members connected to one app, or to any of the builder's apps. */
   listConsents(app?: string): Promise<Consent[]>;
-  revokeConsent(id: string): Promise<void>;
-  listToolCalls(app: string): Promise<ToolCall[] | null>;
+  revokeConsent(app: string, id: string): Promise<void>;
+  listToolCalls(app: string): Promise<ToolCall[]>;
 
   deploy(app: string, env: Env): Promise<DeployResult>;
   publish(app: string): Promise<DeployResult>;
 
   getPolicy(app: string): Promise<AppPolicy>;
   savePolicy(app: string, matrix: PolicyMatrix): Promise<AppPolicy>;
-  getAccessSamples(app: string, collection: string): Promise<AccessSample[] | null>;
+  /** Null when the app has no database to preview against, or the user is not a member. */
+  previewAccess(app: string, userId: string): Promise<AccessPreview | null>;
 
   getMetrics(app: string, range: MetricsRange): Promise<AppMetrics | null>;
+  /** The latest QA run; null before the first one. */
   getQa(app: string): Promise<QaSummary | null>;
+  runQa(app: string): Promise<QaSummary>;
 
   getBuilderThread(app: string, tab: WorkspaceTab): Promise<ChatMessage[]>;
   sendBuilderMessage(app: string, tab: WorkspaceTab, text: string): Promise<ChatMessage[]>;

@@ -72,7 +72,93 @@ describe('Control API client', () => {
       'POST /v1/grants/g1/allow': () => ({ status: 403, json: { error: { code: 'denied', message: 'only the target app’s owner can decide' } } }),
     });
     await expect(api.allowGrant('g1')).rejects.toMatchObject({ code: 'denied', status: 403, message: 'only the target app’s owner can decide' });
-    expect(await api.getMetrics('ticket-board', '14d')).toBeNull();
     expect(await api.getBuilderThread('ticket-board', 'screen')).toEqual([]);
+  });
+
+  it('reads the saved rules from the draft and saves the matrix with PUT policy', async () => {
+    const schema = { app: 'ticket-board', roles: ['admin', 'member'], collections: [{ name: 'tickets', fields: { title: { type: 'text', required: true } } }] };
+    const deployed = { member: { tickets: { read: 'all', create: 'all', update: 'mine', delete: 'none' } } };
+    const saved = { member: { tickets: { read: 'mine', create: 'all', update: 'mine', delete: 'none' } } };
+    const ref = (n: number) => ({ id: `v${n}`, number: n, label: `v${n}`, createdBy: 'b1', createdAt: '2026-11-11T00:00:00Z' });
+    const { api, calls } = fakeControlApi({
+      'GET /v1/apps/ticket-board/schema': () => ({ json: { schema, policy: deployed, notes: [], version: ref(3), draft: null } }),
+      'PUT /v1/apps/ticket-board/policy': (b) => ({ json: { schema, policy: deployed, notes: [], version: ref(3), draft: { ...ref(4), policy: (b as { policy: unknown }).policy } } }),
+    });
+    expect(await api.getPolicy('ticket-board')).toMatchObject({ matrix: deployed, version: 'v3', draft: null });
+    const next = await api.savePolicy('ticket-board', saved as never);
+    expect(calls.at(-1)).toMatchObject({ method: 'PUT', body: { policy: saved } });
+    expect(next).toMatchObject({ matrix: saved, version: 'v3', draft: { version: 'v4', savedAt: '2026-11-11T00:00:00Z' } });
+  });
+
+  it('maps "preview as" and yields null when there is nothing to preview against', async () => {
+    const { api, calls } = fakeControlApi({
+      'POST /v1/apps/ticket-board/policy/preview': () => ({
+        json: {
+          preview: {
+            as: { userId: 'u1', role: 'member' },
+            version: { label: 'v3' },
+            collections: [
+              {
+                collection: 'tickets', label: 'Tickets', ownerField: 'assignee_id',
+                read: { scope: 'mine_shared', allowed: true, count: 2 }, create: { scope: 'all', allowed: true },
+                update: { scope: 'mine', allowed: true, count: 1 }, delete: { scope: 'none', allowed: false, count: 0 },
+                rows: [{ id: 't1', label: 'Roadmap', ownerId: 'u1', createdBy: 'u2', shared: false, canUpdate: true, canDelete: false }],
+              },
+            ],
+          },
+        },
+      }),
+      'POST /v1/apps/team-wiki/policy/preview': () => ({ status: 409, json: { error: { code: 'conflict', message: 'the dev environment has no database yet' } } }),
+    });
+    expect(await api.previewAccess('ticket-board', 'u1')).toEqual({
+      userId: 'u1', role: 'member', version: 'v3',
+      collections: [{ collection: 'tickets', label: 'Tickets', readable: 2, editable: 1, deletable: 0, canCreate: true, total: null, rows: [{ id: 't1', label: 'Roadmap', ownerId: 'u1', createdBy: 'u2', shared: false, canUpdate: true, canDelete: false }] }],
+    });
+    expect(calls[0]?.body).toEqual({ as: 'u1' });
+    expect(await api.previewAccess('team-wiki', 'u1')).toBeNull();
+  });
+
+  it('reads metrics, tool calls and QA, and runs the checks', async () => {
+    const qa = { status: 'passed', error: null, version: 'v3', finishedAt: '2026-11-11T01:00:00Z', passing: 1, total: 1, errorsReachedUsers7d: 0, checks: [{ name: 'member can’t delete tickets', status: 'ok', durationMs: 3, note: null, role: 'member' }], incidents: [] };
+    const { api, calls } = fakeControlApi({
+      'GET /v1/apps/ticket-board/metrics': () => ({
+        json: { metrics: { range: '24h', healthy: true, activeMembers: { value: 1, total: 5, delta: 1 }, actionsToday: { value: 2, deltaPct: 0 }, screenErrors7d: { value: 0, note: null }, agentActionsToday: 1, llmBudgetTodayUsd: 0.04, series: { buckets: ['2026-11-11T00:00:00.000Z'], actions: [2], errors: [0] }, recent: [{ id: 'r1', action: 'tickets_update', args: '{}', by: 'u1', status: 'blocked', ms: 12, source: 'App', at: '2026-11-11T00:10:00.000Z' }] } },
+      }),
+      'GET /v1/apps/ticket-board/tool-calls': () => ({ json: { toolCalls: [{ id: 'c1', consentId: null, at: '2026-11-11T00:10:00.000Z', tool: 'tickets_list', args: '{}', result: 'error', note: null, userId: 'u1', clientId: 'x', clientName: 'Claude Desktop', ms: 5 }] } }),
+      'GET /v1/apps/ticket-board/qa': () => ({ json: { qa } }),
+      'POST /v1/apps/ticket-board/qa/run': () => ({ status: 201, json: { qa: { ...qa, status: 'error', error: 'database unreachable', checks: [], passing: 0, total: 0 } } }),
+    });
+    expect(await api.getMetrics('ticket-board', '24h')).toMatchObject({ range: '24h', activeMembers: { total: 5 }, recent: [{ by: 'u1', status: 'blocked', args: '{}' }] });
+    expect(calls[0]?.path).toBe('/v1/apps/ticket-board/metrics?range=24h');
+    expect(await api.listToolCalls('ticket-board')).toEqual([{ id: 'c1', consentId: null, at: '2026-11-11T00:10:00.000Z', tool: 'tickets_list', args: '{}', result: 'error', note: null, userId: 'u1', clientName: 'Claude Desktop' }]);
+    expect(await api.getQa('ticket-board')).toMatchObject({ passing: 1, total: 1, error: null, version: 'v3', checks: [{ status: 'ok', role: 'member' }] });
+    expect(await api.getQa('team-wiki')).toBeNull();
+    expect(await api.runQa('ticket-board')).toMatchObject({ total: 0, error: 'database unreachable' });
+  });
+
+  it('undoes a proposal decision and revokes a consent through the builder routes', async () => {
+    const { api, calls } = fakeControlApi({
+      'POST /v1/proposals/p1/undo': () => ({ json: { proposal: { id: 'p1', status: 'pending', run: null } } }),
+      'POST /v1/apps/ticket-board/consents/c1/revoke': () => ({ json: { consent: { id: 'c1', active: false } } }),
+      'GET /v1/apps': () => ({ json: { apps: [appView, { ...appView, slug: 'docs' }] } }),
+      'GET /v1/apps/ticket-board/consents': () => ({ json: { consents: [{ id: 'c1', userId: 'u1', app: 'ticket-board', clientId: 'https://claude.ai/x', clientName: 'Claude Desktop', scopes: ['offline_access'], createdAt: '2026-11-11T00:00:00Z', lastUsedAt: null }] } }),
+      'GET /v1/apps/docs/consents': () => ({ json: { consents: [] } }),
+    });
+    expect((await api.reopenProposal('p1')).proposal.state).toBe('pending');
+    await api.revokeConsent('ticket-board', 'c1');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /v1/proposals/p1/undo', 'POST /v1/apps/ticket-board/consents/c1/revoke']);
+    expect(await api.listConsents()).toMatchObject([{ id: 'c1', app: 'ticket-board', client: { name: 'Claude Desktop', kind: 'claude' } }]);
+  });
+
+  it('reads a ticket’s replies and posts a new one', async () => {
+    const { api, calls } = fakeControlApi({
+      'GET /v1/apps/ticket-board/tickets/FB-1': () => ({
+        json: { ticket: { key: 'FB-1', reporter: 'u1' }, events: [{ id: 'e1', kind: 'created', actor: 'u1', data: {} }, { id: 'e2', kind: 'reply', actor: 'b1', data: { text: 'On it.' }, createdAt: '2026-11-11T00:00:00Z' }] },
+      }),
+      'POST /v1/apps/ticket-board/tickets/FB-1/replies': (b) => ({ status: 201, json: { event: { id: 'e3', kind: 'reply', actor: 'b1', data: b, createdAt: '2026-11-11T00:05:00Z' } } }),
+    });
+    expect(await api.getTicketThread('ticket-board', 'FB-1')).toEqual([{ id: 'e2', who: 'Team · reply', text: 'On it.', at: '2026-11-11T00:00:00Z' }]);
+    expect(await api.replyToTicket('ticket-board', 'FB-1', 'Fixed in v4.')).toMatchObject({ id: 'e3', text: 'Fixed in v4.' });
+    expect(calls.at(-1)?.body).toEqual({ text: 'Fixed in v4.' });
   });
 });

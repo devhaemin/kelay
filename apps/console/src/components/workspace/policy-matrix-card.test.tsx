@@ -17,6 +17,6 @@ describe('Policy matrix', () => {
     expect(within(screen.getByRole('row', { name: /Guests/ })).getAllByRole('cell')[0]).toHaveTextContent('Own + shared');
 
     await userEvent.click(screen.getByRole('button', { name: 'Show policy SQL' }));
-    expect(screen.getByText(/create policy "tickets_read_member"/)).toHaveTextContent('(assignee_id = kelay.uid() or shared)');
+    expect(screen.getByText(/CREATE POLICY "tickets_read_member"/)).toHaveTextContent('("assignee_id" = kelay.uid() OR "shared")');
   });
 });
