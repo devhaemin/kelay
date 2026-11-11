@@ -1,9 +1,13 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { simpleGit } from 'simple-git';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ScriptedAgent } from '../src/agents/scripted.ts';
 import type { AgentEvent, AgentTurn, CodingAgent } from '../src/agents/types.ts';
+import { LocalArtifactStore } from '../src/artifacts/store.ts';
 import type { WorkspaceEvent } from '../src/events.ts';
 import { ImprovementWorker } from '../src/improvements.ts';
 import { createLogger } from '../src/log.ts';
@@ -58,6 +62,7 @@ describe('a workspace built by the scripted agent on the local driver', () => {
       'step:agent-1:running',
       'step:agent-1:done',
       'step:agent-2:running',
+      'file',
       'file',
       'file',
       'file',
@@ -324,4 +329,86 @@ describe('the check after a turn', () => {
       await h.close();
     }
   });
+});
+
+/** Builds the Ticket Board, with a screen that does not compile until it is told what the build found. */
+class TypoAgent implements CodingAgent {
+  readonly info = { kind: 'claude' as const, model: 'test-model' };
+  prompts: string[] = [];
+  private readonly scripted = new ScriptedAgent();
+  constructor(private readonly repairs: boolean) {}
+
+  async run(turn: AgentTurn, emit: (event: AgentEvent) => void) {
+    this.prompts.push(turn.prompt);
+    const page = join(turn.dir, 'app/page.tsx');
+    if (this.prompts.length === 1) {
+      await this.scripted.run(turn, emit);
+      await writeFile(page, `${readFileSync(page, 'utf8')}\nexport const columns: number = 'four';\n`);
+      return { text: 'Built the board.' };
+    }
+    if (this.repairs) await writeFile(page, readFileSync(page, 'utf8').replace("export const columns: number = 'four';", ''));
+    return { text: 'Looked at the build.' };
+  }
+}
+
+describe('the build before a deploy', () => {
+  it('builds both bundles, stores them and deploys their URLs', async () => {
+    const storeDir = mkdtempSync(join(tmpdir(), 'kelay-store-'));
+    const b = await createHarness({ artifacts: new LocalArtifactStore(storeDir) });
+    try {
+      b.control.addApp('team-board', 'jeongyun');
+      await b.req('POST', '/v1/workspaces', { token: await b.token('jeongyun'), body: { app: 'team-board', prompt: 'A ticket board' } });
+      const events = await b.settled('team-board');
+      expect(types(events).filter((t) => t.startsWith('step:build') || t === 'build' || t === 'deploy' || t === 'validation')).toEqual(['validation', 'step:build:running', 'build', 'step:build:done', 'deploy']);
+      expect(events.find((e) => e.type === 'build')).toMatchObject({ ok: true, attempt: 1, error: null });
+
+      const head = await simpleGit(b.dir('team-board')).revparse(['HEAD']);
+      const { request } = b.control.deploys[0]!;
+      const stored = (name: string) => pathToFileURL(join(storeDir, 'builds/team-board', head, name)).toString();
+      expect(request).toMatchObject({ commit: head, artifactUrl: stored('web.zip'), nodesArtifactUrl: stored('nodes.zip') });
+      expect(statSync(fileURLToPath(request.artifactUrl)).size).toBeGreaterThan(1_000_000);
+      expect(statSync(fileURLToPath(request.nodesArtifactUrl!)).size).toBeGreaterThan(10_000);
+      // The build ran on a copy: the workspace holds nothing the agent did not write.
+      expect((await simpleGit(b.dir('team-board')).status()).isClean()).toBe(true);
+      expect(existsSync(join(b.dir('team-board'), '.next'))).toBe(false);
+    } finally {
+      await b.close();
+    }
+  }, 300_000);
+
+  it('feeds a failed build back to the agent once, then deploys the repaired app', async () => {
+    const agent = new TypoAgent(true);
+    const h = await createHarness({ agent, artifacts: new LocalArtifactStore(mkdtempSync(join(tmpdir(), 'kelay-store-'))) });
+    try {
+      h.control.addApp('team-board', 'jeongyun');
+      await h.req('POST', '/v1/workspaces', { token: await h.token('jeongyun'), body: { app: 'team-board', prompt: 'A ticket board' } });
+      const events = await h.settled('team-board');
+      expect(events.filter((e) => e.type === 'build')).toMatchObject([{ ok: false, attempt: 1, error: expect.stringContaining("Type 'string' is not assignable to type 'number'") }, { ok: true, attempt: 2, error: null }]);
+      expect(agent.prompts).toHaveLength(2);
+      expect(agent.prompts[1]).toContain('the build failed, so nothing was deployed');
+      expect(agent.prompts[1]).toContain("Type 'string' is not assignable to type 'number'");
+      expect(events.filter((e) => e.type === 'commit').map((e) => e.type === 'commit' && e.message)).toEqual(['Build the first version: A ticket board', 'Fix what the build found']);
+      expect(events.at(-1)).toMatchObject({ status: 'succeeded' });
+      expect(h.control.deploys).toHaveLength(1);
+      expect(h.control.deploys[0]!.request.artifactUrl).toMatch(/^file:.*\/web\.zip$/);
+    } finally {
+      await h.close();
+    }
+  }, 300_000);
+
+  it('fails the turn and deploys nothing when the app still does not build', async () => {
+    const agent = new TypoAgent(false);
+    const h = await createHarness({ agent, artifacts: new LocalArtifactStore(mkdtempSync(join(tmpdir(), 'kelay-store-'))) });
+    try {
+      h.control.addApp('team-board', 'jeongyun');
+      await h.req('POST', '/v1/workspaces', { token: await h.token('jeongyun'), body: { app: 'team-board', prompt: 'A ticket board' } });
+      const events = await h.settled('team-board');
+      expect(events.filter((e) => e.type === 'build').map((e) => e.type === 'build' && e.ok)).toEqual([false, false]);
+      expect(events.at(-1)).toMatchObject({ type: 'turn.finished', status: 'failed', error: expect.stringContaining('still does not build') });
+      expect(events.at(-2)).toMatchObject({ type: 'step', key: 'build-2', status: 'failed' });
+      expect(h.control.deploys).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
+  }, 300_000);
 });

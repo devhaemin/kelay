@@ -15,22 +15,35 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.322",
     "@aws-sdk/client-ecs": "^3.1166.0",
     "@aws-sdk/client-efs": "^3.1166.0",
+    "@aws-sdk/client-s3": "^3.1167.0",
     "@hono/node-server": "^2.1.7",
     "@hono/zod-validator": "^0.9.1",
     "@kelay/contracts": "workspace:*",
     "@kelay/graph": "workspace:*",
     "@kelay/policy": "workspace:*",
+    "@kelay/runtime": "workspace:^",
+    "@kelay/ticket-board-nodes": "workspace:^",
     "@kelay/tokens": "workspace:*",
+    "@opennextjs/aws": "4.1.15",
+    "archiver": "^8.0.0",
+    "esbuild": "0.28.2",
     "execa": "^10.2.1",
     "get-port": "^7.2.0",
     "hono": "^4.13.18",
+    "http-proxy-3": "^2.0.2",
+    "jose": "^6.2.17",
+    "mime": "^4.1.2",
     "pg": "^8.23.1",
     "pino": "^10.4.0",
     "simple-git": "^4.0.2",
+    "tsx": "^4.23.15",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/archiver": "^8.0.0",
     "@types/pg": "^8.23.1",
-    "aws-sdk-client-mock": "^4.1.0"
+    "@types/ws": "^8.18.2",
+    "aws-sdk-client-mock": "^4.1.0",
+    "ws": "^8.22.2"
   }
 }

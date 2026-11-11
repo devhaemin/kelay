@@ -90,7 +90,7 @@ export function createBuilderApi(deps: BuilderApiDeps): Hono<Env> {
 
   app.post('/v1/workspaces/:app/messages', builder, owned, zValidator('json', MessageBody, hook), async (c) => {
     const body = c.req.valid('json');
-    const { turn } = await workspaces.message(c.get('app').slug, c.get('builder').sub, body.text, body.context ?? null);
+    const { turn } = await workspaces.message(c.get('app'), c.get('builder').sub, body.text, body.context ?? null);
     return c.json({ workspace: await statusOf(c.get('app').slug), turn }, 202);
   });
 

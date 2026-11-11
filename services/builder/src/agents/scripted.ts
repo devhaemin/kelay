@@ -70,6 +70,7 @@ export class ScriptedAgent implements CodingAgent {
     await write('kelay/schema.ts', schemaFile({ ...schema, app: turn.app }));
     await write('kelay/policy.ts', policyFile(policy));
     await write('kelay/graphs.ts', graphsFile([graph]));
+    await write('kelay/nodes.ts', await readFile(join(SCREENS, 'kelay/nodes.ts'), 'utf8'));
 
     emit({ type: 'step', text: 'Generated the board screen' });
     await cp(join(SCREENS, 'app/page.tsx'), join(turn.dir, 'app/page.tsx'));

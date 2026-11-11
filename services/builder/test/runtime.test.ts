@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ScriptedAgent } from '../src/agents/scripted.ts';
 import type { AgentEvent } from '../src/agents/types.ts';
+import { BuildError } from '../src/artifacts/build.ts';
 import { checkManifest } from '../src/check.ts';
 import { LocalWorkspaceDriver } from '../src/drivers/local.ts';
 import { RemoteWorkspace, createRuntimeApp } from '../src/drivers/runtime.ts';
@@ -15,10 +16,21 @@ describe('a workspace behind the runtime protocol', () => {
   const root = mkdtempSync(join(tmpdir(), 'kelay-runtime-'));
   let remote: RemoteWorkspace;
   let stopped = false;
+  const builds: string[] = [];
+  let failBuild: string | null = null;
 
   beforeAll(async () => {
     const driver = new LocalWorkspaceDriver({ root, templateDir: TEMPLATE_DIR, agent: new ScriptedAgent(), preview: async () => ({ url: 'http://localhost:3000', stop: async () => {} }) });
-    const runtime = createRuntimeApp(await driver.open('team-board'), 'runtime-token');
+    const local = await driver.open('team-board');
+    // The real build is covered in artifacts.test.ts; here it only has to cross the protocol.
+    local.build = async ({ outDir, basePath }) => {
+      builds.push(basePath);
+      if (failBuild) throw new BuildError(failBuild);
+      writeFileSync(join(outDir, 'web.zip'), 'web bytes');
+      writeFileSync(join(outDir, 'nodes.zip'), 'nodes bytes');
+      return { web: { file: join(outDir, 'web.zip'), bytes: 9, handler: 'index.handler' }, nodes: { file: join(outDir, 'nodes.zip'), bytes: 11, handler: 'nodes.handler' } };
+    };
+    const runtime = createRuntimeApp(local, 'runtime-token');
     const fetchRuntime = ((input: string | URL | Request, init?: RequestInit) => runtime.request(String(input).replace('http://task', ''), init)) as typeof fetch;
     remote = new RemoteWorkspace({ app: 'team-board', ref: 'arn:task', endpoint: 'http://task', token: 'runtime-token', publicPreviewUrl: 'https://team-board.preview.kelay.dev', stop: async () => void (stopped = true), fetch: fetchRuntime });
 
@@ -37,12 +49,12 @@ describe('a workspace behind the runtime protocol', () => {
     const events: AgentEvent[] = [];
     const result = await remote.runAgent({ app: 'team-board', kind: 'build', prompt: 'A board' }, (e) => events.push(e));
     expect(events.filter((e) => e.type === 'step').map((e) => e.text)).toEqual(['Understood the request', 'Created data: projects, tickets, comments', 'Generated the board screen']);
-    expect(events.filter((e) => e.type === 'file')).toHaveLength(6);
+    expect(events.filter((e) => e.type === 'file')).toHaveLength(7);
     expect(result.text).toContain('Ticket Board');
 
     const commit = await remote.commit('Build the first version');
     expect(commit).toMatchObject({ message: 'Build the first version', branch: 'main' });
-    expect(commit!.files).toEqual(expect.arrayContaining(['kelay/schema.ts', 'app/page.tsx']));
+    expect(commit!.files).toEqual(expect.arrayContaining(['kelay/schema.ts', 'kelay/nodes.ts', 'app/page.tsx']));
     expect(await remote.commit('nothing')).toBeNull();
     expect(await remote.head()).toEqual({ commit: commit!.commit, message: 'Build the first version', branch: 'main' });
 
@@ -63,8 +75,21 @@ describe('a workspace behind the runtime protocol', () => {
     expect(remote.previewUrl()).toBeNull();
   });
 
+  it('builds in the task and brings the bundles over, since the task may not write to the artifact store', async () => {
+    const out = join(root, 'fetched');
+    const built = await remote.build({ outDir: out, basePath: '/orum/team-board' });
+    expect(builds).toEqual(['/orum/team-board']);
+    expect(built).toEqual({ web: { file: join(out, 'web.zip'), bytes: 9, handler: 'index.handler' }, nodes: { file: join(out, 'nodes.zip'), bytes: 11, handler: 'nodes.handler' } });
+    expect(readFileSync(built.web.file, 'utf8')).toBe('web bytes');
+    expect(readFileSync(built.nodes!.file, 'utf8')).toBe('nodes bytes');
+
+    failBuild = "Type 'string' is not assignable to type 'number'";
+    const failure = await remote.build({ outDir: out, basePath: '/orum/team-board' }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(BuildError);
+    expect((failure as Error).message).toContain('not assignable');
+  });
+
   it('carries a manifest that does not load as a ManifestError', async () => {
-    const { writeFileSync } = await import('node:fs');
     const file = join(root, 'team-board/kelay/policy.ts');
     const good = readFileSync(file, 'utf8');
     writeFileSync(file, `${good}\nthrow new Error('boom in policy');\n`);

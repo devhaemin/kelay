@@ -67,9 +67,9 @@ export interface AwsDeployOptions {
 
 const isNotFound = (e: unknown) => e instanceof ResourceNotFoundException || (e as Error)?.name === 'ResourceNotFoundException';
 
-function parseS3(url: string): { S3Bucket: string; S3Key: string } {
+function parseS3(url: string, name = 'artifactUrl'): { S3Bucket: string; S3Key: string } {
   const m = url.match(/^s3:\/\/([^/]+)\/(.+)$/);
-  if (!m?.[1] || !m[2]) throw new DeployError('artifactUrl must be s3://<bucket>/<key> for the aws driver', true);
+  if (!m?.[1] || !m[2]) throw new DeployError(`${name} must be s3://<bucket>/<key> for the aws driver`, true);
   return { S3Bucket: m[1], S3Key: m[2] };
 }
 
@@ -86,6 +86,7 @@ export class AwsDeployDriver implements DeployDriver {
 
   async deploy(input: DeployInput): Promise<DeployResult> {
     const code = parseS3(input.artifactUrl);
+    const nodeCode = input.nodesArtifactUrl ? parseS3(input.nodesArtifactUrl, 'nodesArtifactUrl') : code;
     const prefix = this.prefix(input.app, input.env);
     const tags = { 'kelay:app': input.app, 'kelay:env': this.opts.platformEnv, 'kelay:app-env': input.env, 'kelay:managed-by': MANAGED_BY };
     const environment = {
@@ -107,7 +108,7 @@ export class AwsDeployDriver implements DeployDriver {
 
     const graphs = input.graphs ?? [];
     if (graphs.length > 0) {
-      const nodes = await this.release(`${prefix}-nodes`, this.opts.nodeHandler ?? 'nodes.handler', code, environment, tags, description);
+      const nodes = await this.release(`${prefix}-nodes`, this.opts.nodeHandler ?? 'nodes.handler', nodeCode, environment, tags, description);
       resources.nodeFunctionName = `${prefix}-nodes`;
       resources.nodeLambdaVersion = nodes.version;
       resources.stateMachineArns = [];

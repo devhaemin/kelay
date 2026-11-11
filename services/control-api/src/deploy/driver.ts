@@ -9,7 +9,10 @@ export interface DeployInput {
   /** App-wide version number (v12). */
   number: number;
   commit: string;
+  /** The web function's bundle (`index.handler`). */
   artifactUrl: string;
+  /** The node function's bundle (`nodes.handler`). Without it the node function is created from `artifactUrl` too. */
+  nodesArtifactUrl?: string | null;
   configVersion: string;
   graphs?: GraphDefinition[];
   /** Caller token for this app × env runtime (contract §4). The driver hands it to the runtime. */

@@ -156,7 +156,10 @@ export const versions = pgTable(
     /** App-wide version number shown as `v12`; a publish to prod keeps the number of the version it promotes. */
     number: integer('number').notNull(),
     codeCommit: text('code_commit').notNull(),
+    /** The web function's bundle. */
     artifactUrl: text('artifact_url').notNull(),
+    /** The node function's bundle. Null for a build that put both handlers in `artifactUrl`, or has no nodes. */
+    nodesArtifactUrl: text('nodes_artifact_url'),
     configVersion: text('config_version').notNull(),
     lambdaVersion: text('lambda_version').notNull(),
     resources: jsonb('resources').$type<DeployResources>().notNull().default({}),

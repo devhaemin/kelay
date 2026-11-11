@@ -16,6 +16,7 @@ import { actorOf, appView, jsonBody, loadApp, loadEnv, queryParams, versionView 
 const DeployBody = z.object({
   commit: z.string().trim().min(1).max(100),
   artifactUrl: z.string().trim().min(1).max(2000),
+  nodesArtifactUrl: z.string().trim().min(1).max(2000).optional(),
   configVersion: z.string().trim().min(1).max(100),
   schema: AppSchema.optional(),
   policy: PolicyMatrix.optional(),
@@ -104,6 +105,9 @@ export function deployRoutes(ctx: Ctx) {
     if (schema && policy) checkPolicy(schema, policy);
     else if (policy) throw new ApiError('invalid_request', 'a policy needs a schema');
 
+    // Redeploying the active build (new access rules, same code) keeps its node bundle.
+    const nodesArtifactUrl = body.nodesArtifactUrl ?? (body.artifactUrl === active?.artifactUrl ? active.nodesArtifactUrl : null);
+
     let number = draft?.number;
     if (number === undefined) {
       const [seq] = await db
@@ -120,6 +124,7 @@ export function deployRoutes(ctx: Ctx) {
       number,
       commit: body.commit,
       artifactUrl: body.artifactUrl,
+      nodesArtifactUrl,
       configVersion: body.configVersion,
       graphs: body.graphs ?? active?.graphs ?? [],
       callerToken: await mintCallerToken(app.slug, env.data),
@@ -133,6 +138,7 @@ export function deployRoutes(ctx: Ctx) {
         number: input.number,
         codeCommit: body.commit,
         artifactUrl: body.artifactUrl,
+        nodesArtifactUrl,
         configVersion: body.configVersion,
         lambdaVersion: result.lambdaVersion,
         resources: result.resources,
@@ -187,6 +193,7 @@ export function deployRoutes(ctx: Ctx) {
           number: source.number,
           commit: source.codeCommit,
           artifactUrl: source.artifactUrl,
+          nodesArtifactUrl: source.nodesArtifactUrl,
           configVersion: source.configVersion,
           graphs: source.graphs,
           callerToken: minted,
@@ -200,6 +207,7 @@ export function deployRoutes(ctx: Ctx) {
           number: source.number,
           codeCommit: source.codeCommit,
           artifactUrl: source.artifactUrl,
+          nodesArtifactUrl: source.nodesArtifactUrl,
           configVersion: source.configVersion,
           lambdaVersion: result.lambdaVersion,
           resources: result.resources,

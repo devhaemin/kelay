@@ -18,7 +18,7 @@ const WRITE_TOOLS = new Set(['Write', 'Edit']);
 export const PROTECTED_PATHS = ['lib/kelay.ts', 'kelay/manifest.ts', 'app/api/kelay/', 'next.config.ts', 'package.json', 'tsconfig.json', 'CLAUDE.md', '.gitignore', '.git/', 'node_modules'];
 
 const SYSTEM_APPEND = `You are the Builder agent of Kelay, working in one Kelay app. CLAUDE.md in this folder holds the rules of the app and they are binding.
-You have file tools only and they work inside this folder. After your turn the platform commits your changes, checks kelay/schema.ts, kelay/policy.ts and kelay/graphs.ts, and deploys to Development. When the check fails you are told what to fix.
+You have file tools only and they work inside this folder. After your turn the platform commits your changes, checks kelay/schema.ts, kelay/policy.ts and kelay/graphs.ts, builds the app, and deploys to Development. When the check or the build fails you are told what to fix.
 The person you answer is a builder, not a programmer: finish with a short plain reply about what changed and what to look at in the preview.`;
 
 export interface ClaudeAgentOptions {

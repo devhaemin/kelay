@@ -3,7 +3,7 @@
 The Builder workspace of [infrastructure §4.1](../../docs/infrastructure.md): one paragraph becomes an app, and Builder chat changes it. Each app gets a workspace: a git repo started from [`templates/starter`](../../templates/starter), a coding agent, and `next dev` as the dev preview.
 
 - **Run:** `pnpm --filter @kelay/builder dev` (port 4006), or `pnpm dev:up`, which starts it with local workspaces.
-- **Test:** `pnpm --filter @kelay/builder test`. No database and no model: the Control API and the Agent SDK are replaced, the Fargate driver runs against `aws-sdk-client-mock`.
+- **Test:** `pnpm --filter @kelay/builder test`. No database and no model: the Control API and the Agent SDK are replaced, the Fargate driver and the S3 store run against `aws-sdk-client-mock`. The suite really builds the scripted Ticket Board app (`next build` through OpenNext, a few seconds each) and calls the handlers of the two zips in a process of their own.
 
 ## A turn
 
@@ -11,9 +11,11 @@ Every request (the Home prompt, a chat message, an approved improvement) is one 
 
 1. The coding agent changes files in the workspace.
 2. The workspace commits.
-3. `kelay/schema.ts`, `kelay/policy.ts` and `kelay/graphs.ts` are evaluated in the workspace and checked with `@kelay/policy` and `@kelay/graph`. When the check fails, the problems go back to the agent once; a second failure ends the turn and nothing is deployed.
-4. The result is deployed to Development through `POST /v1/apps/:app/envs/dev/deploy` of the Control API with the schema, the policy and the compiled graphs, which migrates the app database.
-5. The dev preview is started if it is not running.
+3. `kelay/schema.ts`, `kelay/policy.ts` and `kelay/graphs.ts` are evaluated in the workspace and checked with `@kelay/policy` and `@kelay/graph`.
+4. With an artifact store configured, the app's bundles are built and stored (see [Bundles](#bundles)).
+5. When the check or the build fails, what it found goes back to the agent once; a second failure ends the turn and nothing is deployed.
+6. The result is deployed to Development through `POST /v1/apps/:app/envs/dev/deploy` of the Control API with the bundles' URLs, the schema, the policy and the compiled graphs, which migrates the app database.
+7. The dev preview is started if it is not running.
 
 An improvement run does the same on a branch `improve/<run id>`, which is merged into `main` once it deployed. A workspace nobody used for 15 minutes is stopped; its state is in git and in the Builder's state folder, so the next message resumes it.
 
@@ -48,16 +50,36 @@ Events share `{ id, at, app, turn }`; the SSE event name is `type`:
 | `file` | `path`, `change: "created" \| "modified" \| "deleted"` |
 | `commit` | `commit`, `message`, `files`, `branch` |
 | `validation` | `ok`, `attempt` (1 or 2), `problems: { path, message }[]` |
+| `build` | `ok`, `attempt` (1 or 2), `error` (the end of the build's output) |
 | `deploy` | `ok`, `env: "dev"`, `version`, `versionId`, `error` |
 | `preview` | `url` |
 | `turn.finished` | `status: "succeeded" \| "failed"`, `error` |
+
+## Bundles
+
+`buildAppArtifacts(workspaceDir, { outDir, basePath })` in [`src/artifacts/build.ts`](src/artifacts/build.ts) turns a workspace into what the Control API's `aws` deploy driver creates the app's functions from:
+
+- **`web.zip`**, handler `index.handler`. The Next.js app, packaged for Lambda by [OpenNext](https://opennext.js.org/aws) (`@opennextjs/aws` 4.1, which supports the template's Next.js 16.4) for a function URL: one function, no bucket, table or queue beside it, so pages render on request. OpenNext expects a CDN in front for static files; an app function has none, so [`src/artifacts/web-handler.ts`](src/artifacts/web-handler.ts) is bundled in front of OpenNext's handler and answers the files under `_next/static` and `public/` from the zip.
+- **`nodes.zip`**, handler `nodes.handler`. The app's `kelay/nodes.ts` (it exports `graphs`, made with `defineNodes` from `@kelay/runtime`) bundled with esbuild behind `createLambdaHandler`. An app without that file has no node bundle; an app that declares a graph must have it.
+
+The Router forwards the whole path to the function, so the web bundle is built with the Next.js `basePath` `/<handle>/<app>`. The build runs on a copy of the workspace under `.kelay/builds` in the folder that holds the toolchain's lockfile, with an environment of its own (the build runs agent-written code), and `kelay/nodes.ts` is left out of the Next.js build. `KELAY_KEEP_BUILD=1` keeps that copy for inspection.
+
+`BUILDER_ARTIFACT_STORE` says where the bundles go, as `builds/<app>/<commit>/web.zip` and `nodes.zip`:
+
+| Value | Store | Deploy sends |
+|---|---|---|
+| unset | Nothing is built. | `artifactUrl: workspace://<app>/<commit>`, which only the Control API's `local` deploy driver accepts. |
+| `local` | The folder `BUILDER_ARTIFACTS_DIR` (default `artifacts` in `BUILDER_HOME`). | `file://` URLs. |
+| `s3` | The bucket `BUILDER_ARTIFACTS_BUCKET` (`AWS_REGION`, the task role's credentials). | `s3://` URLs, which the `aws` deploy driver needs. |
+
+With the `fargate` driver the build runs in the workspace task, which may not write to the bucket: the Builder fetches the two files from the task (`POST /runtime/build`, `GET /runtime/artifacts/<name>.zip`) and uploads them itself.
 
 ## Coding agent
 
 `BUILDER_AGENT=claude|scripted`. Unset, it is `claude` when `ANTHROPIC_API_KEY` is set and `scripted` otherwise. `agent` in `/healthz`, in every workspace and in every `turn.started` says which one is active.
 
 - **`claude`** runs the Claude Agent SDK in the workspace folder. It authenticates only with `ANTHROPIC_API_KEY`: an Anthropic API key, or the LLM gateway's key together with `ANTHROPIC_BASE_URL`. The agent process gets an environment built from scratch and its own config folder, and a turn is stopped if the SDK reports any other credential source, so a claude.ai login is never used. The model is `BUILDER_MODEL` (default `claude-opus-5-5`). It has the file tools `Read`, `Write`, `Edit`, `Glob` and `Grep` and no shell; every call is allowed only inside the workspace folder, never on `.env` files, and writes never on the template's platform files.
-- **`scripted`** uses no model. It writes the Ticket Board app from `packages/contracts/fixtures/ticket-board` whatever the prompt says, and knows one follow-up (a priority field on tickets). It exists so the whole flow runs without a key.
+- **`scripted`** uses no model. It writes the Ticket Board app from `packages/contracts/fixtures/ticket-board` whatever the prompt says, with [`examples/ticket-board-nodes`](../../examples/ticket-board-nodes) as its node code, and knows one follow-up (a priority field on tickets). It exists so the whole flow runs without a key.
 
 ## Workspace drivers
 

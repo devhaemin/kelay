@@ -106,6 +106,7 @@ export function policyRoutes(ctx: Ctx) {
           status: 'draft',
           codeCommit: active.codeCommit,
           artifactUrl: active.artifactUrl,
+          nodesArtifactUrl: active.nodesArtifactUrl,
           configVersion: active.configVersion,
           lambdaVersion: active.lambdaVersion,
           resources: active.resources,

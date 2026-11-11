@@ -217,6 +217,18 @@ describe('aws deploy driver', () => {
     const err = await aws.driver.deploy(input({ artifactUrl: 'https://example.com/a.zip' })).catch((e) => e);
     expect(err).toBeInstanceOf(DeployError);
     expect(err.badInput).toBe(true);
+    await expect(aws.driver.deploy(input({ nodesArtifactUrl: 'file:///tmp/nodes.zip' }))).rejects.toThrow('nodesArtifactUrl must be s3://');
+  });
+
+  it('creates the node function from its own bundle when the build has one', async () => {
+    const built = { artifactUrl: 's3://kelay-builds/builds/ticket-board/a1b2c3/web.zip', nodesArtifactUrl: 's3://kelay-builds/builds/ticket-board/a1b2c3/nodes.zip' };
+    await aws.driver.deploy(input(built));
+    const created = Object.fromEntries(aws.lambda.commandCalls(CreateFunctionCommand).map((c) => [c.args[0].input.FunctionName, c.args[0].input]));
+    expect(created['kelay-app-ticket-board-dev-web']).toMatchObject({ Handler: 'index.handler', Code: { S3Bucket: 'kelay-builds', S3Key: 'builds/ticket-board/a1b2c3/web.zip' } });
+    expect(created['kelay-app-ticket-board-dev-nodes']).toMatchObject({ Handler: 'nodes.handler', Code: { S3Bucket: 'kelay-builds', S3Key: 'builds/ticket-board/a1b2c3/nodes.zip' } });
+
+    await aws.driver.deploy(input({ number: 2, artifactUrl: built.artifactUrl.replace('a1b2c3', 'd4e5f6'), nodesArtifactUrl: built.nodesArtifactUrl.replace('a1b2c3', 'd4e5f6') }));
+    expect(aws.lambda.commandCalls(UpdateFunctionCodeCommand).map((c) => c.args[0].input.S3Key)).toEqual(['builds/ticket-board/d4e5f6/web.zip', 'builds/ticket-board/d4e5f6/nodes.zip']);
   });
 
   it('serves deploy and publish through the API with the aws driver', async () => {
@@ -229,6 +241,7 @@ describe('aws deploy driver', () => {
       });
       expect(dev.status).toBe(201);
       expect(dev.body.version.resources.functionUrl).toContain('kelay-app-ticket-board-dev-web');
+      expect(dev.body.version.nodesArtifactUrl).toBeNull();
 
       const bad = await h.req('POST', '/v1/apps/ticket-board/envs/dev/deploy', {
         token: builder,

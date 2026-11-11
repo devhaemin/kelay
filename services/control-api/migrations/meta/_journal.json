@@ -36,6 +36,13 @@
       "when": 1794411247971,
       "tag": "0004_runs_nodes",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794435060332,
+      "tag": "0005_nodes_artifact_url",
+      "breakpoints": true
     }
   ]
 }

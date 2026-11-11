@@ -7,6 +7,7 @@ import { LOCAL_PORTS } from '@kelay/contracts';
 import { remoteJwks } from '@kelay/tokens';
 import { DEFAULT_BUILDER_MODEL } from './agents/claude.ts';
 import { selectAgent } from './agents/select.ts';
+import { artifactStoreFromEnv } from './artifacts/store.ts';
 import { createBuilderApi } from './app.ts';
 import { ControlClient } from './control.ts';
 import { FargateWorkspaceDriver } from './drivers/fargate.ts';
@@ -70,6 +71,14 @@ try {
   process.exit(1);
 }
 
+let artifacts: ReturnType<typeof artifactStoreFromEnv>;
+try {
+  artifacts = artifactStoreFromEnv(env, resolve(home, 'artifacts'));
+} catch (e) {
+  log.fatal({ type: 'config', err: (e as Error).message }, (e as Error).message);
+  process.exit(1);
+}
+
 const control = new ControlClient({ baseUrl: need('CONTROL_API_URL'), callerSecret: need('KELAY_CALLER_SECRET') });
 const workspaces = new WorkspaceManager({
   driver,
@@ -77,6 +86,7 @@ const workspaces = new WorkspaceManager({
   agent,
   stateDir: resolve(home, 'state'),
   logger: log,
+  ...(artifacts ? { artifacts } : {}),
   runtimeEnv: Object.fromEntries(['DATA_API_URL', 'CONTROL_API_URL'].filter((k) => env[k]).map((k) => [k, env[k]!])),
   ...(env.APP_DATABASE_URL_TEMPLATE ? { provisioner: new PgDatabaseProvisioner(env.APP_DATABASE_URL_TEMPLATE) } : {}),
   ...(env.BUILDER_IDLE_MINUTES ? { idleMs: Number(env.BUILDER_IDLE_MINUTES) * 60_000 } : {}),
@@ -100,7 +110,7 @@ if (env.BUILDER_IMPROVEMENTS !== 'off') worker.start();
 
 const port = Number(env.PORT ?? LOCAL_PORTS.builder);
 const server = serve({ fetch: app.fetch, port }, (info) => {
-  log.info({ type: 'listen', port: info.port, driver: driver.name, agent }, `builder listening; coding agent: ${agent.kind}${agent.model ? ` (${agent.model})` : ''}`);
+  log.info({ type: 'listen', port: info.port, driver: driver.name, agent, artifacts: artifacts?.name ?? 'off' }, `builder listening; coding agent: ${agent.kind}${agent.model ? ` (${agent.model})` : ''}`);
 });
 
 let closing = false;

@@ -61,6 +61,7 @@ export function versionView(v: VersionRow) {
     label: `v${v.number}`,
     commit: v.codeCommit,
     artifactUrl: v.artifactUrl,
+    nodesArtifactUrl: v.nodesArtifactUrl,
     configVersion: v.configVersion,
     lambdaVersion: v.lambdaVersion,
     status: v.status,

@@ -23,6 +23,7 @@ export type WorkspaceEventBody =
   | { type: 'file'; path: string; change: 'created' | 'modified' | 'deleted' }
   | { type: 'commit'; commit: string; message: string; files: string[]; branch: string }
   | { type: 'validation'; ok: boolean; attempt: number; problems: Problem[] }
+  | { type: 'build'; ok: boolean; attempt: number; error: string | null }
   | { type: 'deploy'; ok: boolean; env: 'dev'; version: string | null; versionId: string | null; error: string | null }
   | { type: 'preview'; url: string }
   | { type: 'turn.finished'; status: 'succeeded' | 'failed'; error: string | null };

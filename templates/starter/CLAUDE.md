@@ -9,6 +9,7 @@ After each of your turns the platform commits your changes, checks the files in 
 - `kelay/schema.ts`: roles, collections (tables) and actions.
 - `kelay/policy.ts`: who may read, create, update and delete what.
 - `kelay/graphs.ts`: agent graphs that an action runs (optional).
+- `kelay/nodes.ts`: the code of those graphs' nodes (see "Agent graphs"). Needed as soon as there is a graph.
 - `app/**` and `components/**`: screens, except `app/api/kelay/**`.
 - `app/globals.css`: styles.
 
@@ -55,6 +56,31 @@ export const policy = definePolicy({
 ```
 
 Every role in the policy must be in `roles`, and every collection must exist in the schema. Give each role an entry for each collection it should reach.
+
+## Agent graphs
+
+A graph in `kelay/graphs.ts` names its nodes and how they connect. The code of the nodes is in `kelay/nodes.ts`. The platform bundles that file into the app's node function, apart from the screens: never import it from `app/**`, and import nothing from `app/**` in it.
+
+```ts
+// kelay/nodes.ts
+import { defineNode, defineNodes } from '@kelay/runtime';
+import { graphs as specs } from './graphs';
+
+const collect = defineNode(async (ctx) => {
+  // ctx.data reads and writes as the person who started the run, under the same access rules as the screens.
+  return { tickets: await ctx.data.collection('tickets').list({ where: { status: { ne: 'done' } } }) };
+});
+
+const summarize = defineNode<{ tickets: { title: string }[] }, { summary: string }>(async (ctx) => {
+  // ctx.llm is the Anthropic SDK client, already connected; ctx.model is the model to use.
+  const reply = await ctx.llm.messages.create({ model: ctx.model, max_tokens: 1024, messages: [{ role: 'user', content: `Summarize: ${JSON.stringify(ctx.input.tickets)}` }] });
+  return { summary: reply.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('') };
+});
+
+export const graphs = [defineNodes(specs[0]!, { collect, summarize })];
+```
+
+Every node of a graph needs code, and a node's output is JSON: it is the next node's input. A graph without `kelay/nodes.ts` does not deploy.
 
 ## Screens
 

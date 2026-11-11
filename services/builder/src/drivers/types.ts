@@ -1,6 +1,7 @@
 // Where a Builder workspace lives (docs/infrastructure.md §4.1). The sandbox holds the app's git repo,
 // the coding agent and `next dev`; everything that needs a platform secret stays outside it.
 import type { AgentEvent, AgentResult, AgentTurn } from '../agents/types.ts';
+import type { AppArtifacts } from '../artifacts/build.ts';
 import type { AgentInfo } from '../events.ts';
 
 export interface CommitInfo {
@@ -28,6 +29,11 @@ export interface Workspace {
   merge(branch: string, into: string): Promise<void>;
   /** What kelay/schema.ts, kelay/policy.ts and kelay/graphs.ts declare, as plain JSON. Throws `ManifestError` when they do not load. */
   manifest(): Promise<unknown>;
+  /**
+   * Builds the deployable bundles of the files as they are now (src/artifacts/build.ts) and puts
+   * `web.zip` and `nodes.zip` in `outDir` on the caller's side. Throws `BuildError` when the app does not build.
+   */
+  build(opts: { outDir: string; basePath: string }): Promise<AppArtifacts>;
   /** Starts the dev preview when it is not running and returns its URL. `env` is the runtime's platform environment. */
   startPreview(env: Record<string, string>): Promise<string>;
   previewUrl(): string | null;

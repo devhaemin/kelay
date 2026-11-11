@@ -3,6 +3,9 @@ export { ClaudeCodingAgent, DEFAULT_BUILDER_MODEL, AGENT_TOOLS, PROTECTED_PATHS,
 export { ScriptedAgent } from './agents/scripted.ts';
 export { selectAgent, type AgentEnv } from './agents/select.ts';
 export { AgentError, type AgentEvent, type AgentResult, type AgentTurn, type CodingAgent } from './agents/types.ts';
+export { BuildError, NODES_ENTRY, buildAppArtifacts, type AppArtifacts, type BuildOptions, type BuiltArtifact } from './artifacts/build.ts';
+export { LocalArtifactStore, S3ArtifactStore, artifactKey, artifactStoreFromEnv, type ArtifactStore, type ArtifactStoreEnv, type S3ArtifactStoreOptions } from './artifacts/store.ts';
+export { createWebHandler, type WebEvent, type WebHandler, type WebHandlerOptions, type WebResult } from './artifacts/web-handler.ts';
 export { checkManifest, describeProblems, type CheckResult, type DeployableApp } from './check.ts';
 export { ControlClient, type AppInfo, type ControlApi, type DeployRequest, type DeployedVersion, type ImprovementJob, type RunOutcome, type SandboxRecord } from './control.ts';
 export { FargateWorkspaceDriver, type FargateDriverOptions } from './drivers/fargate.ts';

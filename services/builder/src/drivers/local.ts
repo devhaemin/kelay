@@ -9,6 +9,7 @@ import getPort from 'get-port';
 import { simpleGit, type SimpleGit } from 'simple-git';
 import { SLUG } from '@kelay/contracts';
 import type { AgentEvent, AgentTurn, CodingAgent } from '../agents/types.ts';
+import { buildAppArtifacts } from '../artifacts/build.ts';
 import { ManifestError, type CommitInfo, type Workspace, type WorkspaceDriver } from './types.ts';
 
 const TEMPLATE_SLUG = 'starter-app';
@@ -164,6 +165,10 @@ class LocalWorkspace implements Workspace {
     } catch {
       throw new ManifestError(`kelay/manifest.ts printed something that is not JSON: ${run.stdout.slice(0, 300)}`);
     }
+  }
+
+  build(opts: { outDir: string; basePath: string }) {
+    return buildAppArtifacts(this.dir, opts);
   }
 
   async startPreview(env: Record<string, string>): Promise<string> {

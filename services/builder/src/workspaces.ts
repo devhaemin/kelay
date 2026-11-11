@@ -1,11 +1,16 @@
 // One Builder workspace per app, and the turn every request goes through: the coding agent changes
-// files, the workspace commits, kelay/ is checked (a failure goes back to the agent once), the result is
-// deployed to Development through the Control API, and the dev preview is started.
+// files, the workspace commits, kelay/ is checked and the app's bundles are built (a failure of either
+// goes back to the agent once), the result is deployed to Development through the Control API, and
+// the dev preview is started.
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger } from 'pino';
 import type { AgentEvent } from './agents/types.ts';
+import { BuildError, NODES_ENTRY } from './artifacts/build.ts';
+import { artifactKey, type ArtifactStore } from './artifacts/store.ts';
 import { checkManifest, describeProblems, type CheckResult } from './check.ts';
 import type { AppInfo, ControlApi, ImprovementJob, RunOutcome } from './control.ts';
 import { ManifestError, type Workspace, type WorkspaceDriver } from './drivers/types.ts';
@@ -40,6 +45,8 @@ export interface TurnResult {
 
 interface SavedState {
   owner: string | null;
+  /** The builder's handle: a deployed app is served, and therefore built, under /<handle>/<app>. */
+  handle: string | null;
   sessionId: string | null;
   deployedCommit: string | null;
   version: string | null;
@@ -80,6 +87,11 @@ export interface WorkspaceManagerDeps {
   agent: AgentInfo;
   /** Creates app databases where nothing else does (the local stack). */
   provisioner?: DatabaseProvisioner;
+  /**
+   * Where the app's bundles go before each deploy. Without it nothing is built and a deploy names the
+   * workspace commit, which only the Control API's `local` deploy driver takes.
+   */
+  artifacts?: ArtifactStore;
   /** Platform URLs the dev preview needs: DATA_API_URL and CONTROL_API_URL. */
   runtimeEnv?: Record<string, string>;
   logger: Logger;
@@ -89,7 +101,9 @@ export interface WorkspaceManagerDeps {
 
 class TurnFailure extends Error {}
 
-const EMPTY_STATE: SavedState = { owner: null, sessionId: null, deployedCommit: null, version: null, versionId: null, callerToken: null, lastCommit: null };
+type Built = { ok: true; artifactUrl: string; nodesArtifactUrl?: string } | { ok: false; error: string };
+
+const EMPTY_STATE: SavedState = { owner: null, handle: null, sessionId: null, deployedCommit: null, version: null, versionId: null, callerToken: null, lastCommit: null };
 
 const firstLine = (text: string, max: number) => {
   const line = text.trim().split('\n')[0] ?? '';
@@ -166,14 +180,16 @@ export class WorkspaceManager {
     if (!(await this.deps.driver.exists(app.slug)) && app.deployedToDev) {
       throw new ApiError('conflict', `${app.name} was not built in this Builder, so its code is not here to continue from.`);
     }
+    entry.state.handle = app.handle;
     return this.launch(entry, { id: randomUUID(), kind: entry.state.deployedCommit ? 'message' : 'build', prompt, context: null, owner });
   }
 
   /** Builder chat: one agent turn on an existing workspace. */
-  async message(app: string, owner: string, text: string, context: string | null): Promise<{ turn: string; done: Promise<TurnResult> }> {
-    const entry = this.entry(app);
+  async message(app: Pick<AppInfo, 'slug' | 'handle'>, owner: string, text: string, context: string | null): Promise<{ turn: string; done: Promise<TurnResult> }> {
+    const entry = this.entry(app.slug);
     if (entry.running) throw new ApiError('conflict', 'The Builder is still working on the last request.');
-    if (!(await this.deps.driver.exists(app))) throw new ApiError('not_found', 'This app has no Builder workspace yet.');
+    if (!(await this.deps.driver.exists(app.slug))) throw new ApiError('not_found', 'This app has no Builder workspace yet.');
+    entry.state.handle = app.handle;
     return this.launch(entry, { id: randomUUID(), kind: entry.state.deployedCommit ? 'message' : 'build', prompt: text, context, owner });
   }
 
@@ -212,6 +228,26 @@ export class WorkspaceManager {
     } catch (e) {
       if (!(e instanceof ManifestError)) throw e;
       return { ok: false, problems: [{ path: 'kelay', message: `the files in kelay/ did not load: ${e.message}` }] };
+    }
+  }
+
+  /** Builds the bundles of the workspace's current commit and stores them. */
+  private async build(store: ArtifactStore, entry: Entry, workspace: Workspace, graphs: number): Promise<Built> {
+    if (!entry.state.handle) throw new TurnFailure('This workspace does not know its builder’s handle yet, so the app cannot be built. Send a message from the console once.');
+    const { commit } = await workspace.head();
+    const outDir = await mkdtemp(join(tmpdir(), 'kelay-build-'));
+    try {
+      const built = await workspace.build({ outDir, basePath: `/${entry.state.handle}/${entry.app}` });
+      // Each graph becomes a state machine that invokes the node function, so its code has to exist.
+      if (graphs > 0 && !built.nodes) return { ok: false, error: `kelay/graphs.ts declares ${graphs === 1 ? 'a graph' : 'graphs'}, but ${NODES_ENTRY} with the code of the nodes is missing.` };
+      const artifactUrl = await store.put(artifactKey(entry.app, commit, 'web.zip'), built.web.file);
+      const nodesArtifactUrl = built.nodes ? await store.put(artifactKey(entry.app, commit, 'nodes.zip'), built.nodes.file) : undefined;
+      return { ok: true, artifactUrl, ...(nodesArtifactUrl ? { nodesArtifactUrl } : {}) };
+    } catch (e) {
+      if (!(e instanceof BuildError)) throw e;
+      return { ok: false, error: e.message };
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
     }
   }
 
@@ -275,14 +311,32 @@ export class WorkspaceManager {
         beginStep('check', 'Checking data and access rules');
         let check = await this.check(workspace);
         emit({ type: 'validation', ok: check.ok, attempt: 1, problems: check.problems });
-        if (!check.ok) {
-          beginStep('fix', 'Fixing what the check found');
-          await runAgent(`The platform checked kelay/ after your changes and it did not pass, so nothing was deployed:\n\n${describeProblems(check.problems)}\n\nFix exactly these problems.`);
-          await commit('Fix what the check of kelay/ found');
+        // Null when this Builder keeps no artifacts: then nothing is built.
+        const build = async (attempt: number, graphs: number): Promise<Built | null> => {
+          const store = this.deps.artifacts;
+          if (!store) return null;
+          beginStep(attempt === 1 ? 'build' : 'build-2', attempt === 1 ? 'Building the app' : 'Building the app again');
+          const result = await this.build(store, entry, workspace!, graphs);
+          emit({ type: 'build', ok: result.ok, attempt, error: result.ok ? null : result.error });
+          return result;
+        };
+        let built = check.ok ? await build(1, check.app.graphs.length) : null;
+        if (!check.ok || built?.ok === false) {
+          if (!check.ok) {
+            beginStep('fix', 'Fixing what the check found');
+            await runAgent(`The platform checked kelay/ after your changes and it did not pass, so nothing was deployed:\n\n${describeProblems(check.problems)}\n\nFix exactly these problems.`);
+            await commit('Fix what the check of kelay/ found');
+          } else if (built?.ok === false) {
+            beginStep('fix', 'Fixing what the build found');
+            await runAgent(`The platform built the app after your changes and the build failed, so nothing was deployed:\n\n${built.error}\n\nFix exactly what the build reports.`);
+            await commit('Fix what the build found');
+          }
           beginStep('check-2', 'Checking data and access rules again');
           check = await this.check(workspace);
           emit({ type: 'validation', ok: check.ok, attempt: 2, problems: check.problems });
           if (!check.ok) throw new TurnFailure('The app’s data and access rules still do not pass the check, so nothing was deployed.');
+          built = await build(2, check.app.graphs.length);
+          if (built?.ok === false) throw new TurnFailure(`The app still does not build, so nothing was deployed: ${firstLine(built.error, 300)}`);
         }
 
         beginStep('deploy', 'Deploying to Development');
@@ -291,7 +345,7 @@ export class WorkspaceManager {
           if (this.deps.provisioner) await this.deps.control.setDatabase(app, 'dev', await this.deps.provisioner.ensure(app, 'dev'));
           const version = await this.deps.control.deploy(app, 'dev', {
             commit: deployed,
-            artifactUrl: `workspace://${app}/${deployed}`,
+            ...(built?.ok ? { artifactUrl: built.artifactUrl, ...(built.nodesArtifactUrl ? { nodesArtifactUrl: built.nodesArtifactUrl } : {}) } : { artifactUrl: `workspace://${app}/${deployed}` }),
             configVersion: `cfg-${deployed.slice(0, 12)}`,
             ...check.app,
           });

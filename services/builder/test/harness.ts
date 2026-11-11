@@ -7,6 +7,7 @@ import { createDevSigner, type DevSigner } from '@kelay/tokens';
 import { CONSOLE_APP, createBuilderApi } from '../src/app.ts';
 import { ScriptedAgent } from '../src/agents/scripted.ts';
 import type { CodingAgent } from '../src/agents/types.ts';
+import type { ArtifactStore } from '../src/artifacts/store.ts';
 import type { AppInfo, ControlApi, DeployRequest, DeployedVersion, ImprovementJob, RunOutcome, SandboxRecord } from '../src/control.ts';
 import { LocalWorkspaceDriver, type PreviewLauncher } from '../src/drivers/local.ts';
 import { ApiError } from '../src/errors.ts';
@@ -80,7 +81,7 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function createHarness(opts: { agent?: CodingAgent } = {}): Promise<Harness> {
+export async function createHarness(opts: { agent?: CodingAgent; artifacts?: ArtifactStore } = {}): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), 'kelay-builder-'));
   const control = new FakeControl();
   const signer = await createDevSigner();
@@ -101,6 +102,7 @@ export async function createHarness(opts: { agent?: CodingAgent } = {}): Promise
     logger,
     runtimeEnv: { DATA_API_URL: 'http://localhost:4002', CONTROL_API_URL: 'http://localhost:4003' },
     provisioner: { ensure: async (app, env) => `postgres://test/app_${app.replaceAll('-', '_')}_${env}` },
+    ...(opts.artifacts ? { artifacts: opts.artifacts } : {}),
     idleMs: 0,
   });
   const api = createBuilderApi({ auth: { issuer: signer.issuer, jwks: signer.verifier }, control, workspaces, logger });
@@ -124,7 +126,7 @@ export async function createHarness(opts: { agent?: CodingAgent } = {}): Promise
     },
     async settled(app) {
       const log = workspaces.events(app);
-      for (let i = 0; i < 600; i++) {
+      for (let i = 0; i < 3600; i++) {
         if ((await workspaces.status(app))?.state !== 'working' && log.last?.type === 'turn.finished') return log.since(0);
         await new Promise((r) => setTimeout(r, 50));
       }

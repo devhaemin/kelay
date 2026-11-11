@@ -15,7 +15,10 @@ export interface AppInfo {
 
 export interface DeployRequest {
   commit: string;
+  /** The web function's bundle. */
   artifactUrl: string;
+  /** The node function's bundle, when the app has agent nodes. */
+  nodesArtifactUrl?: string;
   configVersion: string;
   schema: AppSchema;
   policy: PolicyMatrix;

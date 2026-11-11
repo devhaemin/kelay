@@ -60,6 +60,23 @@ describe('deploy and publish with the local driver', () => {
     expect(entry.body).toMatchObject({ schema: { app: APP }, databaseUrl: 'postgres://kelay:kelay@localhost:54320/app_ticket_board_dev' });
   });
 
+  it('keeps the node bundle of a build, also when the same build is deployed again', async () => {
+    const web = `s3://kelay-artifacts/builds/${APP}/n1/web.zip`;
+    const nodes = `s3://kelay-artifacts/builds/${APP}/n1/nodes.zip`;
+    const first = await h.req('POST', `/v1/apps/${APP}/envs/dev/deploy`, { token: builder, body: { commit: 'n1', artifactUrl: web, nodesArtifactUrl: nodes, configVersion: 'cfg-n1' } });
+    expect(first.body.version).toMatchObject({ artifactUrl: web, nodesArtifactUrl: nodes });
+    expect(driver.deployed.at(-1)).toMatchObject({ artifactUrl: web, nodesArtifactUrl: nodes });
+
+    // The console deploys saved access rules by sending the active build again, without the node bundle.
+    const again = await h.req('POST', `/v1/apps/${APP}/envs/dev/deploy`, { token: builder, body: { commit: 'n1', artifactUrl: web, configVersion: 'cfg-n1' } });
+    expect(again.body.version).toMatchObject({ artifactUrl: web, nodesArtifactUrl: nodes });
+
+    // Another build without nodes does not inherit them.
+    const other = await h.req('POST', `/v1/apps/${APP}/envs/dev/deploy`, { token: builder, body: build('n2') });
+    expect(other.body.version.nodesArtifactUrl).toBeNull();
+    expect(driver.deployed.at(-1)?.nodesArtifactUrl).toBeNull();
+  });
+
   it('validates the env and the schema app', async () => {
     expect((await h.req('POST', `/v1/apps/${APP}/envs/staging/deploy`, { token: builder, body: build('c3') })).status).toBe(400);
     const wrong = await h.req('POST', `/v1/apps/${APP}/envs/dev/deploy`, { token: builder, body: { ...build('c3'), schema: { ...schema, app: 'team-wiki' } } });

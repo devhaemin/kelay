@@ -12,4 +12,4 @@ declare module '@kelay/sdk' {
 
 const onServer = () => 'added-on-the-server';
 
-export const kelay = createKelayClient({ dataApiUrl: '/api/kelay', app, getUserToken: onServer, getCallerToken: onServer });
+export const kelay = createKelayClient({ dataApiUrl: `${process.env.NEXT_PUBLIC_KELAY_BASE_PATH ?? ''}/api/kelay`, app, getUserToken: onServer, getCallerToken: onServer });

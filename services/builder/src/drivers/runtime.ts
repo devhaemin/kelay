@@ -1,15 +1,27 @@
 // A workspace in another process. Inside a Fargate task the image runs `createRuntimeApp` over a local
 // workspace (src/runtime-server.ts); the Builder service talks to it through `RemoteWorkspace`. The task
 // holds the repo, the coding agent and `next dev`, and no platform secret: checks and deploys stay here.
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, mkdtemp, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import { AgentError, type AgentEvent, type AgentResult, type AgentTurn } from '../agents/types.ts';
+import { BuildError, type AppArtifacts, type BuiltArtifact } from '../artifacts/build.ts';
 import type { AgentInfo } from '../events.ts';
 import { ManifestError, type CommitInfo, type Workspace } from './types.ts';
 
 export const RUNTIME_TOKEN_HEADER = 'x-kelay-runtime-token';
 
 type AgentLine = { event: AgentEvent } | { result: AgentResult } | { error: string };
+
+const ARTIFACTS = ['web', 'nodes'] as const;
+/** What a build reports over the wire: the files themselves are fetched from /runtime/artifacts. */
+type BuiltReport = Record<(typeof ARTIFACTS)[number], Omit<BuiltArtifact, 'file'> | null>;
 
 export function createRuntimeApp(workspace: Workspace, token: string): Hono {
   const app = new Hono();
@@ -18,7 +30,7 @@ export function createRuntimeApp(workspace: Workspace, token: string): Hono {
     if (c.req.header(RUNTIME_TOKEN_HEADER) !== token) return c.json({ error: 'wrong runtime token' }, 403);
     await next();
   });
-  app.onError((e, c) => c.json({ error: e.message, manifest: e instanceof ManifestError }, 500));
+  app.onError((e, c) => c.json({ error: e.message, manifest: e instanceof ManifestError, build: e instanceof BuildError }, 500));
 
   app.get('/runtime/info', async (c) => c.json({ app: workspace.app, created: workspace.created, agent: workspace.agent, previewUrl: workspace.previewUrl() }));
   app.get('/runtime/head', async (c) => c.json(await workspace.head()));
@@ -33,6 +45,24 @@ export function createRuntimeApp(workspace: Workspace, token: string): Hono {
     await workspace.merge(branch, into);
     return c.json({ ok: true });
   });
+  // The bundles stay in the task until the Builder has fetched them: the task may not write to the artifact store.
+  let artifactsDir: Promise<string> | null = null;
+  app.post('/runtime/build', async (c) => {
+    const { basePath } = await c.req.json<{ basePath: string }>();
+    artifactsDir ??= mkdtemp(join(tmpdir(), 'kelay-artifacts-'));
+    const built = await workspace.build({ outDir: await artifactsDir, basePath });
+    const report = ({ file: _file, ...rest }: BuiltArtifact) => rest;
+    return c.json({ web: report(built.web), nodes: built.nodes ? report(built.nodes) : null } satisfies BuiltReport);
+  });
+  app.get('/runtime/artifacts/:name', async (c) => {
+    const name = ARTIFACTS.find((a) => `${a}.zip` === c.req.param('name'));
+    if (!name || !artifactsDir) return c.json({ error: 'no such artifact' }, 404);
+    const file = join(await artifactsDir, `${name}.zip`);
+    const info = await stat(file).catch(() => null);
+    if (!info) return c.json({ error: 'no such artifact' }, 404);
+    return new Response(Readable.toWeb(createReadStream(file)) as unknown as ReadableStream, { headers: { 'content-type': 'application/zip', 'content-length': String(info.size) } });
+  });
+
   app.post('/runtime/preview', async (c) => c.json({ url: await workspace.startPreview((await c.req.json<{ env: Record<string, string> }>()).env) }));
   app.post('/runtime/stop', async (c) => {
     await workspace.stop();
@@ -101,9 +131,9 @@ export class RemoteWorkspace implements Workspace {
       ...(signal ? { signal } : {}),
     });
     if (!res.ok) {
-      const failure = (await res.json().catch(() => null)) as { error?: string; manifest?: boolean } | null;
+      const failure = (await res.json().catch(() => null)) as { error?: string; manifest?: boolean; build?: boolean } | null;
       const message = failure?.error ?? `workspace runtime answered ${res.status}`;
-      throw failure?.manifest ? new ManifestError(message) : new Error(message);
+      throw failure?.manifest ? new ManifestError(message) : failure?.build ? new BuildError(message) : new Error(message);
     }
     return res;
   }
@@ -154,6 +184,24 @@ export class RemoteWorkspace implements Workspace {
 
   async manifest() {
     return (await this.call<{ manifest: unknown }>('GET', '/runtime/manifest')).manifest;
+  }
+
+  async build(opts: { outDir: string; basePath: string }): Promise<AppArtifacts> {
+    const report = await this.call<BuiltReport>('POST', '/runtime/build', { basePath: opts.basePath });
+    await mkdir(opts.outDir, { recursive: true });
+    const fetched = async (name: (typeof ARTIFACTS)[number]): Promise<BuiltArtifact | null> => {
+      const built = report[name];
+      if (!built) return null;
+      const file = join(opts.outDir, `${name}.zip`);
+      const res = await this.request('GET', `/runtime/artifacts/${name}.zip`);
+      await pipeline(Readable.fromWeb(res.body as unknown as WebReadableStream), createWriteStream(file));
+      const { size } = await stat(file);
+      if (size !== built.bytes) throw new Error(`${name}.zip arrived with ${size} bytes, the workspace built ${built.bytes}`);
+      return { ...built, file };
+    };
+    const web = await fetched('web');
+    if (!web) throw new Error('the workspace built no web bundle');
+    return { web, nodes: await fetched('nodes') };
   }
 
   async startPreview(env: Record<string, string>) {

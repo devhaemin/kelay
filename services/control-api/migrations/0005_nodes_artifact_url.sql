@@ -1,0 +1,1 @@
+ALTER TABLE "versions" ADD COLUMN "nodes_artifact_url" text;
