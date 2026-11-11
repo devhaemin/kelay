@@ -1,0 +1,3 @@
+# Copy to .dev.vars for `wrangler dev`. Needed only for routes whose origin is a Lambda function URL.
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
