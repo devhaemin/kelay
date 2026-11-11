@@ -43,6 +43,35 @@ describe('mock ConsoleApi', () => {
     expect((await api.getPreview(app.id))?.kind).toBe('fixture');
   });
 
+  it('keeps saved rules as a draft until the next deploy, and previews with them', async () => {
+    const api = fresh();
+    const before = await api.getPolicy('ticket-board');
+    expect(before).toMatchObject({ version: 'v12', draft: null });
+    expect((await api.previewAccess('ticket-board', 'u1'))?.collections.find((c) => c.collection === 'tickets')).toMatchObject({ readable: 4, total: 9, editable: 4, deletable: 0, canCreate: true });
+
+    const saved = await api.savePolicy('ticket-board', { ...before.matrix, member: { ...before.matrix.member, tickets: { read: 'all', create: 'all', update: 'mine', delete: 'none' } } });
+    expect(saved.draft).toMatchObject({ version: 'v13' });
+    expect((await api.previewAccess('ticket-board', 'u1'))?.collections.find((c) => c.collection === 'tickets')).toMatchObject({ readable: 9, editable: 4 });
+
+    await api.deploy('ticket-board', 'dev');
+    expect((await api.getPolicy('ticket-board')).draft).toBeNull();
+    expect(await api.previewAccess('team-wiki', 'u1')).toBeNull();
+  });
+
+  it('keeps replies under their ticket and revokes a consent for its app only', async () => {
+    const api = fresh();
+    expect((await api.getTicketThread('ticket-board', 'FB-129')).map((r) => r.who)).toEqual(['Kelay · auto-reply', 'Kelay · after you approved']);
+    await api.replyToTicket('ticket-board', 'FB-129', 'Thanks for the report.');
+    expect((await api.getTicketThread('ticket-board', 'FB-129')).at(-1)).toMatchObject({ who: 'Jeongyun Lee · reply', text: 'Thanks for the report.' });
+    expect((await api.listTickets('ticket-board')).find((t) => t.key === 'FB-129')?.replies).toBe(4);
+
+    await expect(api.revokeConsent('docs', 'a1')).rejects.toMatchObject({ status: 404 });
+    await api.revokeConsent('ticket-board', 'a1');
+    expect((await api.listConsents('ticket-board')).map((c) => c.id)).toEqual(['a2', 'a3']);
+    expect((await api.runQa('ticket-board')).total).toBe(24);
+    await expect(api.runQa('docs')).rejects.toMatchObject({ status: 409 });
+  });
+
   it('rejects roles the app schema does not declare', async () => {
     const api = fresh();
     await expect(api.updateMember('ticket-board', 'u1', { role: 'owner' })).rejects.toMatchObject({ status: 400 });

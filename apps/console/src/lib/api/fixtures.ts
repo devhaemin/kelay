@@ -81,7 +81,9 @@ const allOps = { read: 'all', create: 'all', update: 'all', delete: 'all' } as c
 export interface MockApp extends AppDetail {
   /** Fixture the dev preview stands in with; real apps have a preview URL instead. */
   template: string | null;
-  policy: AppPolicy;
+  policy: Pick<AppPolicy, 'schema' | 'matrix' | 'notes'>;
+  /** When access rules were last saved without a deploy after them. */
+  rulesSavedAt?: string | null;
   /** Milliseconds before "now". */
   updatedAgo: number;
 }

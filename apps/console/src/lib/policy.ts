@@ -1,12 +1,12 @@
 // Reads a PolicyMatrix (contracts §3) as plain-language rules and as the Postgres policies it
-// compiles to. The SQL here is for display; the policy compiler owns what actually installs.
-import type { AccessSample, AppSchema, Op, PolicyMatrix, Scope } from '@/lib/api/types';
+// compiles to. The SQL comes from @kelay/policy, the compiler that installs them.
+import { policyDefinition } from '@kelay/policy';
+import type { AccessSample, AppSchema, Op, PolicyMatrix, Scope } from './api/types';
 
 export type CollectionDef = AppSchema['collections'][number];
 
 export const OPS: readonly Op[] = ['read', 'create', 'update', 'delete'];
 const SCOPE_ORDER: readonly Scope[] = ['all', 'mine_shared', 'mine'];
-const SQL_OP: Record<Op, string> = { read: 'select', create: 'insert', update: 'update', delete: 'delete' };
 const VERB: Record<Op, string> = { read: 'view', create: 'create', update: 'edit', delete: 'delete' };
 
 export interface RuleRow {
@@ -73,42 +73,28 @@ export function scopePhrase(c: CollectionDef, scope: Scope, ops: readonly Op[]):
   return `${noun} ${ownerPhrase(c)}`;
 }
 
-function predicate(c: CollectionDef, scope: Scope, op: Op, clause: 'using' | 'check'): string | null {
-  const s = effectiveScope(c, scope);
-  const owner = `${ownerField(c)} = kelay.uid()`;
-  if (s === 'all') return null;
-  if (s === 'mine') return owner;
-  if (op === 'create') return null;
-  if (op === 'update' && clause === 'check') return owner;
-  return `(${owner} or shared)`;
-}
-
 /** Policy for one role × collection × op, named `<collection>_<op>_<role>` (contracts §3). */
 export function policySql(c: CollectionDef, role: string, op: Op, scope: Scope): string {
-  const name = `${c.name}_${op}_${role}`;
-  if (effectiveScope(c, scope) === 'none') return `-- ${name}: no policy, so ${VERB[op]} is denied`;
-  const body = (clause: 'using' | 'check') =>
-    ['org_id = kelay.org()', `kelay.role() = '${role}'`, predicate(c, scope, op, clause)]
-      .filter((x): x is string => x !== null)
-      .map((x, i) => `  ${i ? 'and ' : ''}${x}`)
-      .join('\n');
-  const clauses =
-    op === 'create' ? [`with check (\n${body('check')}\n)`]
-    : op === 'update' ? [`using (\n${body('using')}\n)`, `with check (\n${body('check')}\n)`]
-    : [`using (\n${body('using')}\n)`];
-  return `create policy "${name}"\non app.${c.name} for ${SQL_OP[op]}\n${clauses.join('\n')};`;
+  const p = policyDefinition(c, role, op, scope);
+  if (!p) return `-- ${c.name}_${op}_${role}: no policy, so ${VERB[op]} is denied`;
+  const clause = (keyword: string, predicate: string | null) => (predicate ? [`${keyword} (\n  ${predicate.split(' AND ').join('\n  AND ')}\n)`] : []);
+  return `CREATE POLICY "${p.name}"\nON ${p.table} FOR ${p.command}\n${[...clause('USING', p.using), ...clause('WITH CHECK', p.withCheck)].join('\n')};`;
 }
 
 /** Number of Postgres policies the matrix installs: one per role × collection × op that isn't `none`. */
 export const countPolicies = (matrix: PolicyMatrix): number =>
   Object.values(matrix).reduce((n, byCollection) => n + Object.values(byCollection).reduce((m, ops) => m + OPS.filter((op) => ops[op] !== 'none').length, 0), 0);
 
-export const withScope =(matrix: PolicyMatrix, role: string, collection: string, ops: readonly Op[], scope: Scope): PolicyMatrix => {
+export const withScope = (matrix: PolicyMatrix, role: string, collection: string, ops: readonly Op[], scope: Scope): PolicyMatrix => {
   const current = matrix[role]?.[collection] ?? { read: 'none', create: 'none', update: 'none', delete: 'none' };
   const next = { ...current };
   for (const op of ops) next[op] = scope;
   return { ...matrix, [role]: { ...matrix[role], [collection]: next } };
 };
+
+/** Whether a rule at `scope` lets `userId` act on a row they can already read. */
+export const allowsRow = (scope: Scope, row: AccessSample, userId: string): boolean =>
+  scope === 'all' || (scope !== 'none' && (row.ownerId === userId || (scope === 'mine_shared' && row.shared)));
 
 /** Rows a member with `role` can read, as RLS would return them. */
 export function visibleSamples(c: CollectionDef, matrix: PolicyMatrix, role: string, userId: string, samples: readonly AccessSample[]): AccessSample[] {

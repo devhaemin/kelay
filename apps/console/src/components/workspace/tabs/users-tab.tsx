@@ -3,10 +3,11 @@
 import clsx from 'clsx';
 import Link from 'next/link';
 import { Dialog } from 'radix-ui';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { createMockApi, getMockState } from '@/lib/api/mock';
+import { useRef, useState } from 'react';
+import { removeMemberAction, sendRecoveryAction, updateMemberAction } from '@/app/actions';
 import type { AppSummary, Member, MemberPatch, Provider } from '@/lib/api/types';
 import { formatAgo, formatDate } from '@/lib/format';
+import { useServerState } from '@/lib/use-server-state';
 import { useToast } from '../../toast';
 import { Avatar, Icon } from '../../ui';
 
@@ -24,7 +25,8 @@ const PROVIDERS: Record<Provider, [string, string]> = {
 const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const matches = (u: Member, f: Filter): boolean => f === 'all' || (f === 'admin' ? u.role === 'admin' : u.status === f);
 
-function ProviderBadge({ provider }: { provider: Provider }) {
+function ProviderBadge({ provider }: { provider: Provider | null }) {
+  if (!provider) return <span className="muted">—</span>;
   const [mark, color] = PROVIDERS[provider];
   return (
     <span className="prov">
@@ -40,13 +42,23 @@ function StatusBadge({ status }: { status: Member['status'] }) {
   return <span className="pill amber">Unconfirmed</span>;
 }
 
-export default function UsersTab({ app }: { app: AppSummary }) {
+export default function UsersTab({
+  app,
+  members: membersProp,
+  roles,
+  team,
+  now,
+}: {
+  app: AppSummary;
+  members: Member[];
+  /** Roles the app's schema declares. */
+  roles: string[];
+  team: string;
+  /** The moment "2 min ago" is measured from. */
+  now: number;
+}) {
   const notify = useToast();
-  const [members, setMembers] = useState<Member[] | null>(null);
-  const [roles, setRoles] = useState<string[]>([]);
-  const [team, setTeam] = useState('');
-  const [now, setNow] = useState(0);
-  const [removed, setRemoved] = useState(0);
+  const [all, setMembers] = useServerState(membersProp);
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -54,30 +66,13 @@ export default function UsersTab({ app }: { app: AppSummary }) {
   const lastOpened = useRef<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    let stale = false;
-    const api = createMockApi();
-    void Promise.all([api.listMembers(app.id), api.getPolicy(app.id), api.getMe()]).then(([m, policy, me]) => {
-      if (stale) return;
-      setMembers(m);
-      setRoles(policy.schema.roles);
-      setTeam(me.team);
-      // Sign-in times are fixed relative to the mock's clock, not to this render.
-      setNow(getMockState().now);
-    });
-    return () => {
-      stale = true;
-    };
-  }, [app.id]);
-
-  const all = useMemo(() => members ?? [], [members]);
   const count = (f: Filter) => all.filter((u) => matches(u, f)).length;
   const q = query.trim().toLowerCase();
   const rows = all.filter(
     (u) => matches(u, filter) && (!q || u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.userId.toLowerCase().includes(q)),
   );
   const open = all.find((u) => u.userId === openId) ?? null;
-  const total = Math.max(all.length, app.users - removed);
+  const total = Math.max(all.length, app.users);
 
   const filters: [Filter, string][] = [['all', 'All users'], ['active', 'Active'], ['unconfirmed', 'Unconfirmed'], ['admin', 'Admins']];
   if (count('banned') > 0 || filter === 'banned') filters.push(['banned', 'Banned']);
@@ -88,30 +83,24 @@ export default function UsersTab({ app }: { app: AppSummary }) {
   };
 
   const patch = async (u: Member, change: MemberPatch, message: string) => {
-    try {
-      const next = await createMockApi().updateMember(app.id, u.userId, change);
-      setMembers((list) => (list ?? []).map((m) => (m.userId === next.userId ? next : m)));
-      notify(message);
-    } catch (e) {
-      notify(e instanceof Error ? e.message : 'Something went wrong. Try again.');
-    }
+    const res = await updateMemberAction(app.id, u.userId, change);
+    if (!res.ok) return notify(res.error);
+    // The update answers with the stored row; the profile and connections stay as listed.
+    setMembers((list) => list.map((m) => (m.userId === u.userId ? { ...m, role: res.data.role, plan: res.data.plan, status: res.data.status } : m)));
+    notify(message);
   };
 
   const remove = async (u: Member) => {
-    try {
-      await createMockApi().removeMember(app.id, u.userId);
-      setMembers((list) => (list ?? []).filter((m) => m.userId !== u.userId));
-      setRemoved((n) => n + 1);
-      setOpenId(null);
-      notify(`${u.name} removed from ${team || 'the team'}`);
-    } catch (e) {
-      notify(e instanceof Error ? e.message : 'Something went wrong. Try again.');
-    }
+    const res = await removeMemberAction(app.id, u.userId);
+    if (!res.ok) return notify(res.error);
+    setMembers((list) => list.filter((m) => m.userId !== u.userId));
+    setOpenId(null);
+    notify(`${u.name} removed from ${team || app.name}`);
   };
 
   const recover = async (u: Member) => {
-    await createMockApi().sendPasswordRecovery(app.id, u.userId);
-    notify(`Password recovery sent to ${u.email}`);
+    const res = await sendRecoveryAction(app.id, u.userId);
+    notify(res.ok ? `Password recovery sent to ${u.email || u.name}` : res.error);
   };
 
   return (
@@ -169,7 +158,7 @@ export default function UsersTab({ app }: { app: AppSummary }) {
                       <Avatar id={u.userId} name={u.name} color={u.color} /> {u.name}
                     </button>
                   </td>
-                  <td className="muted">{u.email}</td>
+                  <td className="muted">{u.email || '—'}</td>
                   <td>{titleCase(u.role)}</td>
                   <td><ProviderBadge provider={u.provider} /></td>
                   <td>{u.assistant ?? <span className="muted">—</span>}</td>
@@ -180,7 +169,7 @@ export default function UsersTab({ app }: { app: AppSummary }) {
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={7}>
-                    <div className="empty">{members === null ? 'Loading…' : q ? `No users match “${query.trim()}”.` : 'No users here yet.'}</div>
+                    <div className="empty">{q ? `No users match “${query.trim()}”.` : 'No users here yet.'}</div>
                   </td>
                 </tr>
               )}
@@ -268,7 +257,7 @@ function UserDetails({
             <dt>Plan</dt><dd>{titleCase(u.plan)}</dd>
             <dt>Status</dt><dd><StatusBadge status={u.status} /></dd>
             <dt>Provider</dt><dd><ProviderBadge provider={u.provider} /></dd>
-            <dt>Created</dt><dd>{formatDate(u.createdAt)}</dd>
+            <dt>Created</dt><dd>{u.createdAt ? formatDate(u.createdAt) : '—'}</dd>
             <dt>Last sign in</dt><dd>{formatAgo(u.lastSignInAt, now)}</dd>
             <dt>UID</dt><dd className="mono">{u.userId}</dd>
           </dl>

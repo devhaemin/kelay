@@ -3,9 +3,11 @@
 import clsx from 'clsx';
 import { DropdownMenu } from 'radix-ui';
 import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
+import { decideProposalAction, getTicketThreadAction, replyToTicketAction, updateTicketAction } from '@/app/actions';
 import { ME, PEOPLE, REPORTS, TICKETS } from '@/lib/api/fixtures';
-import type { AppSummary, FeedbackTicket, ImprovementReport, Priority, ProposalState, TicketStatus, TicketType } from '@/lib/api/types';
-import { formatLongDate } from '@/lib/format';
+import type { AppSummary, FeedbackTicket, ImprovementReport, Priority, ProposalState, TicketPatch, TicketReply, TicketStatus, TicketType } from '@/lib/api/types';
+import { formatDay, formatLongDate, formatTime } from '@/lib/format';
+import { useServerState } from '@/lib/use-server-state';
 import { CloseButton, DialogTitle, Drawer } from '../../dialogs';
 import { useUiPrefs } from '../../providers';
 import { useToast } from '../../toast';
@@ -27,9 +29,9 @@ export interface FeedbackTabProps {
   people?: Person[];
   /** Team the reporters belong to, shown in the ticket drawer. */
   team?: string;
-  /** Lets the shell persist a decision (server action) and refresh the tab count. */
-  onProposalChange?: (proposalId: string, state: ProposalState) => void;
 }
+
+const DECISION_VERB: Record<ProposalState, string> = { approved: 'approve', rejected: 'reject', pending: 'undo' };
 
 const COLUMNS: { status: TicketStatus; label: string; tone: 'blue' | 'amber' | 'violet' | 'green' }[] = [
   { status: 'new', label: 'New', tone: 'blue' },
@@ -53,12 +55,12 @@ const PRIORITY: Record<Priority, { glyph: string; color: string; label: string }
 
 type TypeFilter = 'all' | TicketType;
 
-export default function FeedbackTab({ app, tickets: ticketsProp, reports: reportsProp, people = PEOPLE, team = ME.team, onProposalChange }: FeedbackTabProps) {
+export default function FeedbackTab({ app, tickets: ticketsProp, reports: reportsProp, people = PEOPLE, team = ME.team }: FeedbackTabProps) {
   const toast = useToast();
   const { setChatOpen } = useUiPrefs();
   const headingId = useId();
 
-  const tickets = useMemo(() => ticketsProp ?? TICKETS.filter((t) => t.app === app.id), [ticketsProp, app.id]);
+  const [tickets, setTickets] = useServerState(useMemo(() => ticketsProp ?? TICKETS.filter((t) => t.app === app.id), [ticketsProp, app.id]));
   const reports = useMemo(
     () => reportsProp ?? REPORTS.filter((r) => r.app === app.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [reportsProp, app.id],
@@ -71,9 +73,11 @@ export default function FeedbackTab({ app, tickets: ticketsProp, reports: report
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
-  const [sent, setSent] = useState<Record<string, string[]>>({});
+  // Replies under each opened ticket; a key is absent until its thread has loaded.
+  const [threads, setThreads] = useState<Record<string, TicketReply[]>>({});
   const [replying, setReplying] = useState(false);
   const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
 
   const report = reports.find((r) => r.id === reportId) ?? reports[0] ?? null;
   const proposals = report?.proposals ?? [];
@@ -81,9 +85,18 @@ export default function FeedbackTab({ app, tickets: ticketsProp, reports: report
   const approved = proposals.filter((p) => stateOf(p) === 'approved').length;
   const pending = proposals.filter((p) => stateOf(p) === 'pending');
 
-  const decide = (ids: string[], state: ProposalState) => {
+  /** Shows the decision at once, saves it, and takes it back if the save fails. Each save refreshes the tab count and the App Graph. */
+  const decide = async (ids: string[], state: ProposalState, message?: string) => {
     setDecisions((d) => ({ ...d, ...Object.fromEntries(ids.map((id) => [id, state])) }));
-    ids.forEach((id) => onProposalChange?.(id, state));
+    let failed = false;
+    for (const id of ids) {
+      const res = await decideProposalAction(id, state);
+      if (res.ok) continue;
+      failed = true;
+      setDecisions(({ [id]: _dropped, ...rest }) => rest);
+      toast(`Couldn’t ${DECISION_VERB[state]} — ${res.error}`);
+    }
+    if (!failed && message) toast(message);
   };
 
   // The ticket has to be on the board before it can be scrolled to, so the scroll waits for the
@@ -115,16 +128,32 @@ export default function FeedbackTab({ app, tickets: ticketsProp, reports: report
     setOpenKey(key);
     setReplying(false);
     setDraft('');
+    void getTicketThreadAction(app.id, key).then((res) => {
+      if (res.ok) setThreads((t) => ({ ...t, [key]: res.data }));
+      else toast(`Couldn’t load the conversation — ${res.error}`);
+    });
   };
 
-  const sendReply = (e: FormEvent) => {
+  const sendReply = async (e: FormEvent) => {
     e.preventDefault();
     const text = draft.trim();
-    if (!open || !text) return;
-    setSent((s) => ({ ...s, [open.key]: [...(s[open.key] ?? []), text] }));
+    if (!open || !text || sending) return;
+    const { key, reporterId } = open;
+    setSending(true);
+    const res = await replyToTicketAction(app.id, key, text);
+    setSending(false);
+    if (!res.ok) return toast(`Reply not sent — ${res.error}`);
+    setThreads((t) => ({ ...t, [key]: [...(t[key] ?? []), res.data] }));
     setDraft('');
     setReplying(false);
-    toast(`Reply sent to ${person(open.reporterId).name}`);
+    toast(`Reply sent to ${person(reporterId).name}`);
+  };
+
+  const patchTicket = async (t: FeedbackTicket, patch: TicketPatch, message: string) => {
+    const res = await updateTicketAction(app.id, t.key, patch);
+    if (!res.ok) return toast(res.error);
+    setTickets((list) => list.map((x) => (x.key === t.key ? { ...x, status: res.data.status, priority: res.data.priority } : x)));
+    toast(message);
   };
 
   return (
@@ -208,10 +237,7 @@ export default function FeedbackTab({ app, tickets: ticketsProp, reports: report
                         type="button"
                         className="btn sm primary"
                         aria-label={`Approve: ${p.title}`}
-                        onClick={() => {
-                          decide([p.id], 'approved');
-                          toast(p.grantId ? `Approved — ${app.name} can now write to Team Wiki` : 'Approved — building it in Development');
-                        }}
+                        onClick={() => decide([p.id], 'approved', p.grantId ? `Approved — ${app.name} can now write to Team Wiki` : 'Approved — building it in Development')}
                       >
                         <Icon name="check" size={14} /> Approve
                       </button>
@@ -239,10 +265,7 @@ export default function FeedbackTab({ app, tickets: ticketsProp, reports: report
             type="button"
             className="btn sm accent"
             disabled={pending.length === 0}
-            onClick={() => {
-              decide(pending.map((p) => p.id), 'approved');
-              toast('All proposals approved');
-            }}
+            onClick={() => decide(pending.map((p) => p.id), 'approved', 'All proposals approved')}
           >
             <Icon name="check" size={14} /> Approve all
           </button>
@@ -294,7 +317,7 @@ export default function FeedbackTab({ app, tickets: ticketsProp, reports: report
                 {list.map((t) => {
                   const prio = PRIORITY[t.priority];
                   const by = person(t.reporterId);
-                  const replies = t.replies + (sent[t.key]?.length ?? 0);
+                  const replies = Math.max(t.replies, threads[t.key]?.filter((r) => r.at).length ?? 0);
                   return (
                     <li key={t.key}>
                       <button
@@ -351,25 +374,40 @@ export default function FeedbackTab({ app, tickets: ticketsProp, reports: report
                 <dt>Channel</dt><dd>/feedback in {app.name}</dd>
                 <dt>Votes</dt><dd>▲ {open.votes} people</dd>
                 <dt>Status</dt>
-                <dd>{open.fixedIn ? <span className="pill green">Fixed in {open.fixedIn}</span> : <span className="pill">{open.status}</span>}</dd>
+                <dd style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <select
+                    className="select sm"
+                    aria-label={`Status of ${open.key}`}
+                    value={open.status}
+                    onChange={(e) => patchTicket(open, { status: e.target.value as TicketStatus }, `${open.key} moved to ${COLUMNS.find((c) => c.status === e.target.value)?.label ?? e.target.value}`)}
+                  >
+                    {COLUMNS.map((c) => <option key={c.status} value={c.status}>{c.label}</option>)}
+                  </select>
+                  {open.fixedIn && <span className="pill green">Fixed in {open.fixedIn}</span>}
+                </dd>
+                <dt>Priority</dt>
+                <dd>
+                  <select
+                    className="select sm"
+                    aria-label={`Priority of ${open.key}`}
+                    value={open.priority}
+                    onChange={(e) => patchTicket(open, { priority: e.target.value as Priority }, `${open.key} is now ${PRIORITY[e.target.value as Priority].label.toLowerCase()}`)}
+                  >
+                    {(['high', 'med', 'low'] as const).map((p) => <option key={p} value={p}>{PRIORITY[p].label.replace(' priority', '')}</option>)}
+                  </select>
+                </dd>
               </dl>
               <div>
                 <h4>Conversation</h4>
                 <div className={styles.thread}>
                   <div className="bubble"><div className="who">{person(open.reporterId).name} · /feedback</div>{open.quote.replace(/[“”]/g, '')}</div>
-                  <div className="bubble agent">
-                    <div className="who">Kelay · auto-reply</div>
-                    Thanks! Logged as {open.key}. {open.votes - 1} others asked for the same. We’ll tell you when it ships.
-                  </div>
-                  {open.fixedIn && (
-                    <div className="bubble agent">
-                      <div className="who">Kelay · after you approved</div>
-                      This is fixed in {open.fixedIn}. Try it again — and send another /feedback if anything’s off.
+                  {(threads[open.key] ?? []).map((r) => (
+                    <div key={r.id} className="bubble agent">
+                      <div className="who">{r.who}{r.at && ` · ${formatDay(r.at)} ${formatTime(r.at)}`}</div>
+                      {r.text}
                     </div>
-                  )}
-                  {(sent[open.key] ?? []).map((text, i) => (
-                    <div key={i} className="bubble agent"><div className="who">{ME.name} · reply</div>{text}</div>
                   ))}
+                  {!threads[open.key] && <div className="small muted">Loading replies…</div>}
                 </div>
               </div>
               {replying ? (
@@ -384,7 +422,7 @@ export default function FeedbackTab({ app, tickets: ticketsProp, reports: report
                     onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit(); }}
                   />
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="submit" className="btn sm primary" disabled={!draft.trim()}>Send reply</button>
+                    <button type="submit" className="btn sm primary" disabled={!draft.trim() || sending}>{sending ? 'Sending…' : 'Send reply'}</button>
                     <button type="button" className="btn sm ghost" onClick={() => { setReplying(false); setDraft(''); }}>Cancel</button>
                   </div>
                 </form>

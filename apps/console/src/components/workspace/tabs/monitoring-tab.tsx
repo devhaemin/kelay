@@ -1,10 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState, type ReactNode } from 'react';
-import { createMockApi } from '@/lib/api/mock';
+import { useRef, useState, useTransition, type ReactNode } from 'react';
+import { loadMetricsAction } from '@/app/actions';
 import { AGENTS_NODE, IDENTITY_NODE, type AppMetrics, type AppSummary, type Grant, type MetricsRange, type RecentAction } from '@/lib/api/types';
-import { formatDay, formatHour } from '@/lib/format';
+import { formatDay, formatHour, formatTime } from '@/lib/format';
+import { useServerState } from '@/lib/use-server-state';
+import { useToast } from '../../toast';
 import { Icon, ProtoTag, Seg } from '../../ui';
 
 const RANGES = [
@@ -16,49 +18,51 @@ const RANGES = [
 const ACTIONS_COLOR = '#4f6bff';
 const ERRORS_COLOR = '#d64545';
 
-interface Loaded {
-  range: MetricsRange;
-  metrics: AppMetrics | null;
-}
+const INITIAL_RANGE: MetricsRange = '14d';
 
-export default function MonitoringTab({ app }: { app: AppSummary }) {
-  const [range, setRange] = useState<MetricsRange>('14d');
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [grants, setGrants] = useState<Grant[]>([]);
-  const [names, setNames] = useState<Record<string, string>>({ [app.id]: app.name });
+export default function MonitoringTab({
+  app,
+  initialMetrics,
+  grants,
+  appNames,
+  memberNames,
+}: {
+  app: AppSummary;
+  /** Metrics for the 14-day range, or null when the app has none; other ranges load through an action. */
+  initialMetrics: AppMetrics | null;
+  /** Connections this app is one end of. */
+  grants: Grant[];
+  appNames: Record<string, string>;
+  /** Names for the user ids recent actions carry. */
+  memberNames: Record<string, string>;
+}) {
+  const notify = useToast();
+  const [metrics, setMetrics] = useServerState(initialMetrics);
+  const [range, setRange] = useState<MetricsRange>(initialMetrics?.range ?? INITIAL_RANGE);
+  const [loading, startLoading] = useTransition();
+  // Only the newest request may land: a slow answer for a range the builder already left is dropped.
+  const latest = useRef(0);
 
-  useEffect(() => {
-    let stale = false;
-    const api = createMockApi();
-    void Promise.all([api.listGrants(), api.listApps()]).then(([g, apps]) => {
-      if (stale) return;
-      setGrants(g.filter((l) => l.from === app.id || l.to === app.id));
-      setNames(Object.fromEntries(apps.map((a) => [a.id, a.name])));
+  const nodeName = (id: string) => (id === AGENTS_NODE ? 'Personal agents' : id === IDENTITY_NODE ? 'Kelay ID' : (appNames[id] ?? id));
+
+  const changeRange = (next: MetricsRange) => {
+    const request = ++latest.current;
+    setRange(next);
+    startLoading(async () => {
+      const res = await loadMetricsAction(app.id, next);
+      if (request !== latest.current) return;
+      if (res.ok) setMetrics(res.data);
+      else notify(res.error);
     });
-    return () => {
-      stale = true;
-    };
-  }, [app.id]);
+  };
 
-  useEffect(() => {
-    let stale = false;
-    void createMockApi()
-      .getMetrics(app.id, range)
-      .then((metrics) => {
-        if (!stale) setLoaded({ range, metrics });
-      });
-    return () => {
-      stale = true;
-    };
-  }, [app.id, range]);
-
-  const nodeName = (id: string) => (id === AGENTS_NODE ? 'Personal agents' : id === IDENTITY_NODE ? 'Kelay ID' : (names[id] ?? id));
-  const metrics = loaded?.metrics ?? null;
+  const timed = metrics?.recent.some((r) => r.at) ?? false;
 
   return (
     <>
       <div className="toolbar">
-        <Seg label="Time range" options={RANGES} value={range} onChange={setRange} />
+        {/* Fresh server props put the 14-day metrics back, so the shown range follows the data once it has landed. */}
+        <Seg label="Time range" options={RANGES} value={loading ? range : (metrics?.range ?? range)} onChange={changeRange} />
         {metrics &&
           (metrics.healthy ? (
             <span className="pill green"><span className="dot" />All systems normal</span>
@@ -68,7 +72,7 @@ export default function MonitoringTab({ app }: { app: AppSummary }) {
       </div>
 
       {metrics ? (
-        <div className="kpis" aria-busy={loaded?.range !== range}>
+        <div className="kpis" aria-busy={loading}>
           <Kpi label="Active members (7d)" value={`${metrics.activeMembers.value} / ${metrics.activeMembers.total}`}>
             <Delta value={metrics.activeMembers.delta} />
           </Kpi>
@@ -102,7 +106,7 @@ export default function MonitoringTab({ app }: { app: AppSummary }) {
               <LineChart series={metrics.series} range={metrics.range} />
             </div>
           ) : (
-            <div className="empty">{loaded ? 'No activity yet. Actions and errors show up here once people use the app.' : 'Loading…'}</div>
+            <div className="empty">No activity yet. Actions and errors show up here once people use the app.</div>
           )}
         </section>
 
@@ -142,23 +146,24 @@ export default function MonitoringTab({ app }: { app: AppSummary }) {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th scope="col">Action</th><th scope="col">By</th><th scope="col">Status</th><th scope="col">Time</th><th scope="col">Called from</th></tr>
+                <tr><th scope="col">Action</th><th scope="col">By</th><th scope="col">Status</th><th scope="col">Time</th><th scope="col">Called from</th>{timed && <th scope="col">When</th>}</tr>
               </thead>
               <tbody>
                 {metrics.recent.map((r) => (
                   <tr key={r.id}>
-                    <td>{r.action}</td>
-                    <td>{r.by}</td>
+                    <td>{r.action}{r.args && <> <span className="muted">{r.args}</span></>}</td>
+                    <td>{memberNames[r.by] ?? (r.by || <span className="muted">—</span>)}</td>
                     <td><ActionStatus status={r.status} /></td>
                     <td>{r.ms}ms</td>
                     <td>{r.source}</td>
+                    {timed && <td className="muted">{r.at ? `${formatDay(r.at)} · ${formatTime(r.at)}` : '—'}</td>}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="empty">{loaded ? 'No actions yet.' : 'Loading…'}</div>
+          <div className="empty">No actions yet.</div>
         )}
       </section>
     </>

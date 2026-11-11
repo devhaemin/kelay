@@ -1,11 +1,14 @@
-// ConsoleApi over the Control API (services/control-api). Responses are mapped from the Control
-// API's views (slug, purpose, fromApp, ...) to the console's types. Reads the Control API has no
-// route for yet are marked PROVISIONAL: a 404 means "not available" and yields null.
+// ConsoleApi over the Control API (services/control-api, routes in its README). Responses are
+// mapped from the Control API's views (slug, purpose, fromApp, ...) to the console's types. Reads
+// the Control API has no route for yet are marked PROVISIONAL: a 404 means "not available".
 import { AppSchema, PolicyMatrix } from '@kelay/contracts';
 import { ApiError, isApiError } from './errors';
 import type {
+  AccessPreview,
+  AccessSample,
   AppDetail,
   AppMetrics,
+  AppPolicy,
   AppSummary,
   AssistantKind,
   Builder,
@@ -21,7 +24,10 @@ import type {
   Member,
   Proposal,
   ProposalDecision,
+  QaCheck,
   QaSummary,
+  RecentAction,
+  TicketReply,
   ToolCall,
 } from './types';
 
@@ -39,6 +45,7 @@ type Json = Record<string, unknown>;
 
 const STATUS_CODES: Record<number, string> = { 400: 'invalid_request', 401: 'unauthenticated', 403: 'denied', 404: 'not_found', 409: 'conflict', 429: 'rate_limited' };
 const REPORTS_WITH_PROPOSALS = 5;
+const PROVIDERS = ['google', 'email', 'kakao', 'github'] as const;
 
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
@@ -46,6 +53,8 @@ const num = (v: unknown, fallback = 0): number => (typeof v === 'number' && Numb
 const oneOf = <T extends string>(v: unknown, values: readonly T[], fallback: T): T => (values.includes(v as T) ? (v as T) : fallback);
 const obj = (v: unknown): Json => (isObject(v) ? v : {});
 const arr = (v: unknown): Json[] => (Array.isArray(v) ? v.filter(isObject) : []);
+const nums = (v: unknown): number[] => (Array.isArray(v) ? v.map((n) => num(n)) : []);
+const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 const unavailable = (what: string) => new ApiError('unavailable', `${what} isn’t available from the Control API yet`, 501);
 
@@ -157,13 +166,14 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     const userId = str(raw.userId) || str(raw.user_id);
     return {
       userId,
-      name: str(raw.name) || str(raw.email) || userId,
+      // Without a profile the id stands in for the name; ids are long, so the head of one is shown.
+      name: str(raw.name) || str(raw.email) || (userId.length > 12 ? `${userId.slice(0, 8)}…` : userId),
       email: str(raw.email),
       role: str(raw.role, 'member'),
       plan: str(raw.plan, 'free'),
       status: oneOf(raw.status, ['active', 'unconfirmed', 'banned'] as const, 'active'),
-      provider: oneOf(raw.provider, ['google', 'email', 'kakao', 'github'] as const, 'email'),
-      createdAt: str(raw.createdAt) || str(raw.created_at) || new Date(0).toISOString(),
+      provider: PROVIDERS.find((p) => p === raw.provider) ?? null,
+      createdAt: str(raw.createdAt) || str(raw.created_at) || null,
       lastSignInAt: str(raw.lastSignInAt) || null,
       assistant: str(raw.assistant) || null,
       otherApps: [],
@@ -194,7 +204,7 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       reportId: str(raw.reportId),
       title: str(raw.title),
       body: str(raw.body),
-      refs: Array.isArray(raw.refs) ? raw.refs.filter((r): r is string => typeof r === 'string') : [],
+      refs: strs(raw.refs),
       impact: oneOf(raw.impact, ['High', 'Med', 'Low'] as const, 'Med'),
       effort: oneOf(raw.effort, ['S', 'M', 'L'] as const, 'M'),
       affects: str(raw.affects),
@@ -239,9 +249,133 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       app: str(raw.app),
       userId: str(raw.userId),
       client: { id: clientId, name, kind: assistantKind(name, clientId) },
-      scopes: Array.isArray(raw.scopes) ? raw.scopes.filter((s): s is string => typeof s === 'string') : [],
+      scopes: strs(raw.scopes),
       grantedAt: str(raw.createdAt),
       lastUsedAt: str(raw.lastUsedAt) || null,
+    };
+  }
+
+  function toReply(raw: Json, reporter: string): TicketReply {
+    const actor = str(raw.actor);
+    return {
+      id: str(raw.id),
+      who: actor === reporter ? 'Reporter · reply' : actor.startsWith('service:') ? 'Kelay · reply' : 'Team · reply',
+      text: str(obj(raw.data).text),
+      at: str(raw.createdAt) || null,
+    };
+  }
+
+  function toPolicy(body: Json): AppPolicy {
+    const draft = isObject(body.draft) ? body.draft : null;
+    return {
+      schema: AppSchema.parse(body.schema),
+      matrix: PolicyMatrix.parse(draft?.policy ?? body.policy ?? {}),
+      notes: arr(body.notes).map((n) => ({
+        role: str(n.role),
+        collection: str(n.collection),
+        op: oneOf(n.op, ['read', 'create', 'update', 'delete'] as const, 'read'),
+        from: str(n.from),
+      })),
+      version: str(obj(body.version).label) || null,
+      draft: draft ? { version: str(draft.label), savedAt: str(draft.createdAt) } : null,
+    };
+  }
+
+  function toPreview(raw: Json): AccessPreview {
+    const as = obj(raw.as);
+    return {
+      userId: str(as.userId),
+      role: str(as.role),
+      version: str(obj(raw.version).label) || null,
+      collections: arr(raw.collections).map((c) => ({
+        collection: str(c.collection),
+        label: str(c.label, str(c.collection)),
+        readable: num(obj(c.read).count),
+        editable: num(obj(c.update).count),
+        deletable: num(obj(c.delete).count),
+        canCreate: obj(c.create).allowed === true,
+        total: null,
+        rows: arr(c.rows).map(
+          (r): AccessSample => ({
+            id: str(r.id),
+            label: str(r.label, str(r.id)),
+            ownerId: str(r.ownerId) || null,
+            createdBy: str(r.createdBy) || null,
+            shared: r.shared === true,
+            canUpdate: r.canUpdate === true,
+            canDelete: r.canDelete === true,
+          }),
+        ),
+      })),
+    };
+  }
+
+  function toMetrics(raw: Json): AppMetrics {
+    const active = obj(raw.activeMembers);
+    const today = obj(raw.actionsToday);
+    const errors = obj(raw.screenErrors7d);
+    const series = obj(raw.series);
+    return {
+      range: oneOf(raw.range, ['24h', '14d', '30d'] as const, '24h'),
+      healthy: raw.healthy !== false,
+      activeMembers: { value: num(active.value), total: num(active.total), delta: num(active.delta) },
+      actionsToday: { value: num(today.value), deltaPct: num(today.deltaPct) },
+      screenErrors7d: { value: num(errors.value), note: str(errors.note) || null },
+      agentActionsToday: num(raw.agentActionsToday),
+      llmBudgetTodayUsd: num(raw.llmBudgetTodayUsd),
+      series: { buckets: strs(series.buckets), actions: nums(series.actions), errors: nums(series.errors) },
+      recent: arr(raw.recent).map(
+        (r): RecentAction => ({
+          id: str(r.id),
+          action: str(r.action),
+          by: str(r.by),
+          status: oneOf(r.status, ['ok', 'blocked', 'error'] as const, 'ok'),
+          ms: num(r.ms),
+          source: str(r.source),
+          args: str(r.args) || null,
+          at: str(r.at) || null,
+        }),
+      ),
+    };
+  }
+
+  function toToolCall(raw: Json): ToolCall {
+    return {
+      id: str(raw.id),
+      consentId: str(raw.consentId) || null,
+      at: str(raw.at),
+      tool: str(raw.tool),
+      args: str(raw.args),
+      result: oneOf(raw.result, ['ok', 'denied', 'error'] as const, 'ok'),
+      note: str(raw.note) || null,
+      userId: str(raw.userId) || null,
+      clientName: str(raw.clientName) || null,
+    };
+  }
+
+  function toQa(raw: Json): QaSummary {
+    const checks = arr(raw.checks).map(
+      (c): QaCheck => ({
+        name: str(c.name),
+        status: c.status === 'ok' ? 'ok' : 'bad',
+        durationMs: num(c.durationMs),
+        note: str(c.note) || null,
+        role: str(c.role) || null,
+      }),
+    );
+    return {
+      passing: num(raw.passing),
+      total: num(raw.total, checks.length),
+      errorsReachedUsers7d: num(raw.errorsReachedUsers7d),
+      checks,
+      incidents: arr(raw.incidents).map((i) => ({
+        title: str(i.title),
+        resolved: i.resolved === true,
+        timeline: arr(i.timeline).map((t) => ({ when: str(t.when) || str(t.at), tone: t.tone === 'red' || t.tone === 'green' ? t.tone : null, text: str(t.text) })),
+      })),
+      error: raw.status === 'error' ? str(raw.error, 'The run could not finish.') : null,
+      version: str(raw.version) || null,
+      finishedAt: str(raw.finishedAt) || null,
     };
   }
 
@@ -316,6 +450,16 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       return toTicket(obj((await request('PATCH', `/v1/apps/${seg(app)}/tickets/${seg(key)}`, patch)).ticket));
     },
 
+    async getTicketThread(app, key) {
+      const body = await request('GET', `/v1/apps/${seg(app)}/tickets/${seg(key)}`);
+      const reporter = str(obj(body.ticket).reporter);
+      return arr(body.events).filter((e) => e.kind === 'reply').map((e) => toReply(e, reporter));
+    },
+
+    async replyToTicket(app, key, text) {
+      return toReply(obj((await request('POST', `/v1/apps/${seg(app)}/tickets/${seg(key)}/replies`, { text })).event), '');
+    },
+
     async listReports(app) {
       const reports = arr((await request('GET', `/v1/apps/${seg(app)}/reports?limit=${REPORTS_WITH_PROPOSALS}`)).reports);
       const full = await Promise.all(
@@ -340,8 +484,8 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       return { proposal: toProposal(obj((await request('POST', `/v1/proposals/${seg(id)}/reject`)).proposal)), grant: null } satisfies ProposalDecision;
     },
 
-    async reopenProposal() {
-      throw unavailable('Undoing a proposal decision');
+    async reopenProposal(id) {
+      return { proposal: toProposal(obj((await request('POST', `/v1/proposals/${seg(id)}/undo`)).proposal)), grant: null } satisfies ProposalDecision;
     },
 
     async listGrants() {
@@ -367,18 +511,17 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     },
 
     async listConsents(app) {
-      const body = app ? await request('GET', `/v1/apps/${seg(app)}/consents`) : await request('GET', '/v1/me/consents');
-      return arr(body.consents).map(toConsent);
+      const apps = app ? [app] : (await api.listApps()).map((a) => a.id);
+      const lists = await Promise.all(apps.map(async (a) => arr((await request('GET', `/v1/apps/${seg(a)}/consents`)).consents)));
+      return lists.flat().map(toConsent);
     },
 
-    async revokeConsent(id) {
-      // Revocation is the consenting user's call; a builder can only end their own consents.
-      await request('POST', `/v1/me/consents/${seg(id)}/revoke`);
+    async revokeConsent(app, id) {
+      await request('POST', `/v1/apps/${seg(app)}/consents/${seg(id)}/revoke`);
     },
 
     async listToolCalls(app) {
-      const body = await optional(request('GET', `/v1/apps/${seg(app)}/tool-calls`)); // PROVISIONAL
-      return body ? (arr(body.toolCalls) as unknown as ToolCall[]) : null;
+      return arr((await request('GET', `/v1/apps/${seg(app)}/tool-calls`)).toolCalls).map(toToolCall);
     },
 
     async deploy(app, env) {
@@ -404,30 +547,36 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       } satisfies DeployResult;
     },
 
+    // 404 until a version with a schema is deployed to dev.
     async getPolicy(app) {
-      const { raw } = await getAppWithEnvs(app);
-      const source = obj(raw.app);
-      if (!source.schema) throw new ApiError('not_found', 'The Control API does not expose this app’s schema to builders yet', 404);
-      return { schema: AppSchema.parse(source.schema), matrix: PolicyMatrix.parse(source.policy ?? {}), notes: [] };
+      return toPolicy(await request('GET', `/v1/apps/${seg(app)}/schema`));
     },
 
-    async savePolicy() {
-      throw unavailable('Editing access rules (they ship with a deploy)');
+    async savePolicy(app, matrix) {
+      return toPolicy(await request('PUT', `/v1/apps/${seg(app)}/policy`, { policy: matrix }));
     },
 
-    async getAccessSamples() {
-      // "Preview as" needs rows read as another member; the Control API has no route for that.
-      return null;
+    async previewAccess(app, userId) {
+      try {
+        return toPreview(obj((await request('POST', `/v1/apps/${seg(app)}/policy/preview`, { as: userId })).preview));
+      } catch (e) {
+        // 404: not a member or nothing deployed. 409: no database, or one that does not match the schema.
+        if (isApiError(e) && (e.status === 404 || e.status === 409)) return null;
+        throw e;
+      }
     },
 
     async getMetrics(app, range) {
-      const body = await optional(request('GET', `/v1/apps/${seg(app)}/metrics?range=${seg(range)}`)); // PROVISIONAL
-      return body ? (obj(body.metrics ?? body) as unknown as AppMetrics) : null;
+      return toMetrics(obj((await request('GET', `/v1/apps/${seg(app)}/metrics?range=${seg(range)}`)).metrics));
     },
 
     async getQa(app) {
-      const body = await optional(request('GET', `/v1/apps/${seg(app)}/qa`)); // PROVISIONAL
-      return body ? (obj(body.qa ?? body) as unknown as QaSummary) : null;
+      const body = await optional(request('GET', `/v1/apps/${seg(app)}/qa`));
+      return body ? toQa(obj(body.qa)) : null;
+    },
+
+    async runQa(app) {
+      return toQa(obj((await request('POST', `/v1/apps/${seg(app)}/qa/run`, {})).qa));
     },
 
     async getBuilderThread(app, tab) {

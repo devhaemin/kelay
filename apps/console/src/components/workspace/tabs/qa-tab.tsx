@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { QA } from '@/lib/api/fixtures';
+import { runQaAction } from '@/app/actions';
 import type { AppDetail, QaCheck, QaSummary } from '@/lib/api/types';
+import { formatDay, formatTime } from '@/lib/format';
+import { useServerState } from '@/lib/use-server-state';
 import type { IconName } from '../../icon-paths';
 import { useToast } from '../../toast';
 import { Icon, RichText } from '../../ui';
@@ -10,52 +12,72 @@ import { Icon, RichText } from '../../ui';
 const STATUS_ICON: Record<QaCheck['status'], IconName> = { ok: 'check', bad: 'x', wait: 'dots' };
 const STATUS_LABEL: Record<QaCheck['status'], string> = { ok: 'Passed', bad: 'Failed', wait: 'Waiting' };
 const STEP_MS = 140;
+/** Longest the results of one run take to tick in, however many checks it has. */
+const REVEAL_MS = 2400;
 
-const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+const seconds = (ms: number) => (ms < 100 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
+/** Timeline entries carry an ISO timestamp from the API, or ready-made text from fixtures. */
+const when = (v: string) => (/^\d{4}-\d{2}-\d{2}T/.test(v) ? `${formatDay(v)} · ${formatTime(v)}` : v);
 
 export default function QaTab({
   app,
   qa: qaProp,
 }: {
   app: AppDetail;
-  /** Defaults to the mock summary for the app. */
-  qa?: QaSummary | null;
+  /** The latest run; null before the first one. */
+  qa: QaSummary | null;
 }) {
   const notify = useToast();
-  const qa = qaProp === undefined ? (QA[app.id] ?? null) : qaProp;
-  // Number of checks finished in the current run; null when no run is in progress.
+  const [qa, setQa] = useServerState(qaProp);
+  // Number of checks shown as finished in the current run; null when no run is in progress.
   const [progress, setProgress] = useState<number | null>(null);
   const timer = useRef<ReturnType<typeof setInterval>>(undefined);
   useEffect(() => () => clearInterval(timer.current), []);
+  const running = progress !== null;
+
+  async function runAll() {
+    if (running) return;
+    setProgress(0);
+    const res = await runQaAction(app.id);
+    if (!res.ok) {
+      setProgress(null);
+      notify(res.error);
+      return;
+    }
+    const next = res.data;
+    setQa(next);
+    const finish = () => {
+      clearInterval(timer.current);
+      setProgress(null);
+      notify(next.error ? 'The checks could not run' : `${next.passing} of ${next.total} checks passed`);
+    };
+    if (next.checks.length === 0) return finish();
+    let done = 0;
+    timer.current = setInterval(() => {
+      done += 1;
+      if (done >= next.checks.length) finish();
+      else setProgress(done);
+    }, Math.min(STEP_MS, REVEAL_MS / next.checks.length));
+  }
 
   if (!qa) {
     return (
       <div className="card">
-        <div className="empty">No interaction checks yet. They are generated from the screens on the first deploy.</div>
+        <div className="empty">
+          <b>No checks have run yet</b>
+          <div>Checks are generated from the app’s screens and access rules. Run them once to see the results here.</div>
+          <button type="button" className="btn sm primary" style={{ marginTop: 12 }} onClick={runAll} disabled={running}>
+            <Icon name="refresh" size={13} /> {running ? 'Running checks…' : 'Run all checks'}
+          </button>
+        </div>
       </div>
     );
   }
 
   const { checks, passing, total } = qa;
-  const running = progress !== null;
   const clean = qa.errorsReachedUsers7d === 0;
   const more = total - checks.length;
-
-  function runAll() {
-    if (running) return;
-    setProgress(0);
-    let done = 0;
-    timer.current = setInterval(() => {
-      done += 1;
-      if (done >= checks.length) {
-        clearInterval(timer.current);
-        setProgress(null);
-        notify(`${passing} of ${total} checks passed`);
-      } else {
-        setProgress(done);
-      }
-    }, STEP_MS);
-  }
+  const fromRules = checks.some((c) => c.role);
 
   return (
     <>
@@ -70,18 +92,27 @@ export default function QaTab({
               ? 'No screen errors reached users in the last 7 days.'
               : `${qa.errorsReachedUsers7d} screen ${qa.errorsReachedUsers7d === 1 ? 'error' : 'errors'} reached users in the last 7 days.`}
           </b>{' '}
-          <span className="muted">{total} interaction checks run before every deploy.</span>
+          <span className="muted">
+            {total} interaction checks run before every deploy.
+            {qa.finishedAt && <> Last run {formatDay(qa.finishedAt)} at {formatTime(qa.finishedAt)}{qa.version ? ` on ${qa.version}` : ''}.</>}
+          </span>
         </span>
         <span className="spacer" />
         <button type="button" className="btn sm" onClick={runAll} disabled={running}>
           <Icon name="refresh" size={13} /> {running ? 'Running checks…' : 'Run all checks'}
         </button>
       </div>
+      {qa.error && (
+        <div className="banner" role="alert" style={{ background: 'var(--red-soft)', borderColor: '#f3c9c9' }}>
+          <span className="st-ic bad"><Icon name="alert" size={12} /></span>
+          <span><b>The last run could not finish.</b> <span className="muted">{qa.error}</span></span>
+        </div>
+      )}
       <div className="two">
         <section className="card" aria-label="Interaction checks">
           <div className="card-head">
             <h3>Interaction checks</h3>
-            <span className="muted small">auto-generated from the screens</span>
+            <span className="muted small">{fromRules ? 'generated from the access rules' : 'auto-generated from the screens'}</span>
             <span className="spacer" />
             {running
               ? <span className="pill">Running…</span>
@@ -118,7 +149,7 @@ export default function QaTab({
                 <ol className="timeline" style={{ listStyle: 'none', margin: 0 }}>
                   {incident.timeline.map((t, i) => (
                     <li className={`tl ${t.tone ?? ''}`} key={i}>
-                      <div className="when">{t.when}</div>
+                      <div className="when">{when(t.when)}</div>
                       <RichText text={t.text} />
                     </li>
                   ))}
@@ -127,7 +158,7 @@ export default function QaTab({
             </section>
           ))}
           {qa.incidents.length === 0 && (
-            <div className="card"><div className="empty">No errors caught in the last 7 days.</div></div>
+            <div className="card"><div className="empty">No errors caught lately.</div></div>
           )}
         </div>
       </div>

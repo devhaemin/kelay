@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   agentRules: false,
   // The dev badge sits where the prototype's Story bar does (bottom left).
   devIndicators: false,
-  transpilePackages: ['@kelay/contracts'],
+  transpilePackages: ['@kelay/contracts', '@kelay/policy'],
   turbopack: { root: workspaceRoot },
   outputFileTracingRoot: workspaceRoot,
 };
