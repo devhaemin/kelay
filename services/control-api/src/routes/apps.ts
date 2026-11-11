@@ -80,12 +80,13 @@ export function appRoutes(ctx: Ctx) {
         members: sql<number>`(select count(*)::int from app_members m where m.app = ${apps.slug})`,
         newFeedback: sql<number>`(select count(*)::int from tickets t where t.app = ${apps.slug} and t.status = 'new' and t.duplicate_of is null and t.valid is not false)`,
         pendingProposals: sql<number>`(select count(*)::int from proposals pr where pr.app = ${apps.slug} and pr.status = 'pending')`,
+        runs: sql<number | null>`(select nullif(count(*), 0)::int from runs r where r.app = ${apps.slug} and r.at >= now() - interval '30 days')`,
       })
       .from(apps)
       .where(and(eq(apps.owner, p.user.sub), ne(apps.status, 'archived')))
       .orderBy(asc(apps.createdAt));
     return c.json({
-      apps: rows.map((a) => ({ ...appView(a), members: a.members, newFeedback: a.newFeedback, pendingProposals: a.pendingProposals })),
+      apps: rows.map((a) => ({ ...appView(a), members: a.members, newFeedback: a.newFeedback, pendingProposals: a.pendingProposals, runs: a.runs })),
     });
   });
 

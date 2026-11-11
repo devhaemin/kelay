@@ -19,11 +19,14 @@ import {
   type Runtime,
 } from '@aws-sdk/client-lambda';
 import { CreateStateMachineCommand, SFNClient, StateMachineDoesNotExist, UpdateStateMachineCommand } from '@aws-sdk/client-sfn';
+import { NODE_FUNCTION_ARN_PLACEHOLDER } from '@kelay/contracts';
 import type { DeployResources } from '../db/schema.ts';
 import { DeployError, resourcePrefix, type ActivateInput, type DeployDriver, type DeployInput, type DeployResult } from './driver.ts';
 
 export const LIVE_ALIAS = 'live';
-export const NODE_ARN_PLACEHOLDER = '${NodeFunctionArn}';
+export const NODE_ARN_PLACEHOLDER = NODE_FUNCTION_ARN_PLACEHOLDER;
+/** Environment variable of every app function that holds its app-runtime caller token. */
+export const CALLER_TOKEN_ENV = 'KELAY_CALLER_TOKEN';
 
 export interface AwsDeployOptions {
   /** Execution role for app functions: logs only (docs/infrastructure.md §3). */
@@ -37,7 +40,7 @@ export interface AwsDeployOptions {
   nodeHandler?: string;
   memorySize?: number;
   timeoutSeconds?: number;
-  /** Extra environment for every app function, e.g. platform service URLs. Never secrets. */
+  /** Extra environment for every app function, e.g. platform service URLs. Never platform secrets. */
   runtimeEnv?: Record<string, string>;
   lambda?: LambdaClient;
   sfn?: SFNClient;
@@ -77,6 +80,8 @@ export class AwsDeployDriver implements DeployDriver {
       KELAY_VERSION: String(input.number),
       KELAY_COMMIT: input.commit,
       KELAY_CONFIG_VERSION: input.configVersion,
+      // Lambda encrypts function environments at rest; the token only names this app × env to platform services.
+      [CALLER_TOKEN_ENV]: input.callerToken,
     };
     const description = `v${input.number} ${input.commit}`.slice(0, 256);
 
@@ -95,7 +100,7 @@ export class AwsDeployDriver implements DeployDriver {
         resources.stateMachineArns.push(await this.ensureStateMachine(`${prefix}-${g.name}`, definition, g.type ?? 'EXPRESS', web.aliasArn, tags, description));
       }
     }
-    return { lambdaVersion: web.version, resources };
+    return { lambdaVersion: web.version, resources, callerTokenRef: `lambda-env:${prefix}-web#${CALLER_TOKEN_ENV}` };
   }
 
   async activate(input: ActivateInput): Promise<void> {

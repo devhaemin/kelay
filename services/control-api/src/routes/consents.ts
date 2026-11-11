@@ -7,7 +7,7 @@ import { CONSOLE_APP, requireBuilder, requireUser, type AppEnv } from '../auth.t
 import { consents, type ConsentRow } from '../db/schema.ts';
 import type { Ctx } from '../deps.ts';
 import { ApiError } from '../errors.ts';
-import { loadApp, queryParams } from './util.ts';
+import { actorOf, loadApp, queryParams } from './util.ts';
 
 export const consentView = (x: ConsentRow) => ({
   id: x.id,
@@ -64,6 +64,20 @@ export function consentRoutes(ctx: Ctx) {
       .where(and(eq(consents.app, app.slug), isNull(consents.revokedAt)))
       .orderBy(desc(consents.createdAt));
     return c.json({ consents: rows.map(consentView) });
+  });
+
+  // A builder may cut an assistant off from their app; the member can connect it again and consent anew.
+  r.post('/v1/apps/:app/consents/:id/revoke', requireBuilder(ctx.auth), async (c) => {
+    const principal = c.get('principal');
+    const app = await loadApp(db, c.req.param('app'), principal);
+    const id = c.req.param('id');
+    if (!z.uuid().safeParse(id).success) throw new ApiError('not_found', 'no such consent');
+    const existing = await db.query.consents.findFirst({ where: and(eq(consents.id, id), eq(consents.app, app.slug)) });
+    if (!existing) throw new ApiError('not_found', 'no such consent');
+    if (existing.revokedAt) return c.json({ consent: consentView(existing) });
+    const [row] = await db.update(consents).set({ revokedAt: ctx.now() }).where(eq(consents.id, id)).returning();
+    ctx.logger.info({ type: 'consent_revoked', consent: id, app: app.slug, client: row!.clientId, by: actorOf(principal) }, 'consent revoked by builder');
+    return c.json({ consent: consentView(row!) });
   });
 
   return r;

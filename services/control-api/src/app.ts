@@ -3,7 +3,8 @@ import { HTTPException } from 'hono/http-exception';
 import { requestId, type RequestIdVariables } from 'hono/request-id';
 import { sql } from 'drizzle-orm';
 import type { AppEnv } from './auth.ts';
-import { DEFAULT_DEDUPE_THRESHOLD, type ControlApiDeps, type Ctx } from './deps.ts';
+import { createAppDatabases } from './appdb.ts';
+import { DEFAULT_CALLER_TOKEN_TTL_SECONDS, DEFAULT_DEDUPE_THRESHOLD, type ControlApiDeps, type Ctx } from './deps.ts';
 import { ApiError, errorBody, sendError } from './errors.ts';
 import { createLogger } from './log.ts';
 import { appRoutes } from './routes/apps.ts';
@@ -12,16 +13,25 @@ import { deployRoutes } from './routes/deploy.ts';
 import { feedbackRoutes } from './routes/feedback.ts';
 import { grantRoutes } from './routes/grants.ts';
 import { internalRoutes } from './routes/internal.ts';
+import { monitoringRoutes } from './routes/monitoring.ts';
+import { policyRoutes } from './routes/policy.ts';
 import { publicRoutes } from './routes/public.ts';
+import { qaRoutes } from './routes/qa.ts';
 import { reportRoutes } from './routes/reports.ts';
+import { PolicyQaRunner } from './qa/runner.ts';
 
 type RootEnv = AppEnv & { Variables: RequestIdVariables };
 
 export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
+  const logger = deps.logger ?? createLogger();
+  const appDbs = deps.appDbs ?? createAppDatabases({ onPoolError: (err) => logger.error({ type: 'app_db', err: err.message }, 'app database connection failed') });
   const ctx: Ctx = {
     ...deps,
-    logger: deps.logger ?? createLogger(),
+    logger,
+    appDbs,
+    qa: deps.qa ?? new PolicyQaRunner(appDbs),
     dedupeThreshold: deps.dedupeThreshold ?? DEFAULT_DEDUPE_THRESHOLD,
+    callerTokenTtlSeconds: deps.callerTokenTtlSeconds ?? DEFAULT_CALLER_TOKEN_TTL_SECONDS,
     now: deps.now ?? (() => new Date()),
   };
   const log = ctx.logger;
@@ -58,7 +68,7 @@ export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
     }
   });
 
-  for (const routes of [appRoutes, feedbackRoutes, reportRoutes, grantRoutes, consentRoutes, deployRoutes, internalRoutes, publicRoutes]) {
+  for (const routes of [appRoutes, policyRoutes, monitoringRoutes, qaRoutes, feedbackRoutes, reportRoutes, grantRoutes, consentRoutes, deployRoutes, internalRoutes, publicRoutes]) {
     app.route('/', routes(ctx) as unknown as Hono<RootEnv>);
   }
   return app;

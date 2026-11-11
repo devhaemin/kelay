@@ -23,6 +23,7 @@
     "@hono/node-server": "^2.1.7",
     "@hono/zod-validator": "^0.9.1",
     "@kelay/contracts": "workspace:*",
+    "@kelay/policy": "workspace:*",
     "@kelay/tokens": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.18",

@@ -100,6 +100,7 @@ const input = (over: Partial<DeployInput> = {}): DeployInput => ({
   commit: 'a1b2c3',
   artifactUrl: 's3://kelay-builds/ticket-board/a1b2c3.zip',
   configVersion: 'cfg-31',
+  callerToken: 'caller.jwt',
   graphs: [{ name: 'overdue-summary', definition: '{"StartAt":"collect","States":{"collect":{"Type":"Task","Resource":"${NodeFunctionArn}","End":true}}}' }],
   ...over,
 });
@@ -116,6 +117,7 @@ describe('aws deploy driver', () => {
     const nodes = 'kelay-app-ticket-board-dev-nodes';
     expect(res).toEqual({
       lambdaVersion: '1',
+      callerTokenRef: `lambda-env:${web}#KELAY_CALLER_TOKEN`,
       resources: {
         functionName: web,
         functionArn: `${fnArn(web)}:live`,
@@ -134,7 +136,9 @@ describe('aws deploy driver', () => {
       Handler: 'index.handler',
       Code: { S3Bucket: 'kelay-builds', S3Key: 'ticket-board/a1b2c3.zip' },
       Tags: { 'kelay:app': 'ticket-board', 'kelay:env': 'dev' },
-      Environment: { Variables: expect.objectContaining({ KELAY_APP: 'ticket-board', KELAY_ENV: 'dev', KELAY_CONFIG_VERSION: 'cfg-31', DATA_API_URL: 'https://data.kelay.internal' }) },
+      Environment: {
+        Variables: expect.objectContaining({ KELAY_APP: 'ticket-board', KELAY_ENV: 'dev', KELAY_CONFIG_VERSION: 'cfg-31', DATA_API_URL: 'https://data.kelay.internal', KELAY_CALLER_TOKEN: 'caller.jwt' }),
+      },
     });
     expect(created[1]?.Handler).toBe('nodes.handler');
     expect(aws.lambda.commandCalls(PublishVersionCommand)[0]?.args[0].input).toMatchObject({ FunctionName: web, Description: 'v1 a1b2c3' });

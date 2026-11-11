@@ -199,6 +199,9 @@ importers:
       '@kelay/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@kelay/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@kelay/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens
