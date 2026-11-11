@@ -1,0 +1,17 @@
+# Images are built from the repo root. Dependencies are installed and code is built inside the
+# image, so nothing built or installed on the host belongs in the context.
+.git
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/.wrangler
+**/.terraform
+**/*.tfstate*
+**/.env
+**/.env.*
+!**/.env.example
+infra/deploy/out
+infra/deploy/secrets.*.env
+design
+docs

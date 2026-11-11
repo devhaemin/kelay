@@ -2,7 +2,7 @@
 // validates queries against contract §5, and an MCP client from the official SDK.
 import { createRequire } from 'node:module';
 import { CALLER_HEADER, QueryRequest, type CallerClaims, type KelayClaims } from '@kelay/contracts';
-import { loadAppRegistry } from '@kelay/contracts/registry';
+import { loadAppRegistry, staticRegistrySource, type AppRegistrySource } from '@kelay/contracts/registry';
 import { createDevSigner, verifyCallerToken } from '@kelay/tokens';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Hono } from 'hono';
@@ -56,7 +56,7 @@ export function fakeDataApi() {
 
 export const denied = (message = 'permission denied') => Response.json({ error: { code: 'denied', message } }, { status: 403 });
 
-export async function setup(opts: { ratePerMin?: number; actions?: ActionRunner | ((signer: Awaited<ReturnType<typeof createDevSigner>>) => ActionRunner); links?: AppLinks } = {}) {
+export async function setup(opts: { ratePerMin?: number; actions?: ActionRunner | ((signer: Awaited<ReturnType<typeof createDevSigner>>) => ActionRunner); links?: AppLinks; registry?: AppRegistrySource } = {}) {
   const signer = await createDevSigner();
   const data = fakeDataApi();
   const calls: McpCallRecord[] = [];
@@ -71,7 +71,7 @@ export async function setup(opts: { ratePerMin?: number; actions?: ActionRunner 
       ratePerMin: opts.ratePerMin,
       oauth: OAUTH,
     },
-    registry,
+    registry: opts.registry ?? staticRegistrySource(registry),
     jwks: signer.verifier,
     fetch: data.fetch,
     now: () => clock.now,

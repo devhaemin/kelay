@@ -21,6 +21,10 @@ aurora_instance_count = 2
 
 deletion_protection = true
 
+# Sign-in to Kelay ID. Each provider needs its <provider>-client-id and <provider>-client-secret secrets.
+identity_social_providers = ["google", "kakao", "github"]
+identity_email_password   = false
+
 enable_execute_command = false
 log_retention_days     = 90
 

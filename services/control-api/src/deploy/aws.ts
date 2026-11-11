@@ -1,6 +1,7 @@
 // Deploys an app × env onto AWS Lambda (web + agent nodes) and Step Functions (one state machine per graph).
-// Resources are named kelay-app-<app>-<env>-* and tagged kelay:app / kelay:env. Function URLs use AWS_IAM auth:
-// only the Router Worker, signing with SigV4, may call them.
+// Resources are named kelay-app-<app>-<env>-* and carry the tags the Deploy role's IAM policy requires
+// (infra/terraform/modules/runtime). Function URLs use AWS_IAM auth: only the Router Worker, signing
+// with SigV4, may call them.
 import {
   AddPermissionCommand,
   CreateAliasCommand,
@@ -18,7 +19,7 @@ import {
   waitUntilFunctionUpdatedV2,
   type Runtime,
 } from '@aws-sdk/client-lambda';
-import { CreateStateMachineCommand, SFNClient, StateMachineDoesNotExist, UpdateStateMachineCommand } from '@aws-sdk/client-sfn';
+import { CreateStateMachineCommand, DescribeStateMachineCommand, SFNClient, StateMachineDoesNotExist, UpdateStateMachineCommand } from '@aws-sdk/client-sfn';
 import { NODE_FUNCTION_ARN_PLACEHOLDER } from '@kelay/contracts';
 import type { DeployResources } from '../db/schema.ts';
 import { DeployError, resourcePrefix, type ActivateInput, type DeployDriver, type DeployInput, type DeployResult } from './driver.ts';
@@ -28,12 +29,27 @@ export const NODE_ARN_PLACEHOLDER = NODE_FUNCTION_ARN_PLACEHOLDER;
 /** Environment variable of every app function that holds its app-runtime caller token. */
 export const CALLER_TOKEN_ENV = 'KELAY_CALLER_TOKEN';
 
+/** Value of the `kelay:managed-by` tag; the Deploy role may only create and change resources that carry it. */
+export const MANAGED_BY = 'kelay-deploy';
+
 export interface AwsDeployOptions {
+  /**
+   * KELAY_ENV: the platform environment (staging, prod) this control API runs in. It becomes the
+   * `kelay:env` tag, which the Deploy role requires to equal its own env. The app's env (dev, prod)
+   * is in the resource name and the `kelay:app-env` tag.
+   */
+  platformEnv: string;
+  /** APP_RESOURCE_PREFIX: start of every resource name. @default kelay-app- */
+  resourcePrefix?: string;
   /** Execution role for app functions: logs only (docs/infrastructure.md §3). */
   lambdaRoleArn: string;
   /** Role Step Functions assumes to invoke the node function. */
   stepFunctionsRoleArn: string;
-  /** Principal allowed to call function URLs (the Router Worker's IAM identity). */
+  /**
+   * Principal to grant `lambda:InvokeFunctionUrl` in each function's resource policy. Leave it unset
+   * when the Router's IAM identity lives in the same account as the functions: its own policy is
+   * enough there, and the Deploy role is denied `lambda:AddPermission`.
+   */
   routerPrincipal?: string;
   runtime?: Runtime;
   webHandler?: string;
@@ -70,8 +86,8 @@ export class AwsDeployDriver implements DeployDriver {
 
   async deploy(input: DeployInput): Promise<DeployResult> {
     const code = parseS3(input.artifactUrl);
-    const prefix = resourcePrefix(input.app, input.env);
-    const tags = { 'kelay:app': input.app, 'kelay:env': input.env };
+    const prefix = this.prefix(input.app, input.env);
+    const tags = { 'kelay:app': input.app, 'kelay:env': this.opts.platformEnv, 'kelay:app-env': input.env, 'kelay:managed-by': MANAGED_BY };
     const environment = {
       ...this.opts.runtimeEnv,
       KELAY_APP: input.app,
@@ -104,11 +120,15 @@ export class AwsDeployDriver implements DeployDriver {
   }
 
   async activate(input: ActivateInput): Promise<void> {
-    const prefix = resourcePrefix(input.app, input.env);
+    const prefix = this.prefix(input.app, input.env);
     await this.pointAlias(input.resources.functionName ?? `${prefix}-web`, input.lambdaVersion);
     if (input.resources.nodeFunctionName && input.resources.nodeLambdaVersion) {
       await this.pointAlias(input.resources.nodeFunctionName, input.resources.nodeLambdaVersion);
     }
+  }
+
+  private prefix(app: string, env: DeployInput['env']): string {
+    return resourcePrefix(app, env, this.opts.resourcePrefix);
   }
 
   /** Creates or updates a function, publishes a version and moves the live alias to it. */
@@ -207,7 +227,9 @@ export class AwsDeployDriver implements DeployDriver {
     const [, , , region, account] = anyFunctionArn.split(':');
     if (!region || !account) throw new DeployError(`cannot derive region and account from ${anyFunctionArn}`);
     const arn = `arn:aws:states:${region}:${account}:stateMachine:${name}`;
-    try {
+    // The Deploy role may update only tagged state machines, so an update of one that does not exist
+    // is refused as access denied rather than reported as missing. Describe carries no such condition.
+    if (await this.stateMachineExists(arn)) {
       await this.sfn.send(
         new UpdateStateMachineCommand({
           stateMachineArn: arn,
@@ -218,8 +240,6 @@ export class AwsDeployDriver implements DeployDriver {
         }),
       );
       return arn;
-    } catch (e) {
-      if (!(e instanceof StateMachineDoesNotExist || (e as Error)?.name === 'StateMachineDoesNotExist')) throw e;
     }
     const res = await this.sfn.send(
       new CreateStateMachineCommand({
@@ -233,5 +253,15 @@ export class AwsDeployDriver implements DeployDriver {
       }),
     );
     return res.stateMachineArn ?? arn;
+  }
+
+  private async stateMachineExists(arn: string): Promise<boolean> {
+    try {
+      await this.sfn.send(new DescribeStateMachineCommand({ stateMachineArn: arn }));
+      return true;
+    } catch (e) {
+      if (e instanceof StateMachineDoesNotExist || (e as Error)?.name === 'StateMachineDoesNotExist') return false;
+      throw e;
+    }
   }
 }

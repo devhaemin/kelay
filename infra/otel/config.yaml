@@ -1,0 +1,62 @@
+# OTLP over HTTP in, ClickHouse out. Read by infra/otel/Dockerfile; the same file runs on ECS.
+#
+# Environment:
+#   CLICKHOUSE_ENDPOINT  clickhouse://<host>:9440?secure=true (ClickHouse Cloud native protocol over TLS)
+#   CLICKHOUSE_USERNAME  default: default
+#   CLICKHOUSE_DATABASE  default: otel
+#   CLICKHOUSE_PASSWORD  from the clickhouse-password secret
+extensions:
+  # The load balancer checks GET / on this port.
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # First in every pipeline: refuses data before the task runs out of memory.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  batch:
+    send_batch_size: 5000
+    timeout: 5s
+
+exporters:
+  clickhouse:
+    endpoint: ${env:CLICKHOUSE_ENDPOINT}
+    username: ${env:CLICKHOUSE_USERNAME:-default}
+    password: ${env:CLICKHOUSE_PASSWORD}
+    database: ${env:CLICKHOUSE_DATABASE:-otel}
+    # Creates the database and the otel_traces, otel_logs and otel_metrics_* tables when they are missing.
+    create_schema: true
+    ttl: 2160h
+    timeout: 10s
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]

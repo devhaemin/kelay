@@ -190,7 +190,30 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   internal: 500,
 };
 
-// ---------------------------------------------------------------- §6 app registry (MVP file)
+// ---------------------------------------------------------------- database credentials
+
+/** The Postgres login of a service process, kept apart from database URLs so URLs hold no secret. */
+export interface DatabaseCredentials {
+  user?: string | undefined;
+  password?: string | undefined;
+}
+
+/** `DB_USER` and `DB_PASSWORD`: the login a deployed service uses for every database URL without one. */
+export function databaseCredentialsFromEnv(env: Record<string, string | undefined>): DatabaseCredentials {
+  return { user: env.DB_USER || undefined, password: env.DB_PASSWORD || undefined };
+}
+
+/** Adds the login to a database URL that names none. A URL with its own user is returned as it is. */
+export function databaseUrlWithCredentials(url: string, credentials: DatabaseCredentials | undefined): string {
+  if (!credentials?.user) return url;
+  const parsed = new URL(url);
+  if (parsed.username) return url;
+  parsed.username = credentials.user;
+  parsed.password = credentials.password ?? '';
+  return parsed.toString();
+}
+
+// ---------------------------------------------------------------- §6 app registry
 
 export const AppRegistryEntry = z.object({
   handle: AppSlug,
@@ -201,6 +224,14 @@ export const AppRegistryEntry = z.object({
 export const AppRegistry = z.object({ apps: z.record(AppSlug, AppRegistryEntry) });
 export type AppRegistry = z.infer<typeof AppRegistry>;
 export type AppRegistryEntry = z.infer<typeof AppRegistryEntry>;
+
+/** An app environment: every app has a dev and a prod one. */
+export type AppEnvName = 'dev' | 'prod';
+
+/** `GET /internal/v1/apps?env=` of the control API: every app that has a deployment and a database in that env. */
+export const AppList = z.object({ apps: z.array(z.object({ app: AppSlug, handle: AppSlug })) });
+export type AppList = z.infer<typeof AppList>;
+export type AppSummary = AppList['apps'][number];
 
 // ---------------------------------------------------------------- §7 MCP · A2A gateway
 

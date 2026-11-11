@@ -8,12 +8,12 @@ import { z } from 'zod';
 import {
   CALLER_HEADER,
   QueryRequest,
-  type AppRegistry,
   type AppRegistryEntry,
   type CallerClaims,
   type KelayClaims,
   type QueryResponse,
 } from '@kelay/contracts';
+import type { AppRegistrySource } from '@kelay/contracts/registry';
 import { TokenError, verifyCallerToken, verifyKelayToken, type VerifyOptions } from '@kelay/tokens';
 import { asUser, createDatabases, DbSetupError, type Databases } from './db.ts';
 import { ApiError, fromDatabaseError, invalid } from './errors.ts';
@@ -26,7 +26,8 @@ export interface DataApiDeps {
   jwks: VerifyOptions['jwks'];
   issuer: string;
   callerSecret: string;
-  registry: AppRegistry;
+  /** Where apps are looked up (contract §6): `registrySourceFromEnv` in production. */
+  registry: AppRegistrySource;
   /** Owns the app database pools. Pass one to close it on shutdown. */
   databases?: Databases;
   logger?: Logger;
@@ -89,7 +90,7 @@ export function createApp(deps: DataApiDeps): Hono<Env> {
       if (line) line.caller = caller.kind === 'service' ? `service:${caller.svc}` : `app-runtime:${caller.app}`;
       const claims = await verifyUser(c.req.header('authorization'), slug, deps);
       if (line) line.sub = claims.sub;
-      const entry = lookupApp(deps.registry, slug);
+      const entry = await lookupApp(deps.registry, slug, caller);
 
       const req = parseRequest(await readJson(c));
       if (line) Object.assign(line, { op: req.op, collection: req.collection });
@@ -146,8 +147,10 @@ async function verifyUser(header: string | undefined, app: string, deps: DataApi
   }
 }
 
-function lookupApp(registry: AppRegistry, slug: string): AppRegistryEntry {
-  const entry = Object.hasOwn(registry.apps, slug) ? registry.apps[slug] : undefined;
+/** An app runtime reaches the database of its own env; platform services act on production. */
+async function lookupApp(registry: AppRegistrySource, slug: string, caller: CallerClaims): Promise<AppRegistryEntry> {
+  const env = caller.kind === 'app-runtime' ? (caller.env ?? 'prod') : 'prod';
+  const entry = await registry.get(slug, env);
   if (!entry) throw new ApiError('unknown_app', `no app "${slug}"`);
   return entry;
 }

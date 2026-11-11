@@ -20,8 +20,27 @@ output "aurora_security_group_id" {
 }
 
 output "master_user_secret_arn" {
-  description = "Secrets Manager secret (JSON username/password) managed by RDS."
+  description = "Secrets Manager secret (JSON username/password) managed and rotated by RDS. Only the bootstrap task reads it."
   value       = module.aurora.cluster_master_user_secret[0].secret_arn
+}
+
+output "db_user_secret_arns" {
+  description = "Secrets (JSON username/password) of the service logins: platform and litellm."
+  value       = { for k, secret in aws_secretsmanager_secret.db_user : k => secret.arn }
+}
+
+output "database_name" {
+  description = "The control DB."
+  value       = var.database_name
+}
+
+output "litellm_database_name" {
+  value = var.litellm_database_name
+}
+
+output "db_bootstrap_task_family" {
+  description = "Run with `aws ecs run-task --task-definition <family>` in the platform subnets and security group."
+  value       = aws_ecs_task_definition.db_bootstrap.family
 }
 
 output "proxy_endpoint" {

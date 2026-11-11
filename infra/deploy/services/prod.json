@@ -1,11 +1,11 @@
 {
-  "$comment": "Sizes and counts of the prod platform services; read by render-services.mjs. Keys are those of service_overrides in infra/terraform/envs/prod/variables.tf. console, preview-proxy and otel-collector have no image yet (docs/deploy.md, Known gaps), so they stay at zero.",
-  "console": { "desired_count": 0 },
+  "$comment": "Sizes and counts of the prod platform services; read by render-services.mjs. Keys are those of service_overrides in infra/terraform/envs/prod/variables.tf. preview-proxy has no image: no service implements it yet (docs/deploy.md, What is still open), so it stays at zero.",
+  "console": { "desired_count": 2, "autoscaling": { "min": 2, "max": 6 } },
   "control-api": { "desired_count": 2, "autoscaling": { "min": 2, "max": 6 } },
   "identity": { "desired_count": 2, "autoscaling": { "min": 2, "max": 6 } },
   "data-api": { "desired_count": 2, "cpu": 1024, "memory": 2048, "autoscaling": { "min": 2, "max": 10 } },
   "mcp-gateway": { "desired_count": 2, "autoscaling": { "min": 2, "max": 6 } },
   "llm-gateway": { "desired_count": 2, "cpu": 2048, "memory": 4096, "autoscaling": { "min": 2, "max": 10 } },
   "preview-proxy": { "desired_count": 0 },
-  "otel-collector": { "desired_count": 0 }
+  "otel-collector": { "desired_count": 2, "cpu": 1024, "memory": 2048 }
 }

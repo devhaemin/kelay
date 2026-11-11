@@ -1,3 +1,4 @@
+import { databaseCredentialsFromEnv, databaseUrlWithCredentials } from '@kelay/contracts';
 import { createDatabase, runMigrations } from './db/client.ts';
 import { createLogger } from './log.ts';
 
@@ -7,7 +8,7 @@ if (!url) {
   log.fatal('CONTROL_DATABASE_URL is required');
   process.exit(1);
 }
-const database = createDatabase(url, { max: 1 });
+const database = createDatabase(databaseUrlWithCredentials(url, databaseCredentialsFromEnv(process.env)), { max: 1 });
 try {
   await runMigrations(database.db);
   log.info({ type: 'migrate' }, 'migrations applied');

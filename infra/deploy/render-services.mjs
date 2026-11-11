@@ -57,7 +57,7 @@ for (const pair of values.set) {
 }
 
 // A service runs `<ecr>/kelay-<env>/<service>:<tag>` unless it names another image. Nothing in this
-// repo builds an image for the rest, so their tasks could never start; they must stay at zero.
+// repo builds an image for preview-proxy, so its tasks could never start; it must stay at zero.
 for (const service of SERVICES) {
   const override = overrides[service] ?? {};
   if (built.includes(service) || override.image) continue;

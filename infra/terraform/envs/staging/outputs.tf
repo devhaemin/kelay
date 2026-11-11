@@ -24,8 +24,17 @@ output "ecr_repository_urls" {
 }
 
 output "secret_arns" {
-  description = "Secrets to fill with `aws secretsmanager put-secret-value` before services can start."
+  description = "Secrets to fill with infra/deploy/set-secrets.sh before services can start."
   value       = module.platform.secret_arns
+}
+
+output "db_user_secret_arns" {
+  description = "Secrets of the service database logins. Terraform writes them; the db-bootstrap task applies them to Postgres."
+  value       = module.data.db_user_secret_arns
+}
+
+output "db_bootstrap_task_family" {
+  value = module.data.db_bootstrap_task_family
 }
 
 output "aurora_cluster_endpoint" {

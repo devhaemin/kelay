@@ -1,7 +1,9 @@
 [
+  { "service": "console", "context": ".", "dockerfile": "apps/console/Dockerfile" },
   { "service": "control-api", "context": ".", "dockerfile": "services/control-api/Dockerfile" },
   { "service": "data-api", "context": ".", "dockerfile": "services/data-api/Dockerfile" },
   { "service": "identity", "context": ".", "dockerfile": "services/identity/Dockerfile" },
   { "service": "mcp-gateway", "context": ".", "dockerfile": "services/mcp-gateway/Dockerfile" },
-  { "service": "llm-gateway", "context": "infra/litellm", "dockerfile": "infra/litellm/Dockerfile" }
+  { "service": "llm-gateway", "context": "infra/litellm", "dockerfile": "infra/litellm/Dockerfile" },
+  { "service": "otel-collector", "context": "infra/otel", "dockerfile": "infra/otel/Dockerfile" }
 ]

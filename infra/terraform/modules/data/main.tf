@@ -1,7 +1,15 @@
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 locals {
   engine_major = split(".", var.engine_version)[0]
+
+  # Postgres logins of the platform services. The master user is left to RDS, which rotates its
+  # password; nothing but the bootstrap task below logs in with it.
+  db_users = {
+    platform = var.platform_db_username
+    litellm  = var.litellm_db_username
+  }
 
   db_client_rules = {
     for i, sg in var.db_client_security_group_ids : "client-${i}" => {
@@ -123,15 +131,26 @@ module "proxy" {
   idle_client_timeout = 1800
   debug_logging       = false
 
-  auth = {
-    master = {
-      auth_scheme               = "SECRETS"
-      description               = "Aurora master user, managed by RDS in Secrets Manager"
-      iam_auth                  = var.proxy_iam_auth
-      client_password_auth_type = "POSTGRES_SCRAM_SHA_256"
-      secret_arn                = module.aurora.cluster_master_user_secret[0].secret_arn
-    }
-  }
+  auth = merge(
+    {
+      master = {
+        auth_scheme               = "SECRETS"
+        description               = "Aurora master user, managed by RDS in Secrets Manager"
+        iam_auth                  = var.proxy_iam_auth
+        client_password_auth_type = "POSTGRES_SCRAM_SHA_256"
+        secret_arn                = module.aurora.cluster_master_user_secret[0].secret_arn
+      }
+    },
+    {
+      for k, secret in aws_secretsmanager_secret.db_user : k => {
+        auth_scheme               = "SECRETS"
+        description               = "Login of the ${k} services"
+        iam_auth                  = var.proxy_iam_auth
+        client_password_auth_type = "POSTGRES_SCRAM_SHA_256"
+        secret_arn                = secret.arn
+      }
+    },
+  )
 
   target_db_cluster     = true
   db_cluster_identifier = module.aurora.cluster_id
@@ -143,6 +162,147 @@ module "proxy" {
   log_group_retention_in_days = var.log_retention_days
 
   tags = var.tags
+}
+
+################################################################################
+# Service logins: one Secrets Manager secret per login, in the {username, password} shape RDS Proxy
+# and ECS both read. The roles themselves are created in Postgres by the bootstrap task.
+################################################################################
+
+# Ephemeral: the passwords go to Secrets Manager as write-only values and never into state.
+ephemeral "random_password" "db_user" {
+  for_each = local.db_users
+
+  length  = 40
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "db_user" {
+  for_each = local.db_users
+
+  name                    = "${var.name}/db-${each.key}"
+  description             = "Postgres login ${each.value}. Written by Terraform; run the ${var.name}-db-bootstrap task after it changes."
+  recovery_window_in_days = 7
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret_version" "db_user" {
+  for_each = local.db_users
+
+  secret_id                = aws_secretsmanager_secret.db_user[each.key].id
+  secret_string_wo         = jsonencode({ username = each.value, password = ephemeral.random_password.db_user[each.key].result })
+  secret_string_wo_version = var.db_password_version
+}
+
+################################################################################
+# Bootstrap task: creates the service logins and their databases as the master user. Run it once
+# after the first apply and again after db_password_version changes (aws ecs run-task).
+################################################################################
+
+resource "aws_cloudwatch_log_group" "db_bootstrap" {
+  name              = "/kelay/${var.env}/db-bootstrap"
+  retention_in_days = var.log_retention_days
+  tags              = var.tags
+}
+
+data "aws_iam_policy_document" "db_bootstrap_trust" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "db_bootstrap_exec" {
+  statement {
+    sid       = "Logs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.db_bootstrap.arn}:*"]
+  }
+
+  statement {
+    sid     = "DatabaseLogins"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = concat(
+      [module.aurora.cluster_master_user_secret[0].secret_arn],
+      [for secret in aws_secretsmanager_secret.db_user : secret.arn],
+    )
+  }
+}
+
+resource "aws_iam_role" "db_bootstrap_exec" {
+  name               = "${var.name}-db-bootstrap-exec"
+  description        = "Execution role of the ${var.name}-db-bootstrap task: reads the database logins and writes its log."
+  assume_role_policy = data.aws_iam_policy_document.db_bootstrap_trust.json
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy" "db_bootstrap_exec" {
+  name   = "read-database-logins"
+  role   = aws_iam_role.db_bootstrap_exec.id
+  policy = data.aws_iam_policy_document.db_bootstrap_exec.json
+}
+
+resource "aws_ecs_task_definition" "db_bootstrap" {
+  family                   = "${var.name}-db-bootstrap"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.db_bootstrap_exec.arn
+
+  runtime_platform {
+    cpu_architecture        = "X86_64"
+    operating_system_family = "LINUX"
+  }
+
+  container_definitions = jsonencode([{
+    name      = "db-bootstrap"
+    image     = var.db_bootstrap_image
+    essential = true
+    command   = ["sh", "-c", file("${path.module}/db-bootstrap.sh")]
+
+    # Straight to the writer: the proxy only knows the logins this task is about to create.
+    environment = [
+      { name = "PGHOST", value = module.aurora.cluster_endpoint },
+      { name = "PGPORT", value = tostring(module.aurora.cluster_port) },
+      { name = "PGDATABASE", value = "postgres" },
+      { name = "PGSSLMODE", value = "require" },
+      { name = "CONTROL_DATABASE", value = var.database_name },
+      { name = "LITELLM_DATABASE", value = var.litellm_database_name },
+    ]
+
+    secrets = [
+      { name = "PGUSER", valueFrom = "${module.aurora.cluster_master_user_secret[0].secret_arn}:username::" },
+      { name = "PGPASSWORD", valueFrom = "${module.aurora.cluster_master_user_secret[0].secret_arn}:password::" },
+      { name = "PLATFORM_USER", valueFrom = "${aws_secretsmanager_secret.db_user["platform"].arn}:username::" },
+      { name = "PLATFORM_PASSWORD", valueFrom = "${aws_secretsmanager_secret.db_user["platform"].arn}:password::" },
+      { name = "LITELLM_USER", valueFrom = "${aws_secretsmanager_secret.db_user["litellm"].arn}:username::" },
+      { name = "LITELLM_PASSWORD", valueFrom = "${aws_secretsmanager_secret.db_user["litellm"].arn}:password::" },
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.db_bootstrap.name
+        awslogs-region        = data.aws_region.current.region
+        awslogs-stream-prefix = "run"
+      }
+    }
+  }])
+
+  tags = var.tags
+
+  depends_on = [aws_secretsmanager_secret_version.db_user]
 }
 
 ################################################################################

@@ -128,6 +128,12 @@ variable "aurora_instance_count" {
   default = 1
 }
 
+variable "db_password_version" {
+  description = "Raise it to give the service database logins new passwords; then run the db-bootstrap task and restart the services."
+  type        = number
+  default     = 1
+}
+
 variable "deletion_protection" {
   description = "Aurora and ALB deletion protection; buckets and ECR repos refuse to delete with content when true."
   type        = bool
@@ -142,7 +148,7 @@ variable "image_tag" {
 }
 
 variable "service_overrides" {
-  description = "Per-service sizing and image overrides on top of the defaults in main.tf. env replaces, not merges."
+  description = "Per-service sizing and image overrides on top of the defaults in main.tf. env entries are added to the service's own."
   type = map(object({
     image         = optional(string)
     image_tag     = optional(string)
@@ -156,10 +162,24 @@ variable "service_overrides" {
   default = {}
 }
 
-variable "forgejo_url" {
-  description = "Base URL of the Forgejo instance the Control API creates app repos in (provisioned outside this stack for now)."
-  type        = string
-  default     = ""
+variable "identity_social_providers" {
+  description = <<-EOT
+    Sign-in providers Kelay ID offers. Each one gets two secret shells, <provider>-client-id and
+    <provider>-client-secret, which must have values before Kelay ID can start.
+  EOT
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for p in var.identity_social_providers : contains(["google", "kakao", "github"], p)])
+    error_message = "identity_social_providers may hold google, kakao and github."
+  }
+}
+
+variable "identity_email_password" {
+  description = "Let people sign in to Kelay ID with an email address and a password."
+  type        = bool
+  default     = false
 }
 
 variable "enable_execute_command" {

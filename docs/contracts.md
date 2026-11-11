@@ -67,6 +67,8 @@ An app declares its roles, collections and actions. See `fixtures/ticket-board/s
 
 `migrationSql` then grants `kelay_runtime` to the role that runs the migration, when that role may not yet `SET ROLE` to it. Run the migration as the login role the Data API connects with: a managed database's admin user is not a superuser, and without the grant its `SET LOCAL ROLE kelay_runtime` fails.
 
+**Database logins.** A database URL may leave out the user and the password. A service then logs in with `DB_USER` and `DB_PASSWORD` from its environment (`databaseUrlWithCredentials` in `@kelay/contracts`); a URL that names a user is used as it is. Deployed environments store URLs without a login, so the URLs in the registry (§6) hold no secret, and the control API and the Data API share one login, which is what makes the grant above work. The control API creates an env's database the first time a version is deployed to it, so that login needs `CREATEDB` and `CREATEROLE`.
+
 **Scope semantics.** Every policy also requires `org_id = kelay.org()`.
 
 | Scope | `USING` (read/update/delete) | `WITH CHECK` (create/update) |
@@ -119,17 +121,33 @@ COMMIT;
 - **Errors:** `{ error: { code, message } }` with `ErrorCode` → `HTTP_STATUS`.
   - An RLS `WITH CHECK` failure (SQLSTATE 42501) maps to `denied`.
   - An update or delete that changes 0 rows while a select with the same `where` sees ≥ 1 row also maps to `denied`. This is how a screen learns "you can't move that ticket" instead of silently doing nothing.
-- **App lookup.** Apps resolve through the registry (§6). In the MVP that is `KELAY_APPS_FILE`, loaded with `loadAppRegistry` from `@kelay/contracts/registry`.
+- **App lookup.** Apps resolve through the registry (§6). An `app-runtime` caller reaches the database of the env in its caller token (`dev` or `prod`); a `service` caller reaches production. When the registry cannot be reached and has no earlier answer, the request fails with `internal`, never with `unknown_app`.
 
 ### Feedback — `POST /v1/apps/:app/feedback` (control API)
 
 Same two headers as the Data API. Body `{ text, route?, context? }`. The `201` response is `{ ticketId }`, where `ticketId` is the ticket's **key** (`FB-131`), numbered per app. It is the key builders see on the Feedback board and the one proposals cite in `refs`; the ticket's UUID never leaves the control API through this route.
 
-## 6. App registry (MVP)
+## 6. App registry
 
-`fixtures/apps.local.json` maps an app slug to its handle, `databaseUrl`, schema and policy (inline or by file).
+Kelay ID, the Data API and the MCP gateway look apps up through an `AppRegistrySource` from `@kelay/contracts/registry`. `registrySourceFromEnv` picks it from the service's environment:
 
-The control API serves the same `AppRegistryEntry` to service callers at `GET /internal/v1/apps/:app?env=dev|prod`. `env` defaults to `prod`. The entry comes from that environment's active version and database; an environment with no deployed schema or no database answers `unknown_app`.
+| `KELAY_APPS_SOURCE` | Reads | Used |
+|---|---|---|
+| `file` (default) | `KELAY_APPS_FILE`, once at start. `fixtures/apps.local.json` maps an app slug to its handle, `databaseUrl`, schema and policy (inline or by file). The file has one entry per app, so it answers the same for `dev` and `prod`. | Local runs, tests, e2e. |
+| `control-api` | The control API at `CONTROL_API_URL`, as a `service` caller (§4). | Every deployed environment. |
+
+The control API serves the registry to service callers:
+
+- `GET /internal/v1/apps/:app?env=dev|prod` → the app's `AppRegistryEntry`. `env` defaults to `prod`. The entry comes from that environment's active version and database; an environment with no deployed schema or no database answers `unknown_app`.
+- `GET /internal/v1/apps?env=dev|prod` → `{ apps: [{ app, handle }] }` (`AppList`): the apps the first route would answer for, without their database URLs.
+
+The `control-api` source caches each answer, "no such app" included, for `KELAY_APPS_TTL_SECONDS` (default 30). A newly published app, a new schema or a moved database is therefore seen within that time. When the control API does not answer, the source keeps serving the last answer it has; with none, the lookup fails.
+
+Who asks for what:
+
+- **Data API:** the entry of the app being queried, in the caller's env (§5).
+- **MCP gateway:** the production entry of the app in the request path. It builds the app's tools from that entry and rebuilds them when the entry changes.
+- **Kelay ID:** the production list, every `KELAY_APPS_TTL_SECONDS`. It needs only slugs and handles, to know which MCP resources exist. Kelay ID starts with an empty list, so people can sign in before the first app is published.
 
 ## 7. MCP · A2A gateway
 
@@ -158,8 +176,10 @@ The control API serves the same `AppRegistryEntry` to service callers at `GET /i
   - `mcp` and `cimd`, for MCP OAuth 2.1 and the Client ID Metadata Document flow (MCP 2026-07-28; DCR off).
   - Social sign-in: Google, Kakao, GitHub, and email/password in dev.
 - **OAuth endpoints.** better-auth is mounted at `/api/auth`, so the endpoints are `{KELAY_ID_ISSUER}/api/auth/oauth2/authorize` and `{KELAY_ID_ISSUER}/api/auth/oauth2/token`. The RFC 8414 metadata is at `{KELAY_ID_ISSUER}/.well-known/oauth-authorization-server`.
-- **App-scoped token.** `POST /v1/token { app }` with a session returns `{ token }`. Its claims come from `app_members` (contract §9 below) and it uses `aud = kelay:app:<app>`.
-- **MCP tokens** are bound to the app's MCP resource URL and carry the same claims plus `azp`. Consent is per user × app × client.
+- **App-scoped token.** `POST /v1/token { app }` with a session returns `{ token }`. Its claims come from `app_members` (contract §9 below) and it uses `aud = kelay:app:<app>`. Only an `active` member gets one. The route does not consult the registry, so it also serves apps that are not published, such as the console (`kelay-console`). Browser calls are accepted from Kelay ID's own origin and from the origins in `KELAY_ID_CORS_ORIGINS`.
+- **MCP tokens** are bound to the app's MCP resource URL and carry the same claims plus `azp`. Consent is per user × app × client. They exist only for apps in the registry (§6): better-auth takes its protected resources when an instance is created, so Kelay ID builds a new instance when the app list changes. Sessions, keys, clients and consents live in the control DB and carry over.
+- **Consents.** When a person allows an assistant, Kelay ID records it in the control API (`PUT /internal/v1/consents`) before it grants anything; a consent the control API did not store is not granted. A production build requires `CONTROL_API_URL` and `KELAY_CALLER_SECRET` for this. Kelay ID looks its own consent row up on every token grant, which is how a revoke in the control API (§9) ends access.
+- **Sign-in methods.** A provider is on when both `<PROVIDER>_CLIENT_ID` and `<PROVIDER>_CLIENT_SECRET` are set. Email and password is on in dev, and in a production build only with `KELAY_ID_EMAIL_PASSWORD=true`.
 
 ## 9. Control DB tables shared across services
 
@@ -168,6 +188,8 @@ The control API owns the migrations. Other services read only:
 - `app_members(app text, user_id text, org text, role text, plan text, status text, primary key (app, user_id))`
 
 In the other direction, the control API reads Kelay ID's `user`, `account` and `session` tables (better-auth's, in the same database) to show a member's name, email, sign-in provider and last sign-in. It never writes them.
+
+**Consents.** The control API owns `consents`: which assistant a person connected to which app. Kelay ID writes it only through `PUT /internal/v1/consents { userId, app, clientId, clientName?, scopes }` (service caller), and `GET /internal/v1/consents/check` answers whether a consent is active. Revoking happens in the control API alone (`POST /v1/apps/:app/consents/:id/revoke` for the builder, `POST /v1/me/consents/:id/revoke` for the person). In the same transaction the control API deletes what Kelay ID keeps for that user, app and client: the rows of better-auth's `oauthConsent` and `oauthRefreshToken` tables. These two are the only Kelay ID tables the control API writes, and deleting is all it does to them. Kelay ID's own consent-delete route is off, so the two records cannot drift apart.
 
 **Member writes go through the control API**, so the table has one writer:
 

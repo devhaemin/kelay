@@ -28,12 +28,14 @@ locals {
   ]
   app_role_arn = "arn:${local.partition}:iam::${local.account}:role/${local.prefix}*"
 
-  # Every per-app resource carries these tags; the Deploy service may only create and touch tagged ones.
+  # Every per-app resource carries these tags; the Deploy service may only create and change tagged
+  # ones. kelay:env is the platform env (this one), not the app's: the app's dev or prod env is in
+  # the resource name and in kelay:app-env. services/control-api/src/deploy/aws.ts sets all four.
   required_tags = {
     "kelay:env"        = var.env
     "kelay:managed-by" = "kelay-deploy"
   }
-  protected_tag_keys = concat(keys(local.required_tags), ["kelay:app"])
+  protected_tag_keys = concat(keys(local.required_tags), ["kelay:app", "kelay:app-env"])
 }
 
 ################################################################################
@@ -233,28 +235,38 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
 
+  # Reads carry no tag condition. A function that does not exist yet has no tags, so a conditioned
+  # read would be refused as access denied, and the Deploy service could not tell "missing" (create
+  # it) from "forbidden". The name prefix still limits what can be read.
   statement {
-    sid = "ManageOwnFunctions"
+    sid = "ReadAppFunctions"
     actions = [
       "lambda:GetFunction",
       "lambda:GetFunctionConfiguration",
+      "lambda:ListVersionsByFunction",
+      "lambda:GetAlias",
+      "lambda:ListAliases",
+      "lambda:ListTags",
+      "lambda:GetFunctionUrlConfig",
+      "lambda:GetProvisionedConcurrencyConfig",
+    ]
+    resources = local.function_arns
+  }
+
+  statement {
+    sid = "ManageOwnFunctions"
+    actions = [
       "lambda:UpdateFunctionCode",
       "lambda:UpdateFunctionConfiguration",
       "lambda:PublishVersion",
-      "lambda:ListVersionsByFunction",
       "lambda:CreateAlias",
       "lambda:UpdateAlias",
       "lambda:DeleteAlias",
-      "lambda:GetAlias",
-      "lambda:ListAliases",
       "lambda:DeleteFunction",
       "lambda:InvokeFunction",
-      "lambda:ListTags",
-      "lambda:GetFunctionUrlConfig",
       "lambda:DeleteFunctionUrlConfig",
       "lambda:PutFunctionConcurrency",
       "lambda:DeleteFunctionConcurrency",
-      "lambda:GetProvisionedConcurrencyConfig",
       "lambda:PutProvisionedConcurrencyConfig",
       "lambda:DeleteProvisionedConcurrencyConfig",
       "lambda:PutFunctionEventInvokeConfig",
@@ -306,6 +318,8 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
 
+  # The Router calls function URLs with its own IAM policy (same account), so no function needs a
+  # resource policy, and the Deploy service must not be able to open one to anyone else.
   statement {
     sid       = "DenyResourcePolicies"
     effect    = "Deny"
@@ -369,9 +383,10 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
 
+  # Publishing is here too: the Deploy service creates a state machine and its first version in one call.
   statement {
     sid       = "CreateTaggedStateMachines"
-    actions   = ["states:CreateStateMachine", "states:TagResource"]
+    actions   = ["states:CreateStateMachine", "states:TagResource", "states:PublishStateMachineVersion"]
     resources = [local.state_machine_arn]
 
     dynamic "condition" {
@@ -390,15 +405,24 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
 
+  # Untagged for the same reason as ReadAppFunctions: the Deploy service describes a state machine
+  # to learn whether it has to create it.
+  statement {
+    sid = "ReadAppStateMachines"
+    actions = [
+      "states:DescribeStateMachine",
+      "states:ListStateMachineVersions",
+      "states:ListTagsForResource",
+    ]
+    resources = [local.state_machine_arn, local.state_machine_qualified]
+  }
+
   statement {
     sid = "ManageOwnStateMachines"
     actions = [
-      "states:DescribeStateMachine",
       "states:UpdateStateMachine",
       "states:DeleteStateMachine",
       "states:PublishStateMachineVersion",
-      "states:ListStateMachineVersions",
-      "states:ListTagsForResource",
     ]
     resources = [local.state_machine_arn]
 

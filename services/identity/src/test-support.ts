@@ -57,25 +57,21 @@ export interface TestIdentity {
   close(): Promise<void>;
 }
 
-export async function startTestIdentity(overrides: Partial<IdentityDeps> = {}): Promise<TestIdentity> {
+export interface TestDatabase {
+  pool: pg.Pool;
+  setMember(row: AppMemberRow): Promise<void>;
+  close(): Promise<void>;
+}
+
+/** A throwaway control database with `app_members`, before better-auth's tables exist. */
+export async function createTestDatabase(): Promise<TestDatabase> {
   const name = `identity_${randomUUID().replaceAll('-', '')}`;
   await withAdmin((c) => c.query(`create database ${name}`));
   const url = new URL(ADMIN_DATABASE_URL);
   url.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: url.toString() });
   await pool.query(APP_MEMBERS_DDL);
-  const deps: IdentityDeps = {
-    database: pool,
-    issuer: ISSUER,
-    secret: 'identity-test-secret-0123456789abcdef',
-    registry: testRegistry(),
-    mcpPublicBaseUrl: MCP_BASE,
-    ...overrides,
-  };
-  await migrateIdentity(deps);
-  const identity = createIdentity(deps);
   return {
-    identity,
     pool,
     async setMember(m) {
       await pool.query(
@@ -90,6 +86,21 @@ export async function startTestIdentity(overrides: Partial<IdentityDeps> = {}): 
       await withAdmin((c) => c.query(`drop database ${name} with (force)`));
     },
   };
+}
+
+/** What every test instance is built from, apart from the apps. */
+export const testDeps = (pool: pg.Pool): Omit<IdentityDeps, 'registry'> => ({
+  database: pool,
+  issuer: ISSUER,
+  secret: 'identity-test-secret-0123456789abcdef',
+  mcpPublicBaseUrl: MCP_BASE,
+});
+
+export async function startTestIdentity(overrides: Partial<IdentityDeps> = {}): Promise<TestIdentity> {
+  const db = await createTestDatabase();
+  const deps: IdentityDeps = { ...testDeps(db.pool), registry: testRegistry(), ...overrides };
+  await migrateIdentity(deps);
+  return { identity: createIdentity(deps), ...db };
 }
 
 /**

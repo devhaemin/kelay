@@ -5,7 +5,7 @@ Every model call in Kelay goes through one LiteLLM proxy ([contracts §12](../..
 | File | Purpose |
 |---|---|
 | `config.yaml` | Models, routing, fallbacks, settings. The same file runs locally and on ECS. |
-| `Dockerfile` | `ghcr.io/berriai/litellm:v1.106.6` with `config.yaml` baked in; CI pushes it to the `llm-gateway` ECR repo. |
+| `Dockerfile` | `ghcr.io/berriai/litellm:v1.106.6` with `config.yaml` baked in; `infra/deploy/build-images.sh` pushes it to the `llm-gateway` ECR repo. |
 | [`../local/compose.services.yml`](../local/compose.services.yml) | Local gateway on `localhost:4000`. |
 
 ## Models
@@ -123,7 +123,7 @@ The local master key is `LLM_GATEWAY_KEY` from `.env` (default `sk-kelay-dev`), 
 
 - `litellm-master-key`
 - `litellm-salt-key`
-- `litellm-database-url`: the `litellm` database through RDS Proxy
+- `db-litellm`: the `kelay_litellm` login, as `DATABASE_USERNAME` and `DATABASE_PASSWORD`. With the plain settings `DATABASE_HOST` (RDS Proxy) and `DATABASE_NAME` (`litellm`), LiteLLM builds its database URL from the four, so no secret holds a URL. Terraform writes the login; the `db-bootstrap` task creates it and the database ([`docs/deploy.md`](../../docs/deploy.md), step 4).
 - `anthropic-api-key`, `openai-api-key` and `gemini-api-key`
 
 It runs with `DISABLE_ADMIN_UI=True`. Health checks hit `/health/liveliness`, which needs no auth and makes no model calls. Avoid plain `/health`: it calls every model.

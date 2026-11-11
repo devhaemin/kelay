@@ -12,7 +12,8 @@
 // (and --app-host when the app domain is not the zone apex).
 //
 // The bindings repeat `router_vars` of infra/terraform/envs/<env>/main.tf, because a deploy replaces
-// every plain-text binding; keep the two in step. Secrets set with `wrangler secret put` are kept.
+// every plain-text binding; keep the two in step (they are what services/router/src/index.ts reads).
+// Secrets set with `wrangler secret put` are kept.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,19 +43,17 @@ if (values.env !== 'staging' && values.env !== 'prod') fail('--env must be stagi
 
 let kvNamespaceId = values['kv-namespace-id'];
 let scriptName = values['script-name'] ?? `kelay-${values.env}-router`;
-let appResourcePrefix = 'kelay-app-';
 let hosts;
 if (values.outputs) {
   const outputs = JSON.parse(readFileSync(values.outputs, 'utf8'));
   const output = (name) => outputs[name]?.value ?? fail(`${values.outputs} has no "${name}" output; was the env applied?`);
   kvNamespaceId ??= output('routes_kv_namespace_id');
   scriptName = values['script-name'] ?? output('router_script_name');
-  appResourcePrefix = output('runtime').app_resource_prefix;
   hosts = output('hosts');
 } else {
   if (!values.zone) fail('pass --outputs <terraform output -json file>, or --kv-namespace-id and --zone');
   const host = (label) => `${label}.${values.zone}`;
-  hosts = { api: host('api'), id: host('id'), mcp: host('mcp'), preview: host('preview'), app: values['app-host'] ?? values.zone };
+  hosts = { api: host('api'), mcp: host('mcp'), app: values['app-host'] ?? values.zone };
 }
 if (!/^[0-9a-f]{32}$/.test(kvNamespaceId ?? '')) fail('the ROUTES KV namespace id must be 32 hex characters');
 
@@ -74,13 +73,9 @@ const config = {
   observability: { enabled: true, head_sampling_rate: 1 },
   kv_namespaces: [{ binding: 'ROUTES', id: kvNamespaceId }],
   vars: {
-    KELAY_ENV: values.env,
     AWS_REGION: values.region,
-    APP_RESOURCE_PREFIX: appResourcePrefix,
     MCP_ORIGIN: `https://${hosts.mcp}`,
-    PREVIEW_ORIGIN: `https://${hosts.preview}`,
-    KELAY_ID_ISSUER: `https://${hosts.id}`,
-    // Read by the Router for store pages (/<handle>); main.tf does not set it yet.
+    // Store pages (/<handle>) come from the control API's public routes.
     CONTROL_ORIGIN: `https://${hosts.api}`,
   },
 };

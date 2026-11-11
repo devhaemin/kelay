@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Build from the repo root: docker build -f services/data-api/Dockerfile -t kelay/data-api .
-# Runtime env: KELAY_ID_JWKS_URL, KELAY_ID_ISSUER, KELAY_CALLER_SECRET, KELAY_APPS_FILE (mounted), PORT.
+# Runtime env: KELAY_ID_JWKS_URL, KELAY_ID_ISSUER, KELAY_CALLER_SECRET, PORT, and the app registry:
+# KELAY_APPS_SOURCE=control-api with CONTROL_API_URL, or KELAY_APPS_FILE (mounted).
 
 FROM node:22-slim AS build
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0

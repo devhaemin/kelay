@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { AppRegistryEntry } from '@kelay/contracts';
+import { AppList, AppRegistryEntry } from '@kelay/contracts';
 import { defaultRole } from '../src/routes/internal.ts';
 import { createHarness, type Harness } from './harness.ts';
 
@@ -197,5 +197,21 @@ describe('internal registry and public store', () => {
     expect(store.body.apps.map((a: { slug: string }) => a.slug)).toEqual(['team-wiki', 'ticket-board']);
     expect(store.body.apps[1]).toEqual({ slug: 'ticket-board', name: 'Ticket Board', description: 'Jira-style board', emoji: '🎫', color: null, path: '/jeongyun/ticket-board' });
     expect((await h.req('GET', '/public/v1/stores/nobody')).status).toBe(404);
+  });
+
+  it('lists the apps that have a deployment and a database in an env', async () => {
+    const svc = await h.service('identity');
+    expect((await h.req('GET', '/internal/v1/apps', { caller: svc })).body).toEqual({ apps: [] });
+    const dev = await h.req('GET', '/internal/v1/apps?env=dev', { caller: svc });
+    expect(dev.status).toBe(200);
+    expect(AppList.parse(dev.body)).toEqual({ apps: [{ app: 'ticket-board', handle: 'jeongyun' }] });
+    for (const { app } of dev.body.apps) expect((await h.req('GET', `/internal/v1/apps/${app}?env=dev`, { caller: svc })).status).toBe(200);
+
+    expect((await h.req('GET', '/internal/v1/apps?env=test', { caller: svc })).status).toBe(400);
+    expect((await h.req('GET', '/internal/v1/apps')).status).toBe(403);
+    expect((await h.req('GET', '/internal/v1/apps', { caller: await h.appCaller('ticket-board') })).status).toBe(403);
+
+    await h.req('DELETE', '/v1/apps/ticket-board', { token: jy });
+    expect((await h.req('GET', '/internal/v1/apps?env=dev', { caller: svc })).body).toEqual({ apps: [] });
   });
 });

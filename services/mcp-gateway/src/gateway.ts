@@ -14,6 +14,7 @@ import {
   type KelayClaims,
 } from '@kelay/contracts';
 import { verifyCallerToken, type VerifyOptions } from '@kelay/tokens';
+import type { AppRegistrySource } from '@kelay/contracts/registry';
 import {
   DEFAULT_MAX_REQUEST_BODY_SIZE,
   McpServer,
@@ -56,7 +57,8 @@ export interface GatewayConfig {
 
 export interface GatewayDeps {
   config: GatewayConfig;
-  registry: AppRegistry;
+  /** Where apps are looked up (contract §6). The gateway serves each app's production deployment. */
+  registry: AppRegistrySource;
   /** Kelay ID key set (`remoteJwks(KELAY_ID_JWKS_URL)` in production). */
   jwks: VerifyOptions['jwks'];
   /** Transport for Data API calls. */
@@ -231,11 +233,20 @@ export function createGateway(deps: GatewayDeps): Hono {
     return prepared;
   }
 
-  const apps = new Map(Object.entries(deps.registry.apps).map(([slug, entry]) => [slug, prepare(slug, entry)]));
+  // Keyed by the entry object: the registry hands out the same one until it reads the app again,
+  // and a redeployed app (new schema, new tools) arrives as a new one.
+  const preparedApps = new WeakMap<AppRegistryEntry, PreparedApp>();
 
-  const resolve = (c: Context): PreparedApp | undefined => {
-    const app = apps.get(c.req.param('app') ?? '');
-    return app && app.entry.handle === c.req.param('handle') ? app : undefined;
+  const resolve = async (c: Context): Promise<PreparedApp | undefined> => {
+    const slug = c.req.param('app') ?? '';
+    const entry = await deps.registry.get(slug, 'prod');
+    if (!entry || entry.handle !== c.req.param('handle')) return undefined;
+    let app = preparedApps.get(entry);
+    if (!app) {
+      app = prepare(slug, entry);
+      preparedApps.set(entry, app);
+    }
+    return app;
   };
   const fail = (c: Context, code: ErrorCode, message: string, headers?: Record<string, string>) =>
     c.json(errorBody(code, message), HTTP_STATUS[code] as ContentfulStatusCode, headers);
@@ -246,21 +257,21 @@ export function createGateway(deps: GatewayDeps): Hono {
   http.get('/healthz', (c) => c.json({ ok: true }));
 
   http.use('/.well-known/oauth-protected-resource/*', cors({ origin: '*', allowMethods: ['GET'] }));
-  http.get('/.well-known/oauth-protected-resource/:handle/:app/mcp', (c) => {
-    const app = resolve(c);
+  http.get('/.well-known/oauth-protected-resource/:handle/:app/mcp', async (c) => {
+    const app = await resolve(c);
     return app ? c.json(protectedResourceMetadata(app.urls, config.issuer, app.slug)) : unknownApp(c);
   });
 
   http.use('/:handle/:app/.well-known/agent-card.json', cors({ origin: '*', allowMethods: ['GET'] }), etag());
-  http.get('/:handle/:app/.well-known/agent-card.json', (c) => {
-    const app = resolve(c);
+  http.get('/:handle/:app/.well-known/agent-card.json', async (c) => {
+    const app = await resolve(c);
     if (!app) return unknownApp(c);
     c.header('Cache-Control', 'public, max-age=300');
     return c.json(app.card);
   });
 
   http.post('/:handle/:app/mcp', async (c) => {
-    const app = resolve(c);
+    const app = await resolve(c);
     if (!app) return unknownApp(c);
     const auth = await authenticate(c.req.header('authorization'), {
       jwks,
@@ -349,7 +360,7 @@ export function createGateway(deps: GatewayDeps): Hono {
   }
 
   http.post('/:handle/:app/a2a', async (c) => {
-    const app = resolve(c);
+    const app = await resolve(c);
     if (!app) return unknownApp(c);
     const who = await a2aCaller(c, app);
     if (who instanceof Response) return who;
@@ -391,6 +402,11 @@ export function createGateway(deps: GatewayDeps): Hono {
   });
 
   http.notFound((c) => fail(c, 'not_found', 'Not found.'));
+  // Reached when the registry cannot say whether the app exists; "no such app" would be a wrong answer.
+  http.onError((error, c) => {
+    onError(error);
+    return fail(c, 'internal', INTERNAL_FAILURE);
+  });
 
   return http;
 }

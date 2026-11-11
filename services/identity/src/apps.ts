@@ -1,5 +1,9 @@
 // Registry apps as OAuth protected resources: one MCP resource per app (contract §7).
-import type { AppRegistry } from '@kelay/contracts';
+
+/** What Kelay ID needs to know about the apps: their slugs and handles. An `AppRegistry` fits. */
+export interface AppDirectory {
+  apps: Record<string, { handle: string }>;
+}
 
 export interface AppResource {
   app: string;
@@ -18,7 +22,7 @@ export function mcpResourceUrl(mcpPublicBaseUrl: string, handle: string, app: st
   return `${mcpPublicBaseUrl.replace(/\/+$/, '')}/${handle}/${app}/mcp`;
 }
 
-export function appResources(registry: AppRegistry, mcpPublicBaseUrl: string): AppResources {
+export function appResources(registry: AppDirectory, mcpPublicBaseUrl: string): AppResources {
   const list = Object.entries(registry.apps)
     .map(([app, entry]) => ({ app, handle: entry.handle, resource: mcpResourceUrl(mcpPublicBaseUrl, entry.handle, app) }))
     .sort((a, b) => a.app.localeCompare(b.app));

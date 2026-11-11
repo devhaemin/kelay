@@ -85,6 +85,8 @@ jobs:
       # No backend and no credentials: this checks the configuration, not any cloud account.
       - run: terraform init -backend=false -input=false
       - run: terraform validate
+      # Plans the env against mock providers and checks the settings each service is given.
+      - run: terraform test
 
   deploy-tooling:
     name: Workflows and deploy scripts

@@ -44,6 +44,8 @@ export interface AuthDeps {
   /** KELAY_ID_ISSUER without a trailing slash; also better-auth's baseURL. */
   issuer: string;
   secret: string;
+  /** MCP_PUBLIC_BASE_URL. */
+  mcpPublicBaseUrl: string;
   apps: AppResources;
   members: MemberStore;
   emailPassword: boolean;
@@ -63,8 +65,10 @@ const invalidGrant = (description: string) =>
  */
 export function authOptions(deps: AuthDeps) {
   const { apps, members, issuer } = deps;
-  const [primary] = apps.list;
-  if (!primary) throw new Error('identity: the app registry is empty, so there is no MCP resource to protect');
+  // mcp() needs one resource even before the first app is published. `/mcp` alone can never be an
+  // app's resource (those are /<handle>/<app>/mcp), so no token is ever issued for the placeholder:
+  // `appClaims` below refuses every resource that is not an app's.
+  const primary = apps.list[0]?.resource ?? `${deps.mcpPublicBaseUrl.replace(/\/+$/, '')}/mcp`;
 
   // Runs on every authorization_code and refresh_token grant, so a ban or a revoked consent
   // stops the assistant at its next refresh. Revoking in the control API deletes the consent
@@ -117,7 +121,7 @@ export function authOptions(deps: AuthDeps) {
         loginPage: `${issuer}/login`,
         consentPage: `${issuer}/consent`,
         // mcp() takes one resource; every other app's resource comes in through `resources`.
-        resource: primary.resource,
+        resource: primary,
         resources: apps.list.map((a) => ({
           identifier: a.resource,
           name: `${a.handle}/${a.app}`,

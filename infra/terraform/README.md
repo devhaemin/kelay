@@ -23,6 +23,7 @@ infra/terraform/
     network/        VPC across 2 AZs; subnet tiers public | platform | sandbox | data; NAT; S3 gateway endpoint;
                     interface endpoints for the sandbox tier; optional flow logs
     data/           Aurora PostgreSQL Serverless v2 (RDS-managed master secret, scale to 0), RDS Proxy,
+                    the service database logins and the db-bootstrap task that creates them,
                     EFS for workspaces (mounts only through access points), S3 app-files and artifacts
     platform/       ECS cluster, HTTPS ALB with host/path rules, one Fargate service per entry of the
                     `services` map, ECR repos, log groups, task roles, Cloud Map private DNS, secret shells
@@ -40,7 +41,7 @@ infra/terraform/
 
 ### Env roots
 
-`main.tf`, `variables.tf`, `outputs.tf` and `providers.tf` are identical in `envs/staging` and `envs/prod`; keep them that way (`diff envs/staging/main.tf envs/prod/main.tf` should print nothing). An env differs only in:
+`main.tf`, `variables.tf`, `outputs.tf`, `providers.tf` and `tests/wiring.tftest.hcl` are identical in `envs/staging` and `envs/prod`; keep them that way (`diff envs/staging/main.tf envs/prod/main.tf` should print nothing). An env differs only in:
 
 - `env.tf`: the env name;
 - the backend `key` in `versions.tf`;
@@ -75,12 +76,23 @@ The env roots define the eight services with ports from [contracts §11](../../d
 | data-api | 4002 | `data.<zone>` |
 | mcp-gateway | 4004 | `mcp.<zone>` |
 | llm-gateway (LiteLLM) | 4000 | `llm.<zone>` |
-| preview-proxy | 4005 | `preview.<zone>` |
+| preview-proxy (held at zero tasks: nothing implements it yet) | 4005 | `preview.<zone>` |
 | otel-collector | 4318 (health 13133) | `otel.<zone>` |
 
 Each service is also reachable in the VPC at `http://<service>.<env>.kelay.internal:<port>`; services call each other this way. The public hosts exist for callers outside the VPC (browsers, the per-app Lambdas, users' AI assistants). They are proxied by Cloudflare, and the ALB only accepts Cloudflare's IP ranges (`restrict_alb_to_cloudflare`). A Cloudflare rule blocks `/internal/*` paths at the edge.
 
-The ALB health-checks Kelay services at `GET /healthz`, LiteLLM at `/health/liveliness`, and the OTel collector's `health_check` extension at port 13133. Size and image overrides go in `service_overrides`. Every service image is `<account>.dkr.ecr.ap-northeast-2.amazonaws.com/kelay-<env>/<service>:<image_tag>`. The `llm-gateway` image is built from [`infra/litellm`](../litellm). Repositories are tag-immutable, so push a new tag (for example the git SHA) and set `image_tag`.
+The ALB health-checks Kelay services at `GET /healthz`, LiteLLM at `/health/liveliness`, and the OTel collector's `health_check` extension at port 13133. Size and image overrides go in `service_overrides`; its `env` entries are added to a service's own settings. Every service image is `<account>.dkr.ecr.ap-northeast-2.amazonaws.com/kelay-<env>/<service>:<image_tag>`, built from the Dockerfiles listed in [`infra/deploy/images.json`](../deploy/images.json): the `llm-gateway` image from [`infra/litellm`](../litellm) and the `otel-collector` image from [`infra/otel`](../otel). Repositories are tag-immutable, so push a new tag (for example the git SHA) and set `image_tag`.
+
+### What the services are given
+
+`main.tf` passes each service the settings its code reads, and the `wiring` test checks them:
+
+- **Every service:** `KELAY_ENV`, the platform URLs, and `KELAY_APPS_SOURCE=control-api`, so Kelay ID, the Data API and the MCP gateway read apps from the control API ([contracts §6](../../docs/contracts.md)) instead of a file.
+- **Database access:** `CONTROL_DATABASE_URL` and `APP_DATABASE_URL_TEMPLATE` are plain settings without a login. `DB_USER` and `DB_PASSWORD` come from the `db-platform` secret; the LLM gateway gets `DATABASE_HOST`, `DATABASE_NAME`, `DATABASE_USERNAME` and `DATABASE_PASSWORD` from `db-litellm`. No service has the Aurora master login, which RDS rotates.
+- **control-api:** `KELAY_DEPLOY_DRIVER=aws` with `KELAY_LAMBDA_ROLE_ARN`, `KELAY_SFN_ROLE_ARN` and `APP_RESOURCE_PREFIX`, and `APP_RUNTIME_*` with the public hosts that app functions call. `KELAY_ROUTER_PRINCIPAL` is left unset on purpose (see the last section).
+- **identity:** `KELAY_ID_CORS_ORIGINS` (the console), `KELAY_ID_EMAIL_PASSWORD` from `identity_email_password`, and a client id and client secret for each provider in `identity_social_providers`.
+- **otel-collector:** with `enable_clickhouse` it exports to ClickHouse (`CLICKHOUSE_ENDPOINT`, `CLICKHOUSE_PASSWORD`); without, it runs the image's log-only pipeline.
+- **Router Worker:** `MCP_ORIGIN`, `CONTROL_ORIGIN` and `AWS_REGION`, beside the `ROUTES` namespace and the AWS key.
 
 ## Bootstrap (once per AWS account)
 
@@ -104,7 +116,7 @@ Use one AWS account per environment. All per-app resource names share the `kelay
 
 3. **Create a Cloudflare API token** scoped to the zone (DNS edit, Zone Settings edit, Zone WAF edit, Workers Routes edit) and the account (Workers Scripts edit, Workers KV Storage edit). Use one Cloudflare zone per env. Zone settings and zone rulesets have a single owner, so if two envs share a zone, set `manage_zone_settings` and `manage_zone_rulesets` to `false` in one of them.
 
-4. **Build the Router Worker bundle** that `router_bundle_path` points at (`services/router/dist/index.js` by default). The Worker script resource uploads that one ES module file.
+4. **Build the Router Worker bundle** that `router_bundle_path` points at (`services/router/dist/index.js` by default): `pnpm --filter @kelay/router build`. The Worker script resource uploads that one ES module file.
 
 5. **Configure the env root:**
 
@@ -153,28 +165,27 @@ steps:
 
 ### Verify without cloud access
 
+From the repository root (the test hashes a file of `services/router`, so the whole repository is mounted):
+
 ```sh
-cd infra/terraform
-docker run --rm -v "$PWD":/w -w /w hashicorp/terraform:1.17.2 fmt -check -recursive
+docker run --rm -v "$PWD/infra/terraform":/w -w /w hashicorp/terraform:1.17.2 fmt -check -recursive
 for env in staging prod; do
-  docker run --rm -v "$PWD":/w -w /w/envs/$env --entrypoint sh hashicorp/terraform:1.17.2 \
-    -c 'terraform init -backend=false -input=false && terraform validate'
+  docker run --rm -v "$PWD":/repo -w /repo/infra/terraform/envs/$env --entrypoint sh hashicorp/terraform:1.17.2 \
+    -c 'terraform init -backend=false -input=false && terraform validate && terraform test'
 done
 ```
+
+`terraform test` runs [`tests/wiring.tftest.hcl`](envs/staging/tests/wiring.tftest.hcl): it plans the env against mock providers, so it needs no credentials and reaches no account, and it checks the settings each service is given.
 
 The lock files (`envs/*/.terraform.lock.hcl`) are committed with hashes for `linux_amd64`, `linux_arm64`, `darwin_arm64` and `darwin_amd64`. After a provider upgrade, refresh them with `terraform providers lock -platform=...` for those four platforms.
 
 ### After the first apply
 
-1. **Fill the secret shells.** Terraform creates every Secrets Manager secret empty (`terraform output secret_arns`), and services start only once their secrets have values:
+[`docs/deploy.md`](../../docs/deploy.md) is the runbook, with the commands. In short:
 
-   ```sh
-   aws secretsmanager put-secret-value --secret-id kelay-staging/anthropic-api-key --secret-string "$KEY"
-   ```
-
-   - `control-database-url` and `litellm-database-url` point at the RDS Proxy endpoint (`terraform output db_proxy_endpoint`). They use the master credentials from `db_master_secret_arn`, or per-service users you create.
-   - `clickhouse-password` is the exception: with `enable_clickhouse = true`, Terraform writes it as a write-only value, so it never appears in state.
-2. **Give the Router its AWS key.** Create an access key for the `kelay-<env>-router` user and set it on the Worker:
+1. **Create the database logins.** Terraform writes the logins of the services to Secrets Manager (`terraform output db_user_secret_arns`) as write-only values, so they never appear in state, and registers them with RDS Proxy. Run the `<name>-db-bootstrap` task (`terraform output db_bootstrap_task_family`) to create the roles and their databases in Postgres. Run it again after raising `db_password_version`.
+2. **Fill the secret shells.** Terraform creates the other Secrets Manager secrets empty (`terraform output secret_arns`), and services start only once their secrets have values. Use [`infra/deploy/set-secrets.sh`](../deploy/set-secrets.sh). `clickhouse-password` is the exception: with `enable_clickhouse = true`, Terraform writes it as a write-only value.
+3. **Give the Router its AWS key.** Create an access key for the `kelay-<env>-router` user and set it on the Worker:
 
    ```sh
    wrangler secret put AWS_ACCESS_KEY_ID --name kelay-staging-router
@@ -182,7 +193,7 @@ The lock files (`envs/*/.terraform.lock.hcl`) are committed with hashes for `lin
    ```
 
    Terraform keeps `secret_text` bindings across uploads. Alternatively, set `create_router_access_key = true` and Terraform manages the key, which puts the secret in state.
-3. **Push images.** A service runs once its image tag exists in ECR. `desired_count` sets only the initial count. After that, ECS (and autoscaling where it is configured) owns the count, and Terraform ignores it.
+4. **Push images.** A service runs once its image tag exists in ECR. `desired_count` sets only the initial count. After that, ECS (and autoscaling where it is configured) owns the count, and Terraform ignores it.
 
 ## What the Deploy service creates at runtime
 
@@ -190,18 +201,19 @@ Terraform creates no per-app resources. The Deploy service runs inside `control-
 
 | Resource | Name | Notes |
 |---|---|---|
-| Lambda function per app × env × function (web, agent nodes) | `kelay-app-*` | Must be tagged `kelay:env=<env>`, `kelay:managed-by=kelay-deploy` and `kelay:app=<slug>`. Runs as the shared `kelay-<env>-app-lambda` role (logs only, under `kelay-app-boundary`). Not attached to a VPC (denied). |
+| Lambda function per app × env × function (web, agent nodes) | `kelay-app-<app>-<dev\|prod>-*` | Must be tagged `kelay:env=<platform env>`, `kelay:managed-by=kelay-deploy` and `kelay:app=<slug>`; the Deploy service also sets `kelay:app-env=<dev\|prod>`. Runs as the shared `kelay-<env>-app-lambda` role (logs only, under `kelay-app-boundary`). Not attached to a VPC (denied). |
 | Lambda versions and aliases | `live` alias per function | Publish moves the alias; rollback moves it back. |
-| Function URL | on the alias | `AuthType` must be `AWS_IAM` (other values are denied). Only the Router user may call it: `lambda:InvokeFunctionUrl` plus `lambda:InvokeFunction` when invoked through a function URL. |
+| Function URL | on the alias | `AuthType` must be `AWS_IAM` (other values are denied). Only the Router user may call it, through its own IAM policy: `lambda:InvokeFunctionUrl` plus `lambda:InvokeFunction` when invoked through a function URL. The function gets no resource policy, which is why `KELAY_ROUTER_PRINCIPAL` stays unset. |
 | Step Functions state machine per app × env × graph | `kelay-app-*` | Same required tags. Runs as `kelay-<env>-app-states`, which may only invoke `kelay-app-*` functions. Express for runs under 5 minutes, Standard for longer ones. Versions and aliases are published alongside the Lambda alias. |
 | Log groups | `/aws/lambda/kelay-app-*`, `/aws/vendedlogs/states/kelay-app-*` | Created with retention by the Deploy service. |
 | Build bundles | `s3://<artifacts>/builds/...` | Read by Lambda at deploy time, expired after `build_retention_days`. |
-| Route entry | Workers KV `ROUTES`: `/<handle>/<app>` → function URL | Written through the Cloudflare API with the `cloudflare-kv-token` secret. |
+| Route entry | Workers KV `ROUTES`: `/<handle>/<app>` → function URL | Not written by the Control API yet: upload it with `infra/deploy/upload-routes.sh`. |
 | Builder workspace | ECS task in `kelay-<env>-sandboxes` | The Control API creates an EFS access point per workspace and registers a `kelay-<env>-workspace*` task definition revision with it. RunTask cannot override volumes, so a revision is the only way to attach the access point. The revision may only use the two sandbox roles. |
-| App databases | `<app>_dev`, `<app>_prod` on the Aurora cluster | Created by the Control API through RDS Proxy, following contracts §3. |
+| App databases | `app_<app>_dev`, `app_<app>_prod` on the Aurora cluster | Created by the Control API through RDS Proxy the first time a version is deployed to the env, as the `kelay_platform` login, following contracts §3. |
 
 Guardrails enforced in IAM:
 
+- **Tagged resources only.** The Deploy service can create a function or a state machine only with the required tags, and change only ones that carry them. Reads (`Get*`, `Describe*`, `List*`) are limited by the name prefix alone, so that it can tell a resource that does not exist from one it may not touch.
 - **Protected tags.** The Deploy service cannot remove or change the required tags.
 - **Execution roles.** It can only pass the two shared roles.
 - **Fixed limits.** It cannot add resource policies to functions, attach them to a VPC, or touch the permissions boundary.
@@ -211,6 +223,7 @@ Agent-graph runs are started by the run orchestrator policy, attached to the sam
 
 ## Open items
 
-- **Forgejo** is not provisioned here. Set `forgejo_url` once it runs: as its own service with EFS storage, or hosted elsewhere.
+- **Forgejo** is not provisioned here, and no service reads a Forgejo setting yet.
+- **The builder service** will need the sandbox settings (`terraform output sandbox`), the workspace image and the `preview-proxy` service; none of them is wired to a task today.
 - **ALB access logs** are off. They need a log bucket with the ELB delivery policy.
-- **Platform services share one task security group**, and each gets its own IAM role. Splitting database access per service (for example per-service Postgres users through extra RDS Proxy auth entries) is a follow-up.
+- **Platform services share one task security group**, and each gets its own IAM role. The control API, Kelay ID and the Data API share one Postgres login (`kelay_platform`); the control API and the Data API have to, because the control API's migration grants `kelay_runtime` to the login the Data API uses. Giving Kelay ID its own is a follow-up.
