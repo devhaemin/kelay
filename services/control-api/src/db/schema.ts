@@ -56,6 +56,14 @@ export interface DeployResources {
   stateMachineArns?: string[];
 }
 
+export interface GraphDefinition {
+  /** GraphSpec.name; the state machine is `kelay-app-<app>-<env>-<name>`. */
+  name: string;
+  /** Amazon States Language JSON from @kelay/graph. `${NodeFunctionArn}` is replaced with the node function alias ARN. */
+  definition: string;
+  type?: 'EXPRESS' | 'STANDARD';
+}
+
 export interface ReportStats {
   window: { from: string; to: string };
   received: number;
@@ -121,6 +129,8 @@ export const versions = pgTable(
     resources: jsonb('resources').$type<DeployResources>().notNull().default({}),
     schema: jsonb('schema').$type<AppSchema>(),
     policy: jsonb('policy').$type<PolicyMatrix>(),
+    /** Kept so a publish can recreate the same state machines in prod. */
+    graphs: jsonb('graphs').$type<GraphDefinition[]>().notNull().default([]),
     sourceVersionId: uuid('source_version_id').references((): AnyPgColumn => versions.id, { onDelete: 'set null' }),
     createdBy: text('created_by').notNull(),
     createdAt: createdAt(),

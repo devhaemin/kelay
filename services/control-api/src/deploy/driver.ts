@@ -1,12 +1,6 @@
-import type { DeployResources, EnvName } from '../db/schema.ts';
+import type { DeployResources, EnvName, GraphDefinition } from '../db/schema.ts';
 
-export interface GraphDefinition {
-  /** GraphSpec.name; the state machine is `kelay-app-<app>-<env>-<name>`. */
-  name: string;
-  /** Amazon States Language JSON from @kelay/graph. `${NodeFunctionArn}` is replaced with the node function alias ARN. */
-  definition: string;
-  type?: 'EXPRESS' | 'STANDARD';
-}
+export type { GraphDefinition };
 
 export interface DeployInput {
   app: string;
