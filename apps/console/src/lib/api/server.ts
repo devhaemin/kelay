@@ -22,5 +22,6 @@ export async function getConsoleApi(): Promise<ConsoleApi> {
     token,
     appOrigin: process.env.KELAY_APP_ORIGIN ?? 'https://kelay.app',
     mcpBaseUrl: process.env.MCP_PUBLIC_BASE_URL ?? process.env.KELAY_APP_ORIGIN ?? 'https://kelay.app',
+    ...(process.env.BUILDER_URL ? { builderUrl: process.env.BUILDER_URL } : {}),
   });
 }

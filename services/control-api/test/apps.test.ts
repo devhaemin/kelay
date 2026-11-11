@@ -171,6 +171,22 @@ describe('internal registry and public store', () => {
     expect((await h.req('GET', '/internal/v1/apps/nope', { caller: svc })).status).toBe(404);
   });
 
+  it('records the Builder’s sandboxes, one row per task', async () => {
+    const svc = await h.service('builder');
+    const record = { taskArn: 'local:/workspaces/ticket-board', owner: 'jeongyun', app: 'ticket-board', kind: 'workspace', status: 'running' };
+    const first = await h.req('PUT', '/internal/v1/sandboxes', { caller: svc, body: record });
+    expect(first.status).toBe(200);
+    expect(first.body.sandbox).toMatchObject({ ...record, id: expect.any(String) });
+
+    const stopped = await h.req('PUT', '/internal/v1/sandboxes', { caller: svc, body: { ...record, status: 'stopped' } });
+    expect(stopped.body.sandbox).toMatchObject({ id: first.body.sandbox.id, status: 'stopped' });
+    expect(new Date(stopped.body.sandbox.lastActive).getTime()).toBeGreaterThanOrEqual(new Date(first.body.sandbox.lastActive).getTime());
+
+    expect((await h.req('PUT', '/internal/v1/sandboxes', { caller: svc, body: { ...record, app: 'nope' } })).status).toBe(404);
+    expect((await h.req('PUT', '/internal/v1/sandboxes', { caller: svc, body: { ...record, kind: 'shell' } })).status).toBe(400);
+    expect((await h.req('PUT', '/internal/v1/sandboxes', { token: jy, body: record })).status).toBe(403);
+  });
+
   it('lists only live, listed apps on the store page', async () => {
     await h.req('PATCH', '/v1/apps/ticket-board', { token: jy, body: { status: 'live' } });
     await h.req('POST', '/v1/apps', { token: jy, body: { slug: 'docs', name: 'Docs' } });

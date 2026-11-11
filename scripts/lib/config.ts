@@ -36,6 +36,9 @@ export interface StackConfig {
   llmGatewayKey: string;
   /** Whether `pnpm dev:up` starts LiteLLM itself: a provider key is set and no other gateway is named. */
   startLlmGateway: boolean;
+  builderUrl: string;
+  /** Where the Builder creates the database of an app it builds; `{app}` and `{env}` are filled in. */
+  appDatabaseUrlTemplate: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -54,6 +57,8 @@ const DEFAULTS = {
   DEV_LOGIN_URL: 'http://localhost:4005',
   KELAY_APP_ORIGIN: 'http://localhost:8787',
   LLM_GATEWAY_KEY: 'sk-kelay-dev',
+  BUILDER_URL: 'http://localhost:4006',
+  APP_DATABASE_URL_TEMPLATE: 'postgres://kelay:kelay@localhost:54320/app_{app}_{env}',
 } as const;
 
 /** Where the LiteLLM container of infra/local/compose.services.yml listens. */
@@ -94,6 +99,8 @@ export function configFromEnv(env: Env): StackConfig {
     llmGatewayUrl: namedGateway ?? (startLlmGateway ? LOCAL_LLM_GATEWAY_URL : undefined),
     llmGatewayKey: get('LLM_GATEWAY_KEY'),
     startLlmGateway,
+    builderUrl: trimSlash(get('BUILDER_URL')),
+    appDatabaseUrlTemplate: get('APP_DATABASE_URL_TEMPLATE'),
   };
 }
 
@@ -128,5 +135,6 @@ export function serviceEnv(cfg: StackConfig): Record<string, string> {
     // An empty value overrides one inherited from the shell, so "no gateway" is the same in every service.
     LLM_GATEWAY_URL: cfg.llmGatewayUrl ?? '',
     LLM_GATEWAY_KEY: cfg.llmGatewayUrl ? cfg.llmGatewayKey : '',
+    BUILDER_URL: cfg.builderUrl,
   };
 }

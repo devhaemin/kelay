@@ -1,3 +1,4 @@
+import type { BuilderSession } from '../builder';
 // What the console screens read and change. Implemented by the mock (fixtures) and by the
 // Control API client. Timestamps are ISO-8601 strings; screens format them.
 import type { AppSchema, Op, PolicyMatrix, Scope } from '@kelay/contracts';
@@ -402,6 +403,8 @@ export interface ConsoleApi {
   getQa(app: string): Promise<QaSummary | null>;
   runQa(app: string): Promise<QaSummary>;
 
+  /** The app's Builder workspace and its transcript. Null in mock mode and for an app the Builder has no workspace for. */
+  getBuilderSession(app: string): Promise<BuilderSession | null>;
   getBuilderThread(app: string, tab: WorkspaceTab): Promise<ChatMessage[]>;
   sendBuilderMessage(app: string, tab: WorkspaceTab, text: string): Promise<ChatMessage[]>;
 }

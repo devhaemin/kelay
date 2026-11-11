@@ -11,6 +11,8 @@ export interface StartOptions {
   watch: boolean;
   /** Also start the console (CONSOLE_DATA=http) and the dev sign-in helper. */
   console: boolean;
+  /** Also start the Builder (services/builder) with local workspaces. */
+  builder?: boolean;
   /** Kelay ID entry file, relative to the repo root. The e2e suite swaps in one that can resolve its test assistant. */
   identityEntry?: string;
   /** Where the services' log lines go. Defaults to this process's stdout. */
@@ -31,6 +33,8 @@ interface Service {
   health: string;
   color: string;
   env?: Record<string, string>;
+  /** Never restarted on a source change: it owns child processes (the dev previews) and running turns. */
+  noWatch?: boolean;
 }
 
 function services(cfg: StackConfig, opts: StartOptions): Service[] {
@@ -41,6 +45,21 @@ function services(cfg: StackConfig, opts: StartOptions): Service[] {
     { name: 'runner', dir: 'services/runner', entry: 'src/server.ts', port: portOf(cfg.runnerUrl), health: `${cfg.runnerUrl}/healthz`, color: 'red' },
     { name: 'mcp-gateway', dir: 'services/mcp-gateway', entry: 'src/server.ts', port: portOf(cfg.mcpPublicBaseUrl), health: `${cfg.mcpPublicBaseUrl}/healthz`, color: 'yellow' },
   ];
+  if (opts.builder) {
+    // The coding agent is Claude when ANTHROPIC_API_KEY is set (directly, or the LLM gateway's key with
+    // ANTHROPIC_BASE_URL), and the scripted Ticket Board demo otherwise. BUILDER_AGENT overrides that.
+    const agentEnv = Object.fromEntries(['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'BUILDER_AGENT', 'BUILDER_MODEL', 'BUILDER_HOME'].flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])));
+    list.push({
+      name: 'builder',
+      dir: 'services/builder',
+      entry: 'src/server.ts',
+      port: portOf(cfg.builderUrl),
+      health: `${cfg.builderUrl}/healthz`,
+      color: 'red',
+      env: { ...agentEnv, APP_DATABASE_URL_TEMPLATE: cfg.appDatabaseUrlTemplate },
+      noWatch: true,
+    });
+  }
   if (opts.console) {
     list.push(
       { name: 'console', dir: 'apps/console', entry: '', port: portOf(cfg.consoleUrl), health: `${cfg.consoleUrl}/signin`, color: 'cyan', env: { CONSOLE_DATA: 'http' } },
@@ -70,7 +89,7 @@ export async function startStack(cfg: StackConfig, opts: StartOptions): Promise<
     list.map((s) => ({
       name: s.name,
       // The console is a Next.js app with its own dev server; everything else is a tsx entry file.
-      command: s.name === 'console' ? 'pnpm exec next dev' : `pnpm exec tsx ${opts.watch ? 'watch ' : ''}${s.entry}`,
+      command: s.name === 'console' ? 'pnpm exec next dev' : `pnpm exec tsx ${opts.watch && !s.noWatch ? 'watch ' : ''}${s.entry}`,
       cwd: resolve(ROOT, s.dir),
       env: { ...shared, ...s.env, PORT: String(s.port) },
       ...(opts.output ? {} : { prefixColor: s.color }),

@@ -29,9 +29,13 @@ if (cfg.startLlmGateway) {
 }
 
 step('Services');
-const stack = await startStack(cfg, { watch: true, console: true });
+const stack = await startStack(cfg, { watch: true, console: true, builder: true });
 mkdirSync(dirname(PID_FILE), { recursive: true });
 writeFileSync(PID_FILE, String(process.pid));
+
+const health = (await fetch(`${cfg.builderUrl}/healthz`).then((r) => r.json()).catch(() => null)) as { agent?: { kind: string; model: string | null } } | null;
+const builderAgent =
+  health?.agent?.kind === 'claude' ? `Claude (${health.agent.model})` : 'scripted Ticket Board demo; set ANTHROPIC_API_KEY in .env to build from the prompt with Claude';
 
 console.log(`
 Kelay is running on local data.
@@ -47,6 +51,7 @@ Kelay is running on local data.
       ? `${cfg.llmGatewayUrl}${cfg.startLlmGateway ? ' (LiteLLM, started here)' : ''}`
       : 'not configured: set ANTHROPIC_API_KEY in .env to start it. Until then triage, reports and agent nodes that call a model fail with "LLM gateway not configured".'
   }
+  Builder        ${cfg.builderUrl}   coding agent: ${builderAgent}
 
   Builder        ${BUILDER.email}
   Team           ${TEAM.map((p) => `${p.email} (${p.role})`).join(', ')}

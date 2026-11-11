@@ -6,7 +6,7 @@ import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AppRegistryEntry, AppSlug, Ident } from '@kelay/contracts';
 import { requireService, type AppEnv } from '../auth.ts';
-import { appMembers, apps, consents, envs, ENV_NAMES, GRANT_KINDS, grants, TICKET_SOURCES, versions } from '../db/schema.ts';
+import { appMembers, apps, consents, envs, ENV_NAMES, GRANT_KINDS, grants, sandboxes, TICKET_SOURCES, versions } from '../db/schema.ts';
 import type { Ctx } from '../deps.ts';
 import { ApiError } from '../errors.ts';
 import { claimRun, completeRun } from '../queue/improvement.ts';
@@ -44,6 +44,15 @@ const IntakeBody = FeedbackBody.extend({
   source: z.enum(TICKET_SOURCES.filter((s) => s !== 'in-app') as ['email', 'chat', 'auto']),
   reporter: z.string().optional(),
   reporterOrg: z.string().optional(),
+});
+
+const SandboxRecord = z.object({
+  /** The ECS task ARN, or `local:<dir>` for a workspace on the Builder's own machine. */
+  taskArn: z.string().min(1).max(2048),
+  owner: z.string().min(1).max(200),
+  app: AppSlug,
+  kind: z.enum(['workspace', 'improvement']),
+  status: z.enum(['running', 'stopped']),
 });
 
 const RunOutcome = z.object({
@@ -184,6 +193,18 @@ export function internalRoutes(ctx: Ctx) {
       return c.json({ grant: rows[0] });
     },
   );
+
+  // The Builder reports each workspace it starts, uses and stops, so `sandboxes` says what is running for whom.
+  r.put('/internal/v1/sandboxes', jsonBody(SandboxRecord), async (c) => {
+    const body = c.req.valid('json');
+    await liveApp(body.app);
+    const [sandbox] = await db
+      .insert(sandboxes)
+      .values({ ...body, lastActive: ctx.now() })
+      .onConflictDoUpdate({ target: sandboxes.taskArn, set: { owner: body.owner, app: body.app, kind: body.kind, status: body.status, lastActive: ctx.now() } })
+      .returning();
+    return c.json({ sandbox });
+  });
 
   r.post('/internal/v1/improvement-runs/claim', jsonBody(z.object({ worker: z.string().min(1).max(200), app: AppSlug.optional() })), async (c) => {
     const b = c.req.valid('json');
