@@ -305,6 +305,7 @@ export const LOCAL_PORTS = {
   dataApi: 4002,
   controlApi: 4003,
   mcpGateway: 4004,
+  builder: 4006,
   router: 8787,
   postgres: 54320,
 } as const;
