@@ -59,8 +59,8 @@ function semanticProblems(g: GraphSpec): GraphProblem[] {
     const joins = new Set<string>();
     for (const b of node.next) {
       const owner = branchOf.get(b);
-      if (owner !== undefined && owner !== name) add(['nodes', name, 'next'], `"${b}" is already a parallel branch of "${owner}"`);
-      branchOf.set(b, name);
+      if (owner === undefined) branchOf.set(b, name);
+      else if (owner !== name) add(['nodes', name, 'next'], `"${b}" is already a parallel branch of "${owner}"`);
       const branch = g.nodes[b]!;
       if (typeof branch.next === 'string') joins.add(branch.next);
       else add(['nodes', b, 'next'], `parallel branch "${b}" must point to exactly one join node`);
