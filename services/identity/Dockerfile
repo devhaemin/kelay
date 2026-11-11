@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
-# Build from the repo root: docker build -f services/identity/Dockerfile -t kelay-identity .
+# Build from the repo root: docker build -f services/identity/Dockerfile -t kelay/identity .
 FROM node:22-slim AS build
-WORKDIR /repo
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
+WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/tokens/package.json packages/tokens/
@@ -11,20 +12,13 @@ RUN pnpm install --frozen-lockfile --filter @kelay/identity...
 COPY packages/contracts packages/contracts
 COPY packages/tokens packages/tokens
 COPY services/identity services/identity
-# The bundle keeps npm packages external, so the runtime image needs the service's production
-# dependencies. Installing again with --prod prunes the rest in place. `pnpm deploy` is not used: it
-# resolves the root package too, whose workspace dev dependencies are not in this build context.
-RUN pnpm --filter @kelay/identity build \
- && pnpm install --frozen-lockfile --offline --prod --filter @kelay/identity...
+RUN pnpm --filter @kelay/identity build
 
-# Same paths as in the build stage: the service's node_modules are links into /repo/node_modules/.pnpm.
+# The bundle includes every dependency, so the runtime image needs no node_modules.
 FROM node:22-slim
 ENV NODE_ENV=production PORT=4001
-WORKDIR /repo/services/identity
-COPY --from=build /repo/node_modules /repo/node_modules
-COPY --from=build /repo/services/identity/node_modules ./node_modules
-COPY --from=build /repo/services/identity/package.json ./
-COPY --from=build /repo/services/identity/dist ./dist
+WORKDIR /app
+COPY --from=build --chown=node:node /repo/services/identity/dist ./dist
 USER node
 EXPOSE 4001
 CMD ["node", "--enable-source-maps", "dist/server.js"]

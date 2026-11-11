@@ -11,6 +11,8 @@ const nextConfig: NextConfig = {
   // The dev badge sits where the prototype's Story bar does (bottom left).
   devIndicators: false,
   transpilePackages: ['@kelay/contracts', '@kelay/policy'],
+  // The production image (Dockerfile) runs the standalone server and ships no node_modules of its own.
+  output: 'standalone',
   turbopack: { root: workspaceRoot },
   outputFileTracingRoot: workspaceRoot,
 };

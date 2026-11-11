@@ -162,11 +162,14 @@ locals {
       }
     }
 
+    # No service implements the preview proxy yet: the builder service is expected to take this name,
+    # port and host. Until its image exists the service is held at zero tasks, which keeps the ALB
+    # rule, the DNS name and the ECR repository in place.
     preview-proxy = {
-      port         = local.ports["preview-proxy"]
-      host_headers = [local.hosts.preview]
-      priority     = 70
-      secrets      = { KELAY_CALLER_SECRET = "kelay-caller-secret" }
+      port          = local.ports["preview-proxy"]
+      host_headers  = [local.hosts.preview]
+      priority      = 70
+      desired_count = 0
     }
 
     otel-collector = {
