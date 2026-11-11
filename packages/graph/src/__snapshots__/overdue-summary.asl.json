@@ -1,0 +1,199 @@
+{
+  "Comment": "Kelay graph overdue-summary for ticket-board (prod)",
+  "QueryLanguage": "JSONata",
+  "StartAt": "Init",
+  "States": {
+    "Init": {
+      "Type": "Pass",
+      "Assign": {
+        "loop": 0,
+        "rejects_review": 0
+      },
+      "Output": "{% $exists($states.input.input) ? $states.input.input : null %}",
+      "Next": "collect"
+    },
+    "collect": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Arguments": {
+        "FunctionName": "arn:aws:lambda:ap-northeast-2:123456789012:function:kelay-ticket-board-prod-nodes:live",
+        "Payload": {
+          "runId": "{% $states.context.Execution.Name %}",
+          "app": "ticket-board",
+          "env": "prod",
+          "graph": "overdue-summary",
+          "node": "collect",
+          "attempt": "{% $states.context.State.RetryCount + 1 %}",
+          "loop": "{% $loop %}",
+          "input": "{% $states.input %}",
+          "userToken": "{% $states.context.Execution.Input.userToken %}"
+        }
+      },
+      "Output": "{% $states.result.Payload %}",
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "MaxAttempts": 3,
+          "IntervalSeconds": 1,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Fan out from collect"
+    },
+    "Fan out from collect": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "summarize",
+          "States": {
+            "summarize": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "arn:aws:lambda:ap-northeast-2:123456789012:function:kelay-ticket-board-prod-nodes:live",
+                "Payload": {
+                  "runId": "{% $states.context.Execution.Name %}",
+                  "app": "ticket-board",
+                  "env": "prod",
+                  "graph": "overdue-summary",
+                  "node": "summarize",
+                  "attempt": "{% $states.context.State.RetryCount + 1 %}",
+                  "loop": "{% $loop %}",
+                  "input": "{% $states.input %}",
+                  "userToken": "{% $states.context.Execution.Input.userToken %}"
+                }
+              },
+              "Output": "{% $states.result.Payload %}",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "MaxAttempts": 3,
+                  "IntervalSeconds": 1,
+                  "BackoffRate": 2
+                },
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "MaxAttempts": 2,
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "prioritize",
+          "States": {
+            "prioritize": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "arn:aws:lambda:ap-northeast-2:123456789012:function:kelay-ticket-board-prod-nodes:live",
+                "Payload": {
+                  "runId": "{% $states.context.Execution.Name %}",
+                  "app": "ticket-board",
+                  "env": "prod",
+                  "graph": "overdue-summary",
+                  "node": "prioritize",
+                  "attempt": "{% $states.context.State.RetryCount + 1 %}",
+                  "loop": "{% $loop %}",
+                  "input": "{% $states.input %}",
+                  "userToken": "{% $states.context.Execution.Input.userToken %}"
+                }
+              },
+              "Output": "{% $states.result.Payload %}",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "MaxAttempts": 3,
+                  "IntervalSeconds": 1,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "review"
+    },
+    "review": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Arguments": {
+        "FunctionName": "arn:aws:lambda:ap-northeast-2:123456789012:function:kelay-ticket-board-prod-nodes:live",
+        "Payload": {
+          "runId": "{% $states.context.Execution.Name %}",
+          "app": "ticket-board",
+          "env": "prod",
+          "graph": "overdue-summary",
+          "node": "review",
+          "attempt": "{% $states.context.State.RetryCount + 1 %}",
+          "loop": "{% $loop %}",
+          "input": "{% $states.input %}",
+          "userToken": "{% $states.context.Execution.Input.userToken %}"
+        }
+      },
+      "Output": "{% $states.result.Payload %}",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "MaxAttempts": 3,
+          "IntervalSeconds": 1,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Check review"
+    },
+    "Check review": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Condition": "{% $not($type($states.input.approved) = 'boolean') %}",
+          "Next": "Invalid review output"
+        },
+        {
+          "Condition": "{% $states.input.approved = false and $rejects_review < 2 %}",
+          "Assign": {
+            "rejects_review": "{% $rejects_review + 1 %}",
+            "loop": "{% $loop + 1 %}"
+          },
+          "Next": "collect"
+        }
+      ],
+      "Default": "Done"
+    },
+    "Done": {
+      "Type": "Succeed"
+    },
+    "Invalid review output": {
+      "Type": "Fail",
+      "Error": "Kelay.InvalidReviewOutput",
+      "Cause": "A review node must output an object with a boolean \"approved\" field."
+    }
+  }
+}
