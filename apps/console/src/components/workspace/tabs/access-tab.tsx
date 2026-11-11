@@ -50,7 +50,8 @@ export default function AccessTab({
   const notify = useToast();
   const formId = useId();
   const [policy, setPolicy] = useServerState(policyProp);
-  const [collection, setCollection] = useState(policyProp?.schema.collections[0]?.name ?? '');
+  // Opens on a collection whose rows have owners: that is where the rules differ between members.
+  const [collection, setCollection] = useState(() => (policyProp?.schema.collections.find((c) => c.ownerField || c.shared) ?? policyProp?.schema.collections[0])?.name ?? '');
   const [off, setOff] = useState<OffRule[]>([]);
   const [shownPolicy, setShownPolicy] = useState<string | null>(null);
   const [previewAs, setPreviewAs] = useState(viewers[0]?.userId ?? '');
@@ -132,7 +133,7 @@ export default function AccessTab({
       const res = await deployAction(app.id, 'dev');
       if (!res.ok) return notify(res.error);
       setOff([]);
-      notify(`Rules are live in Development (${res.data.version})`);
+      notify(`Deployed to Development as ${res.data.version}`);
     });
   }
 
