@@ -1,4 +1,4 @@
-// Token buckets keyed by caller (contract §7: one per sub × app, one per azp client).
+// Token buckets keyed by caller (contract §7: one per sub × app, one per azp × app).
 // Buckets start full, hold `perMinute` tokens and refill continuously at `perMinute` per minute.
 
 export type RateVerdict = { ok: true } | { ok: false; retryAfterSeconds: number };

@@ -14,6 +14,10 @@ CREATE OR REPLACE FUNCTION kelay.role() RETURNS text LANGUAGE sql STABLE AS $$ S
 CREATE OR REPLACE FUNCTION kelay.org() RETURNS text LANGUAGE sql STABLE AS $$ SELECT kelay.claims() ->> 'org' $$;
 CREATE OR REPLACE FUNCTION kelay.plan() RETURNS text LANGUAGE sql STABLE AS $$ SELECT kelay.claims() ->> 'plan' $$;
 
+-- Every collection table gets a BEFORE UPDATE trigger that calls this, so updated_at never depends on the writer.
+CREATE OR REPLACE FUNCTION kelay.touch_updated_at() RETURNS trigger LANGUAGE plpgsql AS
+$$ BEGIN NEW.updated_at := now(); RETURN NEW; END $$;
+
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kelay_runtime') THEN

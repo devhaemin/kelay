@@ -1,6 +1,6 @@
 // Daily improvement reports and the approve / reject decision on their proposals.
 import { Hono } from 'hono';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireBuilder, requireBuilderOrService, type AppEnv } from '../auth.ts';
 import { improvementRuns, proposals, reports, ticketEvents, tickets, type ImprovementRunRow, type ProposalRow } from '../db/schema.ts';
@@ -146,6 +146,57 @@ export function reportRoutes(ctx: Ctx) {
       .where(and(eq(proposals.id, found.id), eq(proposals.status, 'pending')))
       .returning();
     if (!proposal) throw new ApiError('conflict', `proposal is already ${found.status}`);
+    return c.json({ proposal: proposalView(proposal) });
+  });
+
+  // Takes back an approve or a reject. An approval can be undone only while its improvement run is still
+  // queued: the run is removed and the tickets the approval moved to In progress go back to Triaged.
+  r.post('/v1/proposals/:id/undo', builder, async (c) => {
+    const principal = c.get('principal');
+    const found = await loadProposal(c.req.param('id'));
+    await loadApp(db, found.app, principal);
+    if (found.status === 'pending') return c.json({ proposal: proposalView(found) });
+    if (found.status === 'built') throw new ApiError('conflict', 'this proposal is already built; publish an earlier version to roll it back');
+    const actor = actorOf(principal);
+    const proposal = await db.transaction(async (tx) => {
+      if (found.status === 'approved') {
+        const removed = await tx
+          .delete(improvementRuns)
+          .where(and(eq(improvementRuns.proposalId, found.id), eq(improvementRuns.status, 'queued')))
+          .returning({ id: improvementRuns.id });
+        const [left] = await tx.select({ status: improvementRuns.status }).from(improvementRuns).where(eq(improvementRuns.proposalId, found.id)).limit(1);
+        if (left) throw new ApiError('conflict', `the improvement run is already ${left.status}`);
+        ctx.logger.info({ type: 'improvement_run_cancelled', proposal: found.id, runs: removed.map((x) => x.id) }, 'queued improvement run removed');
+        const moved = await tx
+          .update(tickets)
+          .set({ status: 'triaged', updatedAt: ctx.now() })
+          .where(
+            and(
+              eq(tickets.app, found.app),
+              eq(tickets.status, 'progress'),
+              inArray(
+                tickets.id,
+                tx
+                  .select({ id: ticketEvents.ticketId })
+                  .from(ticketEvents)
+                  .where(and(eq(ticketEvents.kind, 'status'), sql`${ticketEvents.data} ->> 'proposal' = ${found.id}`)),
+              ),
+            ),
+          )
+          .returning({ id: tickets.id });
+        if (moved.length) {
+          await tx.insert(ticketEvents).values(moved.map((t) => ({ ticketId: t.id, kind: 'status', actor, data: { to: 'triaged', undo: found.id } })));
+        }
+      }
+      const [row] = await tx
+        .update(proposals)
+        .set({ status: 'pending', decidedBy: null, decidedAt: null })
+        .where(and(eq(proposals.id, found.id), eq(proposals.status, found.status)))
+        .returning();
+      if (!row) throw new ApiError('conflict', 'the proposal changed while undoing; try again');
+      return row;
+    });
+    ctx.logger.info({ type: 'proposal_undone', app: proposal.app, proposal: proposal.id, was: found.status }, 'proposal decision undone');
     return c.json({ proposal: proposalView(proposal) });
   });
 

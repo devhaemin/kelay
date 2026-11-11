@@ -13,6 +13,22 @@ export interface OAuthEndpoints {
   metadataUrl: string;
 }
 
+/** Path better-auth serves Kelay ID's endpoints under (services/identity mounts it at `/api/auth/*`). */
+const KELAY_ID_AUTH_PATH = '/api/auth';
+
+/**
+ * Kelay ID's public OAuth endpoints for an issuer, as its RFC 8414 metadata lists them:
+ * `<issuer>/api/auth/oauth2/authorize` and `<issuer>/api/auth/oauth2/token`.
+ */
+export function kelayIdOAuthEndpoints(issuer: string): OAuthEndpoints {
+  const base = `${issuer.replace(/\/+$/, '')}${KELAY_ID_AUTH_PATH}`;
+  return {
+    authorizationUrl: `${base}/oauth2/authorize`,
+    tokenUrl: `${base}/oauth2/token`,
+    metadataUrl: authorizationServerMetadataUrl(issuer),
+  };
+}
+
 const fieldSummary = (c: CollectionDef): string =>
   Object.entries(c.fields)
     .map(([name, f]) => `${name} (${fieldAbout(f)})`)
@@ -58,7 +74,7 @@ export function buildAgentCard(opts: { schema: AppSchema; urls: AppUrls; version
         },
       },
     },
-    securityRequirements: [{ schemes: { kelayId: { list: ['openid'] } } }],
+    securityRequirements: [{ schemes: { kelayId: { list: Object.keys(SCOPES) } } }],
     defaultInputModes: ['application/json', 'text/plain'],
     defaultOutputModes: ['application/json', 'text/plain'],
     skills: [...collectionSkills, ...actionSkills],

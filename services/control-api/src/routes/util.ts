@@ -1,9 +1,9 @@
 import { zValidator } from '@hono/zod-validator';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Principal } from '../auth.ts';
 import type { Executor } from '../db/client.ts';
-import { apps, type AppRow, type TicketRow, type VersionRow } from '../db/schema.ts';
+import { apps, envs, versions, type AppRow, type EnvName, type EnvRow, type TicketRow, type VersionRow } from '../db/schema.ts';
 import { ApiError } from '../errors.ts';
 
 const hook = (result: { success: boolean; error?: unknown }) => {
@@ -19,6 +19,17 @@ export async function loadApp(db: Executor, slug: string, principal: Principal):
   if (!row || row.status === 'archived') throw new ApiError('unknown_app', `unknown app ${slug}`);
   if (principal.kind === 'builder' && row.owner !== principal.user.sub) throw new ApiError('denied', 'you do not own this app');
   if (principal.kind === 'user') throw new ApiError('denied', 'builder access required');
+  return row;
+}
+
+/** An env with its active version (null before the first deploy to it). */
+export async function loadEnv(db: Executor, app: string, env: EnvName): Promise<{ env: EnvRow; version: VersionRow | null }> {
+  const [row] = await db
+    .select({ env: envs, version: versions })
+    .from(envs)
+    .leftJoin(versions, eq(versions.id, envs.activeVersionId))
+    .where(and(eq(envs.app, app), eq(envs.name, env)));
+  if (!row) throw new ApiError('not_found', `app ${app} has no ${env} environment`);
   return row;
 }
 
@@ -52,6 +63,8 @@ export function versionView(v: VersionRow) {
     artifactUrl: v.artifactUrl,
     configVersion: v.configVersion,
     lambdaVersion: v.lambdaVersion,
+    status: v.status,
+    callerTokenRef: v.callerTokenRef,
     resources: v.resources,
     sourceVersionId: v.sourceVersionId,
     createdBy: v.createdBy,

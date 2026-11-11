@@ -116,4 +116,17 @@ const { ticketId } = await sendFeedback({
 });
 ```
 
-This sends `POST {controlApiUrl}/v1/apps/:app/feedback` with `{ text, route?, context? }` and returns the new ticket's id.
+This sends `POST {controlApiUrl}/v1/apps/:app/feedback` with `{ text, route?, context? }`. `ticketId` is the ticket's key, such as `FB-131`: the same key the builder sees on the Feedback board.
+
+## On the server
+
+Behind the Kelay router, requests to an app's function URL are signed with SigV4, which takes over `authorization`. The router moves the user's token to `x-kelay-authorization` ([contracts §4](../../docs/contracts.md)). Read it with the server helper, which checks that header first and `authorization` second:
+
+```ts
+import { requireUserToken } from '@kelay/sdk/server';
+
+export async function handler(request: Request) {
+  const userToken = requireUserToken(request.headers); // throws KelayError('unauthenticated') when absent
+  const kelay = createKelayClient({ dataApiUrl, app, getUserToken: () => userToken, getCallerToken });
+}
+```

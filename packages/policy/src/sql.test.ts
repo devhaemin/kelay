@@ -32,7 +32,28 @@ describe('schemaToSql', () => {
     const sql = schemaToSql(schema);
     const tickets = sql.slice(sql.indexOf('"app"."tickets" ('), sql.indexOf('"app"."comments" ('));
     expect(tickets).toContain('"shared" boolean NOT NULL DEFAULT false');
-    expect(sql.match(/"shared" boolean/g)).toHaveLength(1);
+    expect(sql.match(/^  "shared" boolean/gm)).toHaveLength(1);
+    expect(sql.match(/ADD COLUMN IF NOT EXISTS "shared" boolean/g)).toHaveLength(1);
+  });
+
+  it('adds columns for fields a later schema version introduced, without NOT NULL', () => {
+    const sql = schemaToSql(schema);
+    expect(sql).toContain(
+      'ALTER TABLE "app"."comments"\n' +
+        '  ADD COLUMN IF NOT EXISTS "ticket_id" uuid REFERENCES "app"."tickets" ("id"),\n' +
+        '  ADD COLUMN IF NOT EXISTS "body" text;',
+    );
+    expect(sql).not.toMatch(/ADD COLUMN IF NOT EXISTS "(id|org_id|owner_id|created_at|updated_at)"/);
+    expect(sql.lastIndexOf('CREATE TABLE')).toBeLessThan(sql.indexOf('ALTER TABLE'));
+  });
+
+  it('keeps updated_at current with a trigger on every table', () => {
+    const sql = schemaToSql(schema);
+    expect(sql).toContain(
+      'CREATE OR REPLACE TRIGGER "kelay_touch_updated_at" BEFORE UPDATE ON "app"."tickets"\n  FOR EACH ROW EXECUTE FUNCTION kelay.touch_updated_at();',
+    );
+    expect(sql.match(/CREATE OR REPLACE TRIGGER/g)).toHaveLength(3);
+    expect(kelayAuthSql()).toContain('FUNCTION kelay.touch_updated_at()');
   });
 
   it('maps every field type', () => {
@@ -135,6 +156,9 @@ describe('migrationSql', () => {
     expect(kelayAuthSql().trimEnd()).toBe(auth);
     expect(sql).toContain(auth);
     expect(sql.indexOf(auth)).toBeLessThan(sql.indexOf('CREATE TABLE'));
+    const grant = sql.indexOf(`EXECUTE format('GRANT %I TO %I', 'kelay_runtime', current_user)`);
+    expect(grant).toBeGreaterThan(sql.indexOf(auth));
+    expect(grant).toBeLessThan(sql.indexOf('CREATE TABLE'));
     expect(sql.indexOf('CREATE TABLE')).toBeLessThan(sql.indexOf('ENABLE ROW LEVEL SECURITY'));
     expect(sql).not.toMatch(/\b(BEGIN|COMMIT);/);
   });

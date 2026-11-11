@@ -2,10 +2,7 @@ import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { HTTP_STATUS, type ErrorCode } from '@kelay/contracts';
 
-/** Contract ErrorCode plus the two codes a control plane needs that the shared contract does not define yet. */
-export type ControlErrorCode = ErrorCode | 'not_found' | 'conflict';
-
-const STATUS: Record<ControlErrorCode, number> = { ...HTTP_STATUS, not_found: 404, conflict: 409 };
+export type ControlErrorCode = ErrorCode;
 
 export class ApiError extends Error {
   constructor(
@@ -16,7 +13,7 @@ export class ApiError extends Error {
     this.name = 'ApiError';
   }
   get status(): ContentfulStatusCode {
-    return STATUS[this.code] as ContentfulStatusCode;
+    return HTTP_STATUS[this.code] as ContentfulStatusCode;
   }
 }
 

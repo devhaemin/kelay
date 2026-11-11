@@ -5,10 +5,12 @@ RUN npm install -g pnpm@10.4.1
 WORKDIR /repo
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/contracts/package.json packages/contracts/
+COPY packages/policy/package.json packages/policy/
 COPY packages/tokens/package.json packages/tokens/
 COPY services/control-api/package.json services/control-api/
 RUN pnpm install --frozen-lockfile --filter @kelay/control-api...
 COPY packages/contracts packages/contracts
+COPY packages/policy packages/policy
 COPY packages/tokens packages/tokens
 COPY services/control-api services/control-api
 RUN pnpm --filter @kelay/control-api build
