@@ -230,8 +230,6 @@ sequenceDiagram
 | P4 · improvement loop | Intake, triage, daily report, approve → implement → eval replay → publish | The Feedback tab end to end |
 | P5 · connect | MCP · A2A gateway, grants, App Graph, external MCP clients with per-app consent | Compounding across apps |
 
-Candidates to reuse, read only at the file and README level so far: `relayax/infra/ecs` (ECS cluster, task definitions, Caddy sync for per-agent routing, Gitea setup, GitHub OIDC, alarms) and `relayax/container/lib/session-manager.js` (agent sessions in containers).
-
 ## 9. Risks and open questions
 
 - **OpenNext and Next.js versions.** Lambda packaging must keep up with Next.js. P0 checks it before anything else depends on it.
