@@ -1,0 +1,17 @@
+{
+  "admin": {
+    "projects": { "read": "all", "create": "all", "update": "all", "delete": "all" },
+    "tickets": { "read": "all", "create": "all", "update": "all", "delete": "all" },
+    "comments": { "read": "all", "create": "all", "update": "all", "delete": "all" }
+  },
+  "member": {
+    "projects": { "read": "all", "create": "none", "update": "none", "delete": "none" },
+    "tickets": { "read": "mine_shared", "create": "all", "update": "mine", "delete": "none" },
+    "comments": { "read": "all", "create": "all", "update": "mine", "delete": "mine" }
+  },
+  "guest": {
+    "projects": { "read": "all", "create": "none", "update": "none", "delete": "none" },
+    "tickets": { "read": "mine_shared", "create": "none", "update": "none", "delete": "none" },
+    "comments": { "read": "all", "create": "all", "update": "mine", "delete": "none" }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "apps": {
+    "ticket-board": {
+      "handle": "orum",
+      "databaseUrl": "postgres://kelay:kelay@localhost:54320/app_ticket_board_dev",
+      "schemaFile": "ticket-board/schema.json",
+      "policyFile": "ticket-board/policy.json"
+    }
+  }
+}

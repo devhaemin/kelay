@@ -1,0 +1,14 @@
+# Local stack. `pnpm db:up` starts Postgres only; services run with `pnpm --filter <svc> dev`.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: kelay
+      POSTGRES_PASSWORD: kelay
+      POSTGRES_DB: kelay_control
+    ports: ["54320:5432"]
+    volumes:
+      - ./infra/local/init-db.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata: {}

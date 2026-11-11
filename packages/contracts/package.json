@@ -1,0 +1,14 @@
+{
+  "name": "@kelay/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./registry": "./src/registry.ts",
+    "./fixtures/*": "./fixtures/*",
+    "./sql/*": "./sql/*"
+  },
+  "scripts": { "typecheck": "tsc -p tsconfig.json", "test": "vitest run" },
+  "dependencies": { "zod": "^4.6.7" }
+}

@@ -1,0 +1,39 @@
+{
+  "app": "ticket-board",
+  "roles": ["admin", "member", "guest"],
+  "collections": [
+    {
+      "name": "projects",
+      "label": "Projects",
+      "fields": {
+        "name": { "type": "text", "required": true },
+        "starts_on": { "type": "timestamp" },
+        "ends_on": { "type": "timestamp" }
+      }
+    },
+    {
+      "name": "tickets",
+      "label": "Tickets",
+      "shared": true,
+      "ownerField": "assignee_id",
+      "fields": {
+        "title": { "type": "text", "required": true },
+        "status": { "type": "text", "required": true, "description": "todo | doing | review | done" },
+        "assignee_id": { "type": "text" },
+        "due_on": { "type": "timestamp" },
+        "project_id": { "type": "ref", "ref": "projects" }
+      }
+    },
+    {
+      "name": "comments",
+      "label": "Comments",
+      "fields": {
+        "ticket_id": { "type": "ref", "ref": "tickets", "required": true },
+        "body": { "type": "text", "required": true }
+      }
+    }
+  ],
+  "actions": [
+    { "name": "summarize_overdue", "description": "Summarize my overdue tickets", "input": {}, "graph": "overdue-summary" }
+  ]
+}

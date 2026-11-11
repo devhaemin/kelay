@@ -1,2 +1,14 @@
 .DS_Store
 node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.wrangler/
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl.bak
+preview.html

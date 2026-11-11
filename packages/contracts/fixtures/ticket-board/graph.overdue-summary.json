@@ -1,0 +1,10 @@
+{
+  "name": "overdue-summary",
+  "start": "collect",
+  "nodes": {
+    "collect": { "next": ["summarize", "prioritize"], "timeoutSeconds": 30 },
+    "summarize": { "next": "review", "model": "claude-opus-5-5", "retry": { "maxAttempts": 2, "intervalSeconds": 2, "backoffRate": 2 } },
+    "prioritize": { "next": "review", "model": "claude-opus-5-5" },
+    "review": { "review": { "onReject": "collect", "maxLoops": 2 } }
+  }
+}
