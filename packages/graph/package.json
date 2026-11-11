@@ -1,0 +1,10 @@
+{
+  "name": "@kelay/graph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc -p tsconfig.json", "test": "vitest run" },
+  "dependencies": { "@kelay/contracts": "workspace:*" },
+  "devDependencies": { "asl-validator": "^4.0.0", "jsonata": "^2.2.2" }
+}
