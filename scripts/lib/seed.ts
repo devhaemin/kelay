@@ -82,13 +82,6 @@ export async function seed(cfg: StackConfig, log: (line: string) => void = () =>
     }
     log(`accounts: ${BUILDER.email} (builder), ${TEAM.map((p) => p.email).join(', ')}`);
 
-    // The console is not an app row, so its membership has no route: the builder role is granted here.
-    await pool.query(
-      `insert into app_members (app, user_id, org, role, plan, status) values ($1, $2, $3, 'builder', 'pro', 'active')
-       on conflict (app, user_id) do update set org = excluded.org, role = excluded.role, status = excluded.status`,
-      [CONSOLE_APP, builderId, ORG],
-    );
-    const builderToken = await builderSession.appToken(CONSOLE_APP);
     const serviceToken = await signCallerToken({ kind: 'service', svc: 'seed' }, cfg.callerSecret);
 
     // ---- Control API, verifying the builder token against the same Kelay ID keys the services use
@@ -101,6 +94,7 @@ export async function seed(cfg: StackConfig, log: (line: string) => void = () =>
       improvements: new PgImprovementQueue(database.db),
       logger: createLogger('silent'),
     });
+    let builderToken = '';
     const call = async (as: 'builder' | 'service', method: string, path: string, body?: unknown, allow: number[] = []): Promise<Reply> => {
       const headers: Record<string, string> = as === 'builder' ? { authorization: `Bearer ${builderToken}` } : { [CALLER_HEADER]: serviceToken };
       if (body !== undefined) headers['content-type'] = 'application/json';
@@ -110,6 +104,10 @@ export async function seed(cfg: StackConfig, log: (line: string) => void = () =>
       if (!res.ok && !allow.includes(res.status)) throw new Error(`seed: ${method} ${path} answered ${res.status} ${text}`);
       return reply;
     };
+
+    // The builder: a member of the console, written by the member route like every other membership.
+    await call('service', 'PUT', `/internal/v1/apps/${CONSOLE_APP}/members/${builderId}`, { org: ORG, role: 'builder', plan: 'pro' });
+    builderToken = await builderSession.appToken(CONSOLE_APP);
 
     // ---- apps, envs, versions
     const board = loadAppRegistry(cfg.appsFile).apps[TICKET_BOARD]!;

@@ -13,6 +13,8 @@ const nextConfig: NextConfig = {
   transpilePackages: ['@kelay/contracts', '@kelay/policy'],
   // The production image (Dockerfile) runs the standalone server and ships no node_modules of its own.
   output: 'standalone',
+  // The e2e suite runs its own dev server next to a `pnpm dev:up` one; two cannot share a build folder.
+  ...(process.env.CONSOLE_DIST_DIR ? { distDir: process.env.CONSOLE_DIST_DIR } : {}),
   turbopack: { root: workspaceRoot },
   outputFileTracingRoot: workspaceRoot,
 };

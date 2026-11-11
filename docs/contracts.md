@@ -184,6 +184,8 @@ Who asks for what:
 - **App-scoped token.** `POST /v1/token { app }` with a session returns `{ token }`. Its claims come from `app_members` (contract §9 below) and it uses `aud = kelay:app:<app>`. Only an `active` member gets one. The route does not consult the registry, so it also serves apps that are not published, such as the console (`kelay-console`). Browser calls are accepted from Kelay ID's own origin and from the origins in `KELAY_ID_CORS_ORIGINS`.
 - **MCP tokens** are bound to the app's MCP resource URL and carry the same claims plus `azp`. Consent is per user × app × client. They exist only for apps in the registry (§6): better-auth takes its protected resources when an instance is created, so Kelay ID builds a new instance when the app list changes. Sessions, keys, clients and consents live in the control DB and carry over.
 - **Consents.** When a person allows an assistant, Kelay ID records it in the control API (`PUT /internal/v1/consents`) before it grants anything; a consent the control API did not store is not granted. A production build requires `CONTROL_API_URL` and `KELAY_CALLER_SECRET` for this. Kelay ID looks its own consent row up on every token grant, which is how a revoke in the control API (§9) ends access.
+- **The console's sign-in.** The console (`apps/console`) has no login form. It sends the browser to `/login?return_to={CONSOLE_URL}/auth/callback`. Back at the console, the browser's request carries Kelay ID's session cookie, and the console's server forwards it to `POST /v1/token { app: "kelay-console" }`. It keeps the token in the httpOnly cookie `kelay_token` and repeats the exchange when the token has less than three minutes left. Signing out calls better-auth's `POST /api/auth/sign-out` with the session cookie and `Origin: {CONSOLE_URL}`; the origins in `KELAY_ID_CORS_ORIGINS` are better-auth's trusted origins. All of this needs the browser to send the session cookie to both hosts: on `localhost` it does, and for two hosts under one domain set `KELAY_ID_COOKIE_DOMAIN` to that domain.
+- **Becoming a builder.** A builder is an `active` member of `kelay-console` with the role `builder` or `admin`. With `KELAY_BUILDER_ALLOWLIST` (comma-separated emails) or `KELAY_OPEN_SIGNUP=true`, Kelay ID makes a person a builder when they sign up: it calls `PUT /internal/v1/apps/kelay-console/members/:userId { org: <user id>, role: "builder" }` (§9) after the account is created, and at their first `kelay-console` token request if they have no membership by then. Both need `CONTROL_API_URL` and `KELAY_CALLER_SECRET`. In a production build an allowlisted email must be verified, which only a social provider does. A person who is already a member, banned ones included, is never changed by this.
 - **Sign-in methods.** A provider is on when both `<PROVIDER>_CLIENT_ID` and `<PROVIDER>_CLIENT_SECRET` are set. Email and password is on in dev, and in a production build only with `KELAY_ID_EMAIL_PASSWORD=true`.
 
 ## 9. Control DB tables shared across services
@@ -228,12 +230,13 @@ Both answer `201 { recorded, skipped }`; records for apps that do not exist are 
 | Control API | 4003 |
 | MCP gateway | 4004 |
 | Run orchestrator | 4007 |
+| Console | 3000 |
 | Dev sign-in helper (`pnpm dev:up`) | 4005 |
 | Builder | 4006 |
 | Router (wrangler dev) | 8787 |
 | Postgres (compose) | 54320 |
 
-Postgres ports for parallel test containers: policy and SDK 54331, data-api 54332, identity 54333, control-api 54334, mcp-gateway 54335, e2e 54336.
+Postgres ports for parallel test containers: policy and SDK 54331, data-api 54332, identity 54333, control-api 54334, mcp-gateway 54335, e2e 54336. The e2e suite's services listen on 4410–4417.
 
 ## 12. Models
 

@@ -33,6 +33,11 @@ export interface StackConfig {
   runnerNodes: string;
   consoleUrl: string;
   devLoginUrl: string;
+  /** KELAY_ID_CORS_ORIGINS: the console's origin, plus whatever the environment lists. */
+  idCorsOrigins: string;
+  /** KELAY_BUILDER_ALLOWLIST and KELAY_OPEN_SIGNUP: who becomes a builder by signing up. Nobody, unless set. */
+  builderAllowlist: string;
+  openSignup: string;
   /** Origin public app links are built from; the router that serves it is not part of the local stack. */
   appOrigin: string;
   /** Unset when nothing serves model calls: triage, reports and agent nodes then fail with "LLM gateway not configured". */
@@ -104,6 +109,9 @@ export function configFromEnv(env: Env): StackConfig {
     runnerNodes: env.RUNNER_LOCAL_NODES || `${TICKET_BOARD}=${resolve(ROOT, TICKET_BOARD_NODES)}`,
     consoleUrl: trimSlash(get('CONSOLE_URL')),
     devLoginUrl: trimSlash(get('DEV_LOGIN_URL')),
+    idCorsOrigins: [...new Set([trimSlash(get('CONSOLE_URL')), ...(env.KELAY_ID_CORS_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean)])].join(','),
+    builderAllowlist: env.KELAY_BUILDER_ALLOWLIST ?? '',
+    openSignup: env.KELAY_OPEN_SIGNUP ?? '',
     appOrigin: trimSlash(get('KELAY_APP_ORIGIN')),
     llmGatewayUrl: namedGateway ?? (startLlmGateway ? LOCAL_LLM_GATEWAY_URL : undefined),
     llmGatewayKey: get('LLM_GATEWAY_KEY'),
@@ -142,6 +150,9 @@ export function serviceEnv(cfg: StackConfig): Record<string, string> {
     RUNNER_LOCAL_NODES: cfg.runnerNodes,
     CONSOLE_URL: cfg.consoleUrl,
     DEV_LOGIN_URL: cfg.devLoginUrl,
+    KELAY_ID_CORS_ORIGINS: cfg.idCorsOrigins,
+    KELAY_BUILDER_ALLOWLIST: cfg.builderAllowlist,
+    KELAY_OPEN_SIGNUP: cfg.openSignup,
     KELAY_APP_ORIGIN: cfg.appOrigin,
     // An empty value overrides one inherited from the shell, so "no gateway" is the same in every service.
     LLM_GATEWAY_URL: cfg.llmGatewayUrl ?? '',

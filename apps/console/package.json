@@ -13,6 +13,7 @@
   "dependencies": {
     "@kelay/contracts": "workspace:*",
     "@kelay/policy": "workspace:*",
+    "better-auth": "^1.7.20",
     "clsx": "^2.1.1",
     "geist": "^1.9.2",
     "next": "16.4.6",

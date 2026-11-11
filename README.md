@@ -159,7 +159,7 @@ pnpm dev:up
 
 | What | URL |
 |---|---|
-| Console, signed in as the builder | <http://localhost:4005/> (sets the cookie, then opens <http://localhost:3000>) |
+| Console | <http://localhost:3000> (sign in with Kelay ID), or <http://localhost:4005/> to be signed in as the seeded builder |
 | Kelay ID | <http://localhost:4001> |
 | Data API | <http://localhost:4002> |
 | Control API | <http://localhost:4003> |
@@ -168,7 +168,18 @@ pnpm dev:up
 | LLM gateway, only with `ANTHROPIC_API_KEY` | <http://localhost:4000> |
 | Builder | <http://localhost:4006> |
 
-**Signing in to the console.** The console reads the builder's Kelay ID token from the `kelay_token` cookie. Open <http://localhost:4005/>: a helper that runs only under `pnpm dev:up` signs the seeded builder in at Kelay ID, sets the cookie and sends you to the console. The token lasts 15 minutes; open that address again for a fresh one. `pnpm dev:login` prints a token instead, to paste at <http://localhost:3000/signin>.
+**Signing in to the console.** Open <http://localhost:3000>. The console sends you to Kelay ID's login page, where you sign in with email and password (and with Google, Kakao or GitHub when their client id and secret are set). Kelay ID sends you back, and the console's server trades your Kelay ID session for a `kelay-console` token, which it keeps in the httpOnly `kelay_token` cookie. The token lasts 15 minutes; the console gets a new one from the session three minutes before it expires, on your next request. **Sign out** in the account menu ends the Kelay ID session too.
+
+To skip the form, open <http://localhost:4005/>: a helper that runs only under `pnpm dev:up` signs the seeded builder in at Kelay ID, hands your browser the session and opens the console. `pnpm dev:login` prints a builder token for calling the Control API or the Builder by hand.
+
+**Becoming a builder.** A builder is a member of the app `kelay-console` with the role `builder`. The seed makes `jeongyun@orum.test` one. Anyone else becomes one by signing up at Kelay ID, when Kelay ID is started with either of these in `.env`:
+
+| Variable | Who becomes a builder |
+|---|---|
+| `KELAY_BUILDER_ALLOWLIST=you@example.com,cofounder@example.com` | A person who signs up with one of these emails. |
+| `KELAY_OPEN_SIGNUP=true` | Everyone who signs up. |
+
+Kelay ID creates the membership through the Control API (`PUT /internal/v1/apps/kelay-console/members/:userId`) when the account is created, and again at the person's first console sign-in if that did not happen, for example because the email was put on the list later. The new builder gets an org of their own and no apps; their first app picks their handle from their email. With neither variable set, signing up makes nobody a builder, and the console tells such a person so. In a production build an allowlisted email counts only when a sign-in provider verified it, because email-and-password accounts are not verified.
 
 **Seeded data.** Every account uses the password `kelay-dev-password`.
 
@@ -203,7 +214,14 @@ To change a port or a secret, copy [`.env.example`](.env.example) to `.env` and 
 
 ### End-to-end test
 
-`pnpm e2e` starts its own Postgres container (port 54336) and its own copies of the five services and the Builder (ports 4411–4414, 4416 and 4417), seeds them with the same data, and removes everything afterwards. A running `pnpm dev:up` is not touched. The Builder's workspaces of the run are in `.kelay/e2e`.
+`pnpm e2e` starts its own Postgres container (port 54336) and its own copies of the five services, the Builder, the console and the dev sign-in helper (ports 4410–4417), seeds them with the same data, and removes everything afterwards. A running `pnpm dev:up` is not touched: the console of the run builds into `apps/console/.next-e2e`, and the Builder's workspaces are in `.kelay/e2e`.
+
+[`e2e/console.e2e.test.ts`](e2e/console.e2e.test.ts) checks the console's sign-in, with a cookie jar for a browser:
+
+- a visitor is sent to Kelay ID's login page, signs up with an allowlisted email and comes back with an httpOnly builder token;
+- the console's pages load with that builder's empty app list, and the Home prompt creates their first app;
+- a token that is gone is replaced from the Kelay ID session, and sign-out ends both;
+- a person who is not a builder is turned away, and the dev sign-in helper signs the seeded builder in.
 
 [`e2e/builder.e2e.test.ts`](e2e/builder.e2e.test.ts) checks an app built by the Builder:
 

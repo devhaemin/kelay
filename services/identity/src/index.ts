@@ -15,12 +15,14 @@ import {
 } from '@kelay/contracts';
 import { appResources, type AppDirectory } from './apps.ts';
 import { authOptions, createAuth, type AuthDeps, type SocialConfig, type SocialProvider } from './auth.ts';
+import { CONSOLE_APP, mayBecomeBuilder, type BuilderSignup } from './builders.ts';
 import type { ConsentRecorder } from './consents.ts';
 import { mayUseApp, pgMemberStore, type MemberStore } from './members.ts';
 import { pageRoutes } from './pages.ts';
 
 export { mcpResourceUrl, type AppDirectory, type AppResource, type AppResources } from './apps.ts';
 export { MCP_SCOPES, SOCIAL_PROVIDERS, socialFromEnv, type KelayAuth, type SocialConfig } from './auth.ts';
+export { CONSOLE_APP, builderSignupFromEnv, controlApiBuilders, mayBecomeBuilder, type BuilderSignup, type ControlApiBuildersOptions } from './builders.ts';
 export { controlApiConsents, type ConsentRecord, type ConsentRecorder, type ControlApiConsentsOptions } from './consents.ts';
 export { pgMemberStore, type MemberStore } from './members.ts';
 export { createReloadingIdentity, type ReloadingIdentity, type ReloadingIdentityOptions } from './reloading.ts';
@@ -64,6 +66,17 @@ export interface IdentityDeps {
    * recorder refuses is not granted. Unset keeps consents in Kelay ID only (tests, a stack without a control API).
    */
   consents?: ConsentRecorder;
+  /**
+   * Who becomes a builder by signing up (the first-builder bootstrap). Unset, nobody does: builders
+   * are then only the people `app_members` already lists for `kelay-console`.
+   */
+  builders?: BuilderSignup;
+  /**
+   * Parent domain for the session cookie (`kelay.app` for `id.kelay.app`). The console exchanges the
+   * session for its token on its own server, so the browser must send the cookie to the console's
+   * host too. Unset, the cookie is for Kelay ID's host only, which is enough when both are `localhost`.
+   */
+  cookieDomain?: string;
 }
 
 const TokenRequest = z.object({ app: AppSlug });
@@ -72,7 +85,17 @@ function fail(c: Context, code: ErrorCode, message: string) {
   return c.json({ error: { code, message } } satisfies ErrorResponse, HTTP_STATUS[code] as ContentfulStatusCode);
 }
 
+/** Makes the person a builder when the sign-up rules say so. Idempotent for someone who has no membership yet. */
+async function enrollBuilder(builders: BuilderSignup | undefined, user: { id: string; email: string; emailVerified: boolean }): Promise<boolean> {
+  if (!builders || !mayBecomeBuilder(builders, user)) return false;
+  await builders.enroll(user.id);
+  return true;
+}
+
 function resolveDeps(deps: IdentityDeps): AuthDeps {
+  // Pages of these origins already call /v1/token with the session cookie; better-auth takes its
+  // own POSTs (sign-out from the console's server) from them as well.
+  const trustedOrigins = [...(deps.trustedOrigins ?? []), ...(deps.corsOrigins ?? [])];
   return {
     database: deps.database,
     issuer: deps.issuer.replace(/\/+$/, ''),
@@ -83,8 +106,10 @@ function resolveDeps(deps: IdentityDeps): AuthDeps {
     emailPassword: deps.emailPassword ?? true,
     social: deps.social ?? {},
     ...(deps.fetchClientMetadataResource ? { fetchClientMetadataResource: deps.fetchClientMetadataResource } : {}),
-    ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
+    ...(trustedOrigins.length > 0 ? { trustedOrigins } : {}),
     ...(deps.clientIpHeader ? { clientIpHeader: deps.clientIpHeader.toLowerCase() } : {}),
+    ...(deps.cookieDomain ? { cookieDomain: deps.cookieDomain } : {}),
+    ...(deps.builders ? { onUserCreated: async (user) => void (await enrollBuilder(deps.builders, user)) } : {}),
   };
 }
 
@@ -132,7 +157,16 @@ export function createIdentity(deps: IdentityDeps) {
     const body = TokenRequest.safeParse(await c.req.json().catch(() => null));
     if (!body.success) return fail(c, 'invalid_request', 'body must be { "app": "<app slug>" }');
     const slug = body.data.app;
-    const member = await members.find(slug, session.user.id);
+    let member = await members.find(slug, session.user.id);
+    // Normally the sign-up made them a builder. This covers a sign-up the control API missed, and an
+    // email that was put on the allowlist, or verified, after its owner signed up.
+    if (!member && slug === CONSOLE_APP) {
+      const enrolled = await enrollBuilder(deps.builders, session.user).catch((e: Error) => {
+        console.error(JSON.stringify({ type: 'builder_enroll_failed', user: session.user.id, message: e.message }));
+        return false;
+      });
+      if (enrolled) member = await members.find(slug, session.user.id);
+    }
     if (!mayUseApp(member)) return fail(c, 'denied', `not a member of ${slug}`);
     const { token } = await auth.api.signJWT({
       body: {

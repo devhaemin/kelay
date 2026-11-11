@@ -3,7 +3,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { audienceForApp } from '@kelay/contracts';
 import { remoteJwks, verifyKelayToken } from '@kelay/tokens';
-import { socialFromEnv } from './index.ts';
+import { mayBecomeBuilder, socialFromEnv } from './index.ts';
 import { Browser, ISSUER, PASSWORD, startTestIdentity, type TestIdentity } from './test-support.ts';
 
 const CONSOLE_ORIGIN = 'https://console.kelay.test';
@@ -11,12 +11,25 @@ const CONSOLE_ORIGIN = 'https://console.kelay.test';
 let t: TestIdentity;
 let server: ServerType;
 let jwksUrl: string;
+const enrollments: string[] = [];
+let controlApiDown = false;
 
 beforeAll(async () => {
   t = await startTestIdentity({
     social: { google: { clientId: 'google-test-id', clientSecret: 'google-test-secret' } },
     corsOrigins: [CONSOLE_ORIGIN],
     clientIpHeader: 'CF-Connecting-IP',
+    builders: {
+      allowlist: ['First.Builder@example.com'],
+      open: false,
+      requireVerifiedEmail: false,
+      // What the control API's member route does for kelay-console.
+      enroll: async (userId) => {
+        enrollments.push(userId);
+        if (controlApiDown) throw new Error('control API answered 503');
+        await t.setMember({ app: 'kelay-console', user_id: userId, org: userId, role: 'builder', plan: 'free', status: 'active' });
+      },
+    },
   });
   server = serve({ fetch: t.identity.app.fetch, port: 0 });
   await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -160,6 +173,50 @@ describe('social providers', () => {
     // A sign-in that has somewhere to return to still comes back through Kelay ID's own login page.
     const withReturn = await browser.postForm('/login/social', { provider: 'google', return_to: `${CONSOLE_ORIGIN}/auth/callback` });
     expect(withReturn.status).toBe(303);
+  });
+});
+
+describe('first-builder bootstrap', () => {
+  it('makes an allowlisted sign-up a builder, and nobody else', async () => {
+    const builder = new Browser(t.identity.app);
+    const builderId = await builder.signUp('first.builder@example.com');
+    expect(enrollments).toEqual([builderId]);
+    const res = await builder.postJson('/v1/token', { app: 'kelay-console' });
+    expect(res.status).toBe(200);
+    const claims = await verifyKelayToken(((await res.json()) as { token: string }).token, { jwks: remoteJwks(jwksUrl), issuer: ISSUER, audience: audienceForApp('kelay-console'), app: 'kelay-console' });
+    expect(claims).toMatchObject({ sub: builderId, org: builderId, role: 'builder' });
+
+    const other = new Browser(t.identity.app);
+    await other.signUp('someone.else@example.com');
+    expect(enrollments).toEqual([builderId]);
+    expect((await other.postJson('/v1/token', { app: 'kelay-console' })).status).toBe(403);
+    // The bootstrap is for the console only.
+    expect((await builder.postJson('/v1/token', { app: 'ticket-board' })).status).toBe(403);
+  });
+
+  it('enrolls at the first console token when the control API missed the sign-up', async () => {
+    await t.pool.query(`delete from "user" where email = 'first.builder@example.com'`);
+    await t.pool.query(`delete from app_members where app = 'kelay-console'`);
+    controlApiDown = true;
+    const builder = new Browser(t.identity.app);
+    const builderId = await builder.signUp('first.builder@example.com');
+    expect((await builder.postJson('/v1/token', { app: 'kelay-console' })).status).toBe(403);
+    controlApiDown = false;
+    expect((await builder.postJson('/v1/token', { app: 'kelay-console' })).status).toBe(200);
+    // A builder the console banned is not enrolled again.
+    await t.setMember({ app: 'kelay-console', user_id: builderId, org: builderId, role: 'builder', plan: 'free', status: 'banned' });
+    const before = enrollments.length;
+    expect((await builder.postJson('/v1/token', { app: 'kelay-console' })).status).toBe(403);
+    expect(enrollments).toHaveLength(before);
+  });
+
+  it('decides by the allowlist, open sign-up and whether the email is verified', () => {
+    const rules = { allowlist: ['a@example.com'], open: false, requireVerifiedEmail: true, enroll: async () => {} };
+    expect(mayBecomeBuilder(rules, { email: 'A@Example.com', emailVerified: true })).toBe(true);
+    expect(mayBecomeBuilder(rules, { email: 'a@example.com', emailVerified: false })).toBe(false);
+    expect(mayBecomeBuilder({ ...rules, requireVerifiedEmail: false }, { email: 'a@example.com', emailVerified: false })).toBe(true);
+    expect(mayBecomeBuilder(rules, { email: 'b@example.com', emailVerified: true })).toBe(false);
+    expect(mayBecomeBuilder({ ...rules, open: true }, { email: 'b@example.com', emailVerified: false })).toBe(true);
   });
 });
 

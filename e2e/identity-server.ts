@@ -4,7 +4,7 @@
 import { serve } from '@hono/node-server';
 import pg from 'pg';
 import waitOn from 'wait-on';
-import { controlApiConsents, createReloadingIdentity, migrateIdentity, type IdentityDeps } from '@kelay/identity';
+import { builderSignupFromEnv, controlApiBuilders, controlApiConsents, createReloadingIdentity, migrateIdentity, type IdentityDeps } from '@kelay/identity';
 import { registrySourceFromEnv } from '@kelay/contracts/registry';
 import { signCallerToken } from '@kelay/tokens';
 import { ASSISTANT_CLIENT_ID, ASSISTANT_METADATA } from './assistant.ts';
@@ -27,6 +27,7 @@ const deps: Omit<IdentityDeps, 'registry'> = {
   corsOrigins: list(process.env.KELAY_ID_CORS_ORIGINS),
   returnLoopback: true,
   consents: controlApiConsents({ controlApiUrl, callerSecret }),
+  builders: { ...builderSignupFromEnv(process.env), requireVerifiedEmail: false, enroll: controlApiBuilders({ controlApiUrl, callerSecret }) },
   fetchClientMetadataResource: async (input) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url !== ASSISTANT_CLIENT_ID) return new Response('not found', { status: 404 });

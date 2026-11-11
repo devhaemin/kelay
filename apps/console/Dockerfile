@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build from the repo root: docker build -f apps/console/Dockerfile -t kelay/console .
-# Runtime env: CONSOLE_DATA=http, CONTROL_API_URL, KELAY_APP_ORIGIN, MCP_PUBLIC_BASE_URL, PORT.
+# Runtime env: CONSOLE_DATA=http, CONTROL_API_URL, KELAY_ID_ISSUER, CONSOLE_URL, KELAY_APP_ORIGIN, MCP_PUBLIC_BASE_URL, PORT.
 FROM node:22-slim AS build
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 NEXT_TELEMETRY_DISABLED=1
 RUN corepack enable
