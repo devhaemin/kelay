@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>내 에이전트 · 티켓보드</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="티켓보드 메뉴">
+    <div class="sidebar-top">
+      <a class="wordmark" href="board.html">티켓보드</a>
+      <button class="btn btn-secondary menu-toggle" type="button" aria-expanded="false" aria-controls="sidebar-collapsible">메뉴</button>
+    </div>
+    <div class="sidebar-collapsible" id="sidebar-collapsible">
+      <div class="app-switch">
+        <span class="meta">팀</span>
+        <strong>오름스튜디오 제품팀</strong>
+        <span class="meta">박준호 · 팀원</span>
+      </div>
+      <nav class="nav" aria-label="티켓보드">
+        <a href="board.html">보드</a>
+        <a href="agent.html" aria-current="page">내 에이전트</a>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="meta">Kelay로 만든 앱</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="main-inner">
+      <header class="page-head">
+        <div>
+          <h1>내 에이전트</h1>
+          <p>내 Claude 계정으로 티켓보드를 에이전트로 써요. 에이전트는 박준호의 권한 안에서만 티켓을 보고 바꿔요.</p>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">내 Claude 연결하기</button>
+          <span class="meta">내 VM에서 로그인 창이 열려요</span>
+        </div>
+      </header>
+
+      <div class="areas">
+        <section class="panel" aria-labelledby="single-title">
+          <div class="panel-head">
+            <h2 id="single-title">개인 영역</h2>
+            <span class="status">연결 전</span>
+          </div>
+          <div class="panel-body">
+            <p>박준호만 쓰는 VM이에요. 내 Claude로 로그인하고, 대화와 파일과 작업 기록은 나만 봐요.</p>
+            <dl class="kv">
+              <div><dt>위치</dt><dd>박준호 전용 VM</dd></div>
+              <div><dt>쓰는 Claude</dt><dd>박준호 계정 · 아직 연결하지 않았어요</dd></div>
+            </dl>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="shared-title">
+          <div class="panel-head">
+            <h2 id="shared-title">팀 공유 영역</h2>
+            <span class="status" data-tone="ok">사용 중</span>
+          </div>
+          <div class="panel-body">
+            <p>제품팀이 함께 쓰는 VM이에요. 팀이 만든 에이전트 작업과 공유 파일이 여기 있어요. 작업은 실행한 사람의 Claude와 권한으로 동작해요.</p>
+            <dl class="kv">
+              <div><dt>위치</dt><dd>제품팀 공유 VM</dd></div>
+              <div><dt>팀 작업</dt><dd class="num">2개 · 팀원 6명이 함께 써요</dd></div>
+            </dl>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel" aria-labelledby="how-title">
+        <div class="panel-head">
+          <h2 id="how-title">연결 방식</h2>
+        </div>
+        <div class="panel-body">
+          <fieldset class="choices">
+            <legend class="visually-hidden">연결 방식</legend>
+            <label class="choice">
+              <input type="radio" name="how" value="login" checked>
+              <strong>Claude 계정으로 로그인</strong>
+              <span>개인 구독을 내 VM 안에서 로그인해요. 로그인 정보는 VM 밖으로 나가지 않아요.</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="how" value="key">
+              <strong>Anthropic API 키</strong>
+              <span>키를 내 VM에만 저장해요. 팀이나 개발자에게 전달되지 않아요.</span>
+            </label>
+          </fieldset>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="scope-title">
+        <div class="panel-head">
+          <h2 id="scope-title">에이전트 권한</h2>
+          <span class="meta">박준호와 같아요</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">할 수 있는 일</th><th scope="col">범위</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">티켓 보기</th><td>내 것 + 공유 <span class="meta num">8개</span></td></tr>
+              <tr><th scope="row">티켓 옮기기·고치기</th><td>내 것만 <span class="meta num">5개</span></td></tr>
+              <tr><th scope="row">티켓 지우기</th><td><span class="muted">없음</span></td></tr>
+              <tr><th scope="row">댓글 달기</th><td>볼 수 있는 티켓 전체</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-body">
+          <p class="note">관리자가 권한 정책을 바꾸면 에이전트 권한도 같이 바뀌어요. 에이전트가 한 일은 박준호가 한 일로 기록돼요.</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="jobs-title">
+        <div class="panel-head">
+          <h2 id="jobs-title">팀 공유 작업</h2>
+          <span class="meta">팀 공유 영역에서 돌아요</span>
+        </div>
+        <ul class="rows">
+          <li class="row row-2">
+            <div><span class="row-title">마감 지난 티켓 요약</span><span class="meta">매일 09:00 · 만든 사람 김서연</span></div>
+            <span class="status" data-tone="ok">켜짐</span>
+          </li>
+          <li class="row row-2">
+            <div><span class="row-title">이번 주 완료한 티켓으로 주간 정리 초안 쓰기</span><span class="meta">금요일 17:00 · 만든 사람 박준호</span></div>
+            <span class="status" data-tone="ok">켜짐</span>
+          </li>
+        </ul>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

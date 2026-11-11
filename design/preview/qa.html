@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QA · 티켓보드 · Kelay</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="Kelay 메뉴">
+    <div class="sidebar-top">
+      <a class="wordmark" href="index.html">Kelay</a>
+      <button class="btn btn-secondary menu-toggle" type="button" aria-expanded="false" aria-controls="sidebar-collapsible">메뉴</button>
+    </div>
+    <div class="sidebar-collapsible" id="sidebar-collapsible">
+      <div class="app-switch">
+        <span class="meta">앱</span>
+        <strong>티켓보드</strong>
+      </div>
+      <nav class="nav" aria-label="티켓보드">
+        <a href="build.html">만들기</a>
+        <a href="access.html">권한</a>
+        <a href="ship.html">공유</a>
+        <a href="qa.html" aria-current="page">QA</a>
+        <a href="feedback.html">개선 안건 <span class="count" aria-hidden="true">3</span><span class="visually-hidden">새 안건 3개</span></a>
+        <a href="connect.html">연결</a>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="meta">빌더</span>
+        <strong>서지안</strong>
+        <span class="meta">앱 3개 · 고객 팀 3곳</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="main-inner">
+      <header class="page-head">
+        <div>
+          <h1>티켓 옮기기 오류를 고쳤어요</h1>
+          <p>공유한 다음 날, 팀원이 남의 티켓을 옮기다 화면이 멈췄어요. 에이전트가 고친 v3가 QA를 모두 통과했어요.</p>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">v3 배포하기</button>
+          <span class="meta">오름스튜디오 제품팀 서버에 올려요</span>
+        </div>
+      </header>
+
+      <section class="panel" aria-labelledby="what-title">
+        <div class="panel-head">
+          <h2 id="what-title">무슨 일이 있었나요</h2>
+          <span class="meta num">11월 4일 09:14 · 자동 접수</span>
+        </div>
+        <div class="panel-body">
+          <p class="banner">박준호(팀원)가 김서연 담당 티켓을 진행 중으로 옮기자 화면이 멈췄어요. 권한 정책은 수정을 제대로 막았지만, 화면이 그 거부를 처리하지 못했어요.</p>
+          <dl class="facts">
+            <div><dt>팀</dt><dd>오름스튜디오 제품팀</dd></div>
+            <div><dt>화면</dt><dd>보드 <span class="mono">/board</span></dd></div>
+            <div><dt>버전</dt><dd class="num">v2</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="plain" aria-labelledby="guard-title">
+        <h2 id="guard-title" class="section-title">이제는 SDK 보드가 구조로 막아요</h2>
+          <ol class="guards">
+            <li><strong>옮길 권한이 없는 티켓은 끌 수 없어요.</strong> 카드에 “담당자만 옮길 수 있어요”가 보여요.</li>
+            <li><strong>서버가 거부하면 카드를 원래 칸으로 되돌려요.</strong> 화면은 멈추지 않고, 왜 안 되는지 알려 줘요.</li>
+            <li><strong>QA가 동작까지 실행해요.</strong> 화면을 열어 보는 데서 끝나지 않고, 역할마다 티켓 옮기기·만들기·댓글 달기를 해 봐요.</li>
+          </ol>
+      </section>
+
+      <section class="panel" aria-labelledby="result-title">
+        <div class="panel-head">
+          <h2 id="result-title">v3 QA 결과</h2>
+          <span class="status" data-tone="ok">24개 모두 통과</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">확인한 것</th><th scope="col">관리자</th><th scope="col">팀원</th><th scope="col">게스트</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">보드 열기</th><td><span class="status" data-tone="ok">통과</span></td><td><span class="status" data-tone="ok">통과</span></td><td><span class="status" data-tone="ok">통과</span></td></tr>
+              <tr><th scope="row">티켓 옮기기</th><td><span class="status" data-tone="ok">통과</span></td><td><span class="status" data-tone="ok">통과</span><span class="meta cell-note">v2에서 멈춤</span></td><td><span class="status" data-tone="ok">막고 안내함</span></td></tr>
+              <tr><th scope="row">티켓 만들기</th><td><span class="status" data-tone="ok">통과</span></td><td><span class="status" data-tone="ok">통과</span></td><td><span class="status" data-tone="ok">막고 안내함</span></td></tr>
+              <tr><th scope="row">댓글 달기</th><td><span class="status" data-tone="ok">통과</span></td><td><span class="status" data-tone="ok">통과</span></td><td><span class="status" data-tone="ok">통과</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-body">
+          <p class="meta">화면 4개를 역할마다 열어 봤고, 위 동작 4개도 역할마다 실행했어요. 권한 정책 테스트는 따로 통과했어요.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

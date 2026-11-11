@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>만들기 · 티켓보드 · Kelay</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="Kelay 메뉴">
+    <div class="sidebar-top">
+      <a class="wordmark" href="index.html">Kelay</a>
+      <button class="btn btn-secondary menu-toggle" type="button" aria-expanded="false" aria-controls="sidebar-collapsible">메뉴</button>
+    </div>
+    <div class="sidebar-collapsible" id="sidebar-collapsible">
+      <div class="app-switch">
+        <span class="meta">앱</span>
+        <strong>티켓보드</strong>
+      </div>
+      <nav class="nav" aria-label="티켓보드">
+        <a href="build.html" aria-current="page">만들기</a>
+        <a href="access.html">권한</a>
+        <a href="ship.html">공유</a>
+        <a href="qa.html">QA</a>
+        <a href="feedback.html">개선 안건 <span class="count" aria-hidden="true">3</span><span class="visually-hidden">새 안건 3개</span></a>
+        <a href="connect.html">연결</a>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="meta">빌더</span>
+        <strong>서지안</strong>
+        <span class="meta">앱 3개 · 고객 팀 3곳</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="main-inner">
+      <header class="page-head">
+        <div>
+          <h1>티켓보드를 만들었어요</h1>
+          <p>“팀 할 일을 티켓으로 관리하고 싶어요. 보드에서 할 일, 진행 중, 검토, 완료로 옮기고, 담당자와 마감일을 붙일 수 있으면 좋겠어요.”</p>
+          <p class="meta">서지안이 보낸 설명 · 11월 3일 10:02</p>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="access.html">권한 정하기</a>
+          <span class="meta">지금은 모든 팀원이 모든 티켓을 봐요</span>
+        </div>
+      </header>
+
+      <section class="panel" aria-labelledby="made-title">
+        <div class="panel-head">
+          <h2 id="made-title">만든 화면</h2>
+          <span class="meta">Kelay SDK 컴포넌트만 썼어요</span>
+        </div>
+        <ul class="rows">
+          <li class="row">
+            <div><span class="row-title">보드</span><span class="mono">/board</span></div>
+            <div class="hide-sm"><span class="meta">SDK</span>Board</div>
+            <div class="hide-sm"><span class="meta">상태</span>할 일 · 진행 중 · 검토 · 완료</div>
+            <a class="btn btn-quiet" href="board.html">미리보기</a>
+          </li>
+          <li class="row">
+            <div><span class="row-title">티켓 상세</span><span class="mono">/tickets/[id]</span></div>
+            <div class="hide-sm"><span class="meta">SDK</span>Detail · Comments</div>
+            <div class="hide-sm"><span class="meta">필드</span>담당자 · 마감일 · 설명</div>
+            <span class="meta">보드에서 열려요</span>
+          </li>
+          <li class="row">
+            <div><span class="row-title">내 티켓</span><span class="mono">/my</span></div>
+            <div class="hide-sm"><span class="meta">SDK</span>List</div>
+            <div class="hide-sm"><span class="meta">정렬</span>마감일 순</div>
+            <span class="meta">보드에서 열려요</span>
+          </li>
+          <li class="row">
+            <div><span class="row-title">팀 설정</span><span class="mono">/settings</span></div>
+            <div class="hide-sm"><span class="meta">SDK</span>Form</div>
+            <div class="hide-sm"><span class="meta">항목</span>팀원 초대 · 역할</div>
+            <span class="meta">관리자만 열어요</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="panel" aria-labelledby="data-title">
+        <div class="panel-head">
+          <h2 id="data-title">만든 데이터</h2>
+          <span class="meta">직접 쓴 서버 코드는 없어요</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">컬렉션</th><th scope="col">필드</th><th scope="col">역할</th></tr></thead>
+            <tbody>
+              <tr><td><span class="row-title">티켓</span> <span class="mono">tickets</span></td><td>제목, 상태, 담당자, 마감일, 공유 여부</td><td rowspan="3">관리자 · 팀원 · 게스트</td></tr>
+              <tr><td><span class="row-title">댓글</span> <span class="mono">comments</span></td><td>티켓, 작성자, 내용</td></tr>
+              <tr><td><span class="row-title">프로젝트</span> <span class="mono">projects</span></td><td>이름, 기간</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="plain" aria-labelledby="more-title">
+          <div class="field">
+            <label class="label" id="more-title" for="more">고칠 점 말하기</label>
+            <div class="inline-form">
+              <input class="input" id="more" type="text" placeholder="예: 티켓에 우선순위를 붙일 수 있게 해 주세요">
+              <button class="btn btn-secondary" type="button">보내기</button>
+            </div>
+            <span class="helper">보낸 내용으로 에이전트가 화면을 고치고 다시 QA를 돌려요.</span>
+          </div>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

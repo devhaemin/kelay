@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>권한 · 티켓보드 · Kelay</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="Kelay 메뉴">
+    <div class="sidebar-top">
+      <a class="wordmark" href="index.html">Kelay</a>
+      <button class="btn btn-secondary menu-toggle" type="button" aria-expanded="false" aria-controls="sidebar-collapsible">메뉴</button>
+    </div>
+    <div class="sidebar-collapsible" id="sidebar-collapsible">
+      <div class="app-switch">
+        <span class="meta">앱</span>
+        <strong>티켓보드</strong>
+      </div>
+      <nav class="nav" aria-label="티켓보드">
+        <a href="build.html">만들기</a>
+        <a href="access.html" aria-current="page">권한</a>
+        <a href="ship.html">공유</a>
+        <a href="qa.html">QA</a>
+        <a href="feedback.html">개선 안건 <span class="count" aria-hidden="true">3</span><span class="visually-hidden">새 안건 3개</span></a>
+        <a href="connect.html">연결</a>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="meta">빌더</span>
+        <strong>서지안</strong>
+        <span class="meta">앱 3개 · 고객 팀 3곳</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="main-inner">
+      <header class="page-head">
+        <div>
+          <h1>권한 정책</h1>
+          <p>역할마다 각 컬렉션을 어디까지 보고 바꿀 수 있는지 정해요. 적용하면 Postgres RLS 정책과 테스트가 함께 만들어지고, 에이전트도 같은 정책을 따라요.</p>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">정책 적용하기</button>
+          <span class="meta">적용하면 v2 빌드와 QA를 시작해요</span>
+        </div>
+      </header>
+
+      <section class="panel" aria-labelledby="rule-label">
+        <div class="panel-body">
+          <div class="field">
+            <label class="label" id="rule-label" for="rule">바꾸고 싶은 규칙</label>
+            <div class="inline-form">
+              <input class="input" id="rule" type="text" value="팀원은 자기 티켓과 공유 티켓만 보고, 자기 티켓만 옮길 수 있게 해 주세요">
+              <button class="btn btn-secondary" type="button">제안 받기</button>
+            </div>
+            <span class="helper">평소 말로 적으면 에이전트가 표에서 바꿀 칸을 제안해요.</span>
+          </div>
+          <p class="note">에이전트가 <strong>팀원</strong> 역할의 칸 2개를 바꾸자고 제안했어요. 표시된 칸을 확인해 주세요.</p>
+        </div>
+      </section>
+
+      <div class="split">
+        <section class="panel" aria-labelledby="matrix-title">
+          <div class="panel-head">
+            <h2 id="matrix-title">역할별 범위</h2>
+            <div class="tabs" role="tablist" aria-label="역할">
+              <button class="tab" role="tab" id="tab-admin" aria-selected="false" aria-controls="role-admin" tabindex="-1" type="button">관리자</button>
+              <button class="tab" role="tab" id="tab-member" aria-selected="true" aria-controls="role-member" type="button">팀원</button>
+              <button class="tab" role="tab" id="tab-guest" aria-selected="false" aria-controls="role-guest" tabindex="-1" type="button">게스트</button>
+            </div>
+          </div>
+          <div id="role-member" role="tabpanel" aria-labelledby="tab-member" class="table-wrap">
+            <table>
+              <thead><tr><th scope="col">컬렉션</th><th scope="col">읽기</th><th scope="col">만들기</th><th scope="col">수정</th><th scope="col">삭제</th></tr></thead>
+              <tbody>
+                <tr>
+                  <th scope="row"><span class="row-title">티켓</span> <span class="mono">tickets</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="mine_shared" data-proposed aria-describedby="tag-1"><span class="visually-hidden">티켓 읽기: </span><span data-label-slot>내 것 + 공유</span></button><span class="scope-tag" id="tag-1">제안 · 지금은 전체</span></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">티켓 만들기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="mine" data-proposed aria-describedby="tag-2"><span class="visually-hidden">티켓 수정: </span><span data-label-slot>내 것만</span></button><span class="scope-tag" id="tag-2">제안 · 지금은 전체</span></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">티켓 삭제: </span><span data-label-slot>없음</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">댓글</span> <span class="mono">comments</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="mine_shared"><span class="visually-hidden">댓글 읽기: </span><span data-label-slot>내 것 + 공유</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">댓글 만들기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="mine"><span class="visually-hidden">댓글 수정: </span><span data-label-slot>내 것만</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="mine"><span class="visually-hidden">댓글 삭제: </span><span data-label-slot>내 것만</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">프로젝트</span> <span class="mono">projects</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">프로젝트 읽기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">프로젝트 만들기: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">프로젝트 수정: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">프로젝트 삭제: </span><span data-label-slot>없음</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">팀 설정</span> <span class="mono">settings</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">팀 설정 읽기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 만들기: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 수정: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 삭제: </span><span data-label-slot>없음</span></button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="role-admin" role="tabpanel" aria-labelledby="tab-admin" class="table-wrap" hidden>
+            <table>
+              <thead><tr><th scope="col">컬렉션</th><th scope="col">읽기</th><th scope="col">만들기</th><th scope="col">수정</th><th scope="col">삭제</th></tr></thead>
+              <tbody>
+                <tr>
+                  <th scope="row"><span class="row-title">티켓</span> <span class="mono">tickets</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">티켓 읽기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">티켓 만들기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">티켓 수정: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">티켓 삭제: </span><span data-label-slot>전체</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">댓글</span> <span class="mono">comments</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">댓글 읽기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">댓글 만들기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">댓글 수정: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">댓글 삭제: </span><span data-label-slot>전체</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">프로젝트</span> <span class="mono">projects</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">프로젝트 읽기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">프로젝트 만들기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">프로젝트 수정: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">프로젝트 삭제: </span><span data-label-slot>전체</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">팀 설정</span> <span class="mono">settings</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">팀 설정 읽기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 만들기: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">팀 설정 수정: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 삭제: </span><span data-label-slot>없음</span></button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="role-guest" role="tabpanel" aria-labelledby="tab-guest" class="table-wrap" hidden>
+            <table>
+              <thead><tr><th scope="col">컬렉션</th><th scope="col">읽기</th><th scope="col">만들기</th><th scope="col">수정</th><th scope="col">삭제</th></tr></thead>
+              <tbody>
+                <tr>
+                  <th scope="row"><span class="row-title">티켓</span> <span class="mono">tickets</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="mine_shared"><span class="visually-hidden">티켓 읽기: </span><span data-label-slot>내 것 + 공유</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">티켓 만들기: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">티켓 수정: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">티켓 삭제: </span><span data-label-slot>없음</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">댓글</span> <span class="mono">comments</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="mine_shared"><span class="visually-hidden">댓글 읽기: </span><span data-label-slot>내 것 + 공유</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">댓글 만들기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="mine"><span class="visually-hidden">댓글 수정: </span><span data-label-slot>내 것만</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">댓글 삭제: </span><span data-label-slot>없음</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">프로젝트</span> <span class="mono">projects</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="all"><span class="visually-hidden">프로젝트 읽기: </span><span data-label-slot>전체</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">프로젝트 만들기: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">프로젝트 수정: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">프로젝트 삭제: </span><span data-label-slot>없음</span></button></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="row-title">팀 설정</span> <span class="mono">settings</span></th>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 읽기: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 만들기: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 수정: </span><span data-label-slot>없음</span></button></td>
+                  <td><button class="scope" type="button" aria-haspopup="listbox" data-options="scope-options" data-value="none"><span class="visually-hidden">팀 설정 삭제: </span><span data-label-slot>없음</span></button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="panel" aria-labelledby="sim-title">
+          <div class="panel-head">
+            <h2 id="sim-title">이 사람으로 보기</h2>
+          </div>
+          <div class="panel-body">
+            <div class="field">
+              <span class="label" id="person-label">팀원</span>
+              <button class="scope" type="button" aria-haspopup="listbox" aria-labelledby="person-label person-value" data-options="people-options" data-value="junho" data-simulator data-label="팀원"><span id="person-value" data-label-slot>박준호 · 팀원</span></button>
+              <span class="helper">오름스튜디오 제품팀 티켓 41개에 제안을 반영한 결과예요.</span>
+            </div>
+            <dl class="kv">
+              <div><dt>볼 수 있는 티켓</dt><dd class="num" data-sim="read">8개 (내 것 5개, 공유 3개)</dd></div>
+              <div><dt>옮길 수 있는 티켓</dt><dd class="num" data-sim="update">5개</dd></div>
+              <div><dt>지울 수 있는 티켓</dt><dd class="num" data-sim="delete">0개</dd></div>
+            </dl>
+            <p><span class="status" data-tone="ok">정책 테스트 24개 통과</span></p>
+            <details>
+              <summary>만들어질 SQL 보기</summary>
+<pre class="code">-- members see tickets assigned to them or marked shared
+create policy tickets_select_member on tickets
+  for select
+  using (kelay.role() = 'member'
+         and (assignee_id = kelay.uid()
+              or shared));
+
+-- members update (and move) only tickets assigned to them
+create policy tickets_update_member on tickets
+  for update
+  using (kelay.role() = 'member'
+         and assignee_id = kelay.uid())
+  with check (assignee_id = kelay.uid());</pre>
+            </details>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </main>
+</div>
+
+<template id="scope-options">
+  <div role="option" data-value="all" data-text="전체">전체<small>이 팀의 모든 행</small></div>
+  <div role="option" data-value="mine_shared" data-text="내 것 + 공유">내 것 + 공유<small>내가 담당·작성했거나 공유로 표시한 행</small></div>
+  <div role="option" data-value="mine" data-text="내 것만">내 것만<small>내가 담당·작성한 행</small></div>
+  <div role="option" data-value="none" data-text="없음">없음<small>볼 수 없고 바꿀 수 없어요</small></div>
+</template>
+
+<template id="people-options">
+  <div role="option" data-value="junho" data-text="박준호 · 팀원" data-read="8개 (내 것 5개, 공유 3개)" data-update="5개" data-delete="0개">박준호 · 팀원<small>티켓 5개 담당</small></div>
+  <div role="option" data-value="seoyeon" data-text="김서연 · 관리자" data-read="41개 (전체)" data-update="41개" data-delete="41개">김서연 · 관리자<small>제품팀 리드</small></div>
+  <div role="option" data-value="hyunwoo" data-text="이현우 · 게스트" data-read="4개 (공유 3개, 내 것 1개)" data-update="0개" data-delete="0개">이현우 · 게스트<small>외부 디자이너</small></div>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

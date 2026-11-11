@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>공유 · 티켓보드 · Kelay</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="Kelay 메뉴">
+    <div class="sidebar-top">
+      <a class="wordmark" href="index.html">Kelay</a>
+      <button class="btn btn-secondary menu-toggle" type="button" aria-expanded="false" aria-controls="sidebar-collapsible">메뉴</button>
+    </div>
+    <div class="sidebar-collapsible" id="sidebar-collapsible">
+      <div class="app-switch">
+        <span class="meta">앱</span>
+        <strong>티켓보드</strong>
+      </div>
+      <nav class="nav" aria-label="티켓보드">
+        <a href="build.html">만들기</a>
+        <a href="access.html">권한</a>
+        <a href="ship.html" aria-current="page">공유</a>
+        <a href="qa.html">QA</a>
+        <a href="feedback.html">개선 안건 <span class="count" aria-hidden="true">3</span><span class="visually-hidden">새 안건 3개</span></a>
+        <a href="connect.html">연결</a>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="meta">빌더</span>
+        <strong>서지안</strong>
+        <span class="meta">앱 3개 · 고객 팀 3곳</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="main-inner">
+      <header class="page-head">
+        <div>
+          <h1>티켓보드를 팀에 공유할 준비가 됐어요</h1>
+          <p>오름스튜디오 제품팀 전용 서버에 v2를 올리고, 팀원에게 보낼 초대 링크를 열어요. 서버를 고르거나 설정할 것은 없어요.</p>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">팀에 공유하기</button>
+        </div>
+      </header>
+
+      <section class="panel" aria-labelledby="version-title">
+        <div class="panel-head">
+          <h2 id="version-title">공유할 버전</h2>
+          <span class="meta num">v2 · 11월 3일 10:41 빌드</span>
+        </div>
+        <div class="panel-body">
+          <p><strong>팀원은 자기 티켓과 공유 티켓만 봐요.</strong> 권한 정책을 적용한 첫 버전이에요.</p>
+          <dl class="facts">
+            <div><dt>화면 확인</dt><dd><span class="status" data-tone="ok">12개 통과</span></dd></div>
+            <div><dt>확인한 범위</dt><dd class="num">화면 4개 × 역할 3개</dd></div>
+            <div><dt>권한 정책 테스트</dt><dd class="num">24개 통과</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="team-title">
+        <div class="panel-head">
+          <h2 id="team-title">공유할 팀</h2>
+          <span class="meta">팀마다 전용 서버를 따로 만들어요</span>
+        </div>
+        <ul class="rows">
+          <li class="row">
+            <div><span class="row-title">오름스튜디오 제품팀</span><span class="meta">팀원 6명 · 관리자 김서연</span></div>
+            <div class="hide-sm"><span class="meta">주소</span><span class="mono">orum.ticket-board.kelay.app</span></div>
+            <div class="hide-sm"><span class="meta">전용 서버</span><span class="mono">cell-orum-7f3a</span></div>
+            <span class="status">공유하면 만들어요</span>
+          </li>
+        </ul>
+        <div class="panel-body">
+          <p class="note">팀의 티켓과 에이전트는 이 서버 안에만 있어요. 다른 팀 데이터와 섞이지 않아요.</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="invite-title">
+        <div class="panel-body">
+          <div class="field">
+            <h2 class="label" id="invite-title">초대 링크</h2>
+            <div class="copy-field">
+              <code>https://orum.ticket-board.kelay.app/join/k7f3a</code>
+              <button class="btn btn-quiet" type="button" data-copy="https://orum.ticket-board.kelay.app/join/k7f3a">복사</button>
+            </div>
+            <span class="helper">공유하면 이 링크가 열려요. 링크로 들어온 사람은 팀원 역할로 시작해요.</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

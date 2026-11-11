@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>연결 · Kelay</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="Kelay 메뉴">
+    <div class="sidebar-top">
+      <a class="wordmark" href="index.html">Kelay</a>
+      <button class="btn btn-secondary menu-toggle" type="button" aria-expanded="false" aria-controls="sidebar-collapsible">메뉴</button>
+    </div>
+    <div class="sidebar-collapsible" id="sidebar-collapsible">
+      <div class="app-switch">
+        <span class="meta">앱</span>
+        <strong>티켓보드</strong>
+      </div>
+      <nav class="nav" aria-label="티켓보드">
+        <a href="build.html">만들기</a>
+        <a href="access.html">권한</a>
+        <a href="ship.html">공유</a>
+        <a href="qa.html">QA</a>
+        <a href="feedback.html">개선 안건 <span class="count" aria-hidden="true">3</span><span class="visually-hidden">새 안건 3개</span></a>
+        <a href="connect.html" aria-current="page">연결</a>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="meta">빌더</span>
+        <strong>서지안</strong>
+        <span class="meta">앱 3개 · 고객 팀 3곳</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="main-inner">
+      <header class="page-head">
+        <div>
+          <h1>연결</h1>
+          <p>서지안이 만든 앱 3개가 MCP와 A2A로 서로를 써요. 팀원은 Kelay 신원 하나로 세 앱에 들어가고, 앱마다 권한 정책은 따로 적용돼요.</p>
+        </div>
+      </header>
+
+      <section class="panel" aria-labelledby="req-title">
+        <div class="panel-head">
+          <h2 id="req-title">티켓보드가 팀위키 연결을 요청했어요</h2>
+          <div class="detail-actions">
+            <button class="btn btn-secondary" type="button">거절하기</button>
+            <button class="btn btn-primary" type="button">허용하기</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <p>완료한 티켓을 팀위키 주간 회의록에 남기려면, 티켓보드가 A2A로 팀위키의 ‘회의록 쓰기’를 써야 해요. <a href="feedback.html">개선 안건 3</a>에서 나온 요청이에요.</p>
+          <p class="note">허용해도 각 사람이 팀위키에서 가진 권한 안에서만 동작해요. 회의록을 쓸 수 없는 팀원의 티켓은 남기지 않아요.</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="graph-title">
+        <div class="panel-head">
+          <h2 id="graph-title">앱 그래프</h2>
+          <span class="meta">오름스튜디오 제품팀 기준</span>
+        </div>
+        <div class="panel-body">
+          <figure class="graph">
+            <svg viewBox="0 0 640 360" role="img" aria-labelledby="g-title g-desc">
+              <title id="g-title">앱 3개와 신원 하나의 연결 그래프</title>
+              <desc id="g-desc">가운데의 김서연 신원이 티켓보드(관리자), 팀위키(편집자), 문서함(팀원)에 들어가요. 티켓보드와 문서함, 팀위키와 문서함은 MCP로 연결돼 있고, 티켓보드에서 팀위키로 가는 A2A 연결은 허용을 기다려요.</desc>
+
+              <g class="g-edge" data-kind="pending">
+                <line x1="208" y1="70" x2="432" y2="70"/>
+                <text x="320" y="56" text-anchor="middle">A2A · 회의록 쓰기 · 허용 대기</text>
+              </g>
+              <g class="g-edge">
+                <line x1="150" y1="100" x2="268" y2="270"/>
+                <text x="196" y="214" text-anchor="end">MCP · 문서 첨부</text>
+              </g>
+              <g class="g-edge">
+                <line x1="490" y1="100" x2="372" y2="270"/>
+                <text x="444" y="214" text-anchor="start">MCP · 문서 넣기</text>
+              </g>
+
+              <g class="g-id-edge">
+                <line x1="270" y1="146" x2="190" y2="100"/>
+                <line x1="370" y1="146" x2="450" y2="100"/>
+                <line x1="320" y1="190" x2="320" y2="270"/>
+                <text x="222" y="138" text-anchor="end">관리자</text>
+                <text x="418" y="138" text-anchor="start">편집자</text>
+                <text x="330" y="236" text-anchor="start">팀원</text>
+              </g>
+
+              <g class="g-node">
+                <rect x="40" y="40" width="168" height="60" rx="10"/>
+                <text x="124" y="66" text-anchor="middle" class="g-name">티켓보드</text>
+                <text x="124" y="86" text-anchor="middle" class="g-meta">할 일 티켓</text>
+              </g>
+              <g class="g-node">
+                <rect x="432" y="40" width="168" height="60" rx="10"/>
+                <text x="516" y="66" text-anchor="middle" class="g-name">팀위키</text>
+                <text x="516" y="86" text-anchor="middle" class="g-meta">업무 문서·회의록</text>
+              </g>
+              <g class="g-node">
+                <rect x="236" y="270" width="168" height="60" rx="10"/>
+                <text x="320" y="296" text-anchor="middle" class="g-name">문서함</text>
+                <text x="320" y="316" text-anchor="middle" class="g-meta">오피스 문서</text>
+              </g>
+              <g class="g-id">
+                <rect x="236" y="146" width="168" height="44" rx="22"/>
+                <text x="320" y="173" text-anchor="middle">김서연 · 신원 하나</text>
+              </g>
+            </svg>
+          </figure>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="links-title">
+        <div class="panel-head">
+          <h2 id="links-title">연결 목록</h2>
+        </div>
+        <ul class="rows">
+          <li class="row">
+            <div><span class="row-title">티켓보드 → 문서함</span><span class="meta">티켓에 문서 첨부</span></div>
+            <div class="hide-sm"><span class="meta">방식</span>MCP</div>
+            <div class="hide-sm"><span class="meta">허용한 날</span><span class="num">11월 6일</span></div>
+            <span class="status" data-tone="ok">연결됨</span>
+          </li>
+          <li class="row">
+            <div><span class="row-title">팀위키 → 문서함</span><span class="meta">회의록에 문서 넣기</span></div>
+            <div class="hide-sm"><span class="meta">방식</span>MCP</div>
+            <div class="hide-sm"><span class="meta">허용한 날</span><span class="num">11월 8일</span></div>
+            <span class="status" data-tone="ok">연결됨</span>
+          </li>
+          <li class="row">
+            <div><span class="row-title">팀원의 개인 에이전트 → 앱 3개</span><span class="meta">각자 내 Claude와 내 권한으로</span></div>
+            <div class="hide-sm"><span class="meta">방식</span>MCP</div>
+            <div class="hide-sm"><span class="meta">쓰는 사람</span><span class="num">9명</span></div>
+            <span class="status" data-tone="ok">연결됨</span>
+          </li>
+          <li class="row">
+            <div><span class="row-title">티켓보드 → 팀위키</span><span class="meta">완료한 티켓을 회의록으로</span></div>
+            <div class="hide-sm"><span class="meta">방식</span>A2A</div>
+            <div class="hide-sm"><span class="meta">요청한 날</span><span class="num">11월 11일</span></div>
+            <span class="status" data-tone="wait">허용 대기</span>
+          </li>
+        </ul>
+        <div class="panel-body">
+          <details>
+            <summary>티켓보드 MCP 주소 보기</summary>
+            <div class="copy-field">
+              <code>https://orum.ticket-board.kelay.app/mcp</code>
+              <button class="btn btn-quiet" type="button" data-copy="https://orum.ticket-board.kelay.app/mcp">복사</button>
+            </div>
+          </details>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
