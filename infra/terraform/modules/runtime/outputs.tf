@@ -3,7 +3,7 @@ output "app_resource_prefix" {
 }
 
 output "required_tags" {
-  description = "Tags the Deploy service must set on every per-app function and state machine, plus kelay:app."
+  description = "Tags the Deploy service must set on every per-app function and state machine, plus kelay:app (and kelay:app-env for the app's dev or prod env)."
   value       = local.required_tags
 }
 

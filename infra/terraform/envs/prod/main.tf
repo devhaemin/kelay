@@ -21,28 +21,35 @@ locals {
   internal_domain = "${local.env}.kelay.internal"
   internal_url    = { for svc, port in local.ports : svc => "http://${svc}.${local.internal_domain}:${port}" }
 
-  # Secrets Manager shells. Terraform never writes their values (clickhouse-password excepted, write-only).
-  secret_names = [
-    "kelay-caller-secret",
-    "control-database-url",
-    "better-auth-secret",
-    "google-client-secret",
-    "kakao-client-secret",
-    "github-client-secret",
-    "llm-gateway-key",
-    "litellm-master-key",
-    "litellm-salt-key",
-    "litellm-database-url",
-    "anthropic-api-key",
-    "openai-api-key",
-    "gemini-api-key",
-    "forgejo-token",
-    "cloudflare-kv-token",
-    "clickhouse-password",
-  ]
+  # Secrets Manager shells whose values are set out of band (infra/deploy/set-secrets.sh). Terraform
+  # never writes them, clickhouse-password excepted (write-only). The database logins are not here:
+  # the data module creates and fills those.
+  secret_names = concat(
+    [
+      "kelay-caller-secret",
+      "better-auth-secret",
+      "llm-gateway-key",
+      "litellm-master-key",
+      "litellm-salt-key",
+      "anthropic-api-key",
+      "openai-api-key",
+      "gemini-api-key",
+      "clickhouse-password",
+    ],
+    flatten([for p in var.identity_social_providers : ["${p}-client-id", "${p}-client-secret"]]),
+  )
 
-  db_secret = module.data.master_user_secret_arn
+  # Database URLs carry no login. Each service adds its own from DB_USER and DB_PASSWORD, which come
+  # from a login secret of the data module, so no URL has to change when a password does.
+  db_host             = module.data.proxy_endpoint
+  control_db_url      = "postgres://${local.db_host}:5432/${module.data.database_name}?sslmode=verify-full"
+  app_db_url_template = "postgres://${local.db_host}:5432/app_{app}_{env}?sslmode=verify-full"
+  platform_db_login = {
+    DB_USER     = "${module.data.db_user_secret_arns["platform"]}:username::"
+    DB_PASSWORD = "${module.data.db_user_secret_arns["platform"]}:password::"
+  }
 
+  # Every name here is one a service reads; see each service's server.ts.
   shared_env = {
     KELAY_ENV                   = local.env
     AWS_REGION                  = var.region
@@ -53,10 +60,8 @@ locals {
     LLM_GATEWAY_URL             = local.internal_url["llm-gateway"]
     MCP_PUBLIC_BASE_URL         = "https://${var.app_hostname}"
     OTEL_EXPORTER_OTLP_ENDPOINT = local.internal_url["otel-collector"]
-    DB_HOST                     = module.data.proxy_endpoint
-    DB_PORT                     = "5432"
-    APP_FILES_BUCKET            = module.data.app_files_bucket
-    ARTIFACTS_BUCKET            = module.data.artifacts_bucket
+    # Apps come from the control API (docs/contracts.md §6), not from a file in the image.
+    KELAY_APPS_SOURCE = "control-api"
   }
 
   base_services = {
@@ -66,8 +71,10 @@ locals {
       memory       = 1024
       host_headers = [local.hosts.console]
       priority     = 10
-      env          = { PUBLIC_URL = "https://${local.hosts.console}" }
-      secrets      = { KELAY_CALLER_SECRET = "kelay-caller-secret" }
+      env = {
+        CONSOLE_DATA     = "http"
+        KELAY_APP_ORIGIN = "https://${var.app_hostname}"
+      }
     }
 
     control-api = {
@@ -77,43 +84,47 @@ locals {
       host_headers = [local.hosts.api]
       priority     = 20
       env = {
-        APP_RESOURCE_PREFIX    = module.runtime.app_resource_prefix
-        LAMBDA_EXEC_ROLE_ARN   = module.runtime.lambda_exec_role_arn
-        STATES_EXEC_ROLE_ARN   = module.runtime.states_exec_role_arn
-        SANDBOX_CLUSTER_ARN    = module.sandboxes.cluster_arn
-        SANDBOX_TASK_FAMILY    = module.sandboxes.task_definition_family
-        SANDBOX_TASK_TEMPLATE  = module.sandboxes.task_definition_arn
-        SANDBOX_SUBNET_IDS     = join(",", module.sandboxes.subnet_ids)
-        SANDBOX_SECURITY_GROUP = module.sandboxes.security_group_id
-        WORKSPACES_EFS_ID      = module.data.efs_id
-        CLOUDFLARE_ACCOUNT_ID  = var.cloudflare_account_id
-        ROUTES_KV_NAMESPACE_ID = module.edge.routes_kv_namespace_id
-        APP_DOMAIN             = var.app_hostname
-        FORGEJO_URL            = var.forgejo_url
+        CONTROL_DATABASE_URL      = local.control_db_url
+        APP_DATABASE_URL_TEMPLATE = local.app_db_url_template
+
+        # The Deploy service: per-app Lambda functions and state machines under the runtime module's IAM.
+        # KELAY_ROUTER_PRINCIPAL stays unset: the Router's IAM user is in this account, so its own
+        # policy lets it call function URLs, and the Deploy role may not add resource policies.
+        KELAY_DEPLOY_DRIVER   = "aws"
+        KELAY_LAMBDA_ROLE_ARN = module.runtime.lambda_exec_role_arn
+        KELAY_SFN_ROLE_ARN    = module.runtime.states_exec_role_arn
+        APP_RESOURCE_PREFIX   = module.runtime.app_resource_prefix
+
+        # App functions run outside the VPC and reach the platform through its public hosts.
+        APP_RUNTIME_DATA_API_URL    = "https://${local.hosts.data}"
+        APP_RUNTIME_CONTROL_API_URL = "https://${local.hosts.api}"
+        APP_RUNTIME_LLM_GATEWAY_URL = "https://${local.hosts.llm}"
       }
-      secrets = {
-        CONTROL_DATABASE_URL = "control-database-url"
-        KELAY_CALLER_SECRET  = "kelay-caller-secret"
-        LLM_GATEWAY_KEY      = "llm-gateway-key"
-        FORGEJO_TOKEN        = "forgejo-token"
-        CLOUDFLARE_API_TOKEN = "cloudflare-kv-token"
-        DB_USER              = "${local.db_secret}:username::"
-        DB_PASSWORD          = "${local.db_secret}:password::"
-      }
+      secrets = merge(local.platform_db_login, {
+        KELAY_CALLER_SECRET = "kelay-caller-secret"
+        LLM_GATEWAY_KEY     = "llm-gateway-key"
+      })
     }
 
     identity = {
       port         = local.ports["identity"]
       host_headers = [local.hosts.id]
       priority     = 30
-      env          = { BETTER_AUTH_URL = "https://${local.hosts.id}" }
-      secrets = {
-        CONTROL_DATABASE_URL = "control-database-url"
-        BETTER_AUTH_SECRET   = "better-auth-secret"
-        GOOGLE_CLIENT_SECRET = "google-client-secret"
-        KAKAO_CLIENT_SECRET  = "kakao-client-secret"
-        GITHUB_CLIENT_SECRET = "github-client-secret"
+      env = {
+        CONTROL_DATABASE_URL    = local.control_db_url
+        KELAY_ID_CORS_ORIGINS   = "https://${local.hosts.console}"
+        KELAY_ID_EMAIL_PASSWORD = tostring(var.identity_email_password)
       }
+      # A sign-in provider is on when both its client id and its client secret are set.
+      secrets = merge(
+        local.platform_db_login,
+        {
+          BETTER_AUTH_SECRET  = "better-auth-secret"
+          KELAY_CALLER_SECRET = "kelay-caller-secret"
+        },
+        { for p in var.identity_social_providers : "${upper(p)}_CLIENT_ID" => "${p}-client-id" },
+        { for p in var.identity_social_providers : "${upper(p)}_CLIENT_SECRET" => "${p}-client-secret" },
+      )
     }
 
     data-api = {
@@ -122,12 +133,9 @@ locals {
       memory       = 1024
       host_headers = [local.hosts.data]
       priority     = 40
-      secrets = {
-        CONTROL_DATABASE_URL = "control-database-url"
-        KELAY_CALLER_SECRET  = "kelay-caller-secret"
-        DB_USER              = "${local.db_secret}:username::"
-        DB_PASSWORD          = "${local.db_secret}:password::"
-      }
+      secrets = merge(local.platform_db_login, {
+        KELAY_CALLER_SECRET = "kelay-caller-secret"
+      })
     }
 
     mcp-gateway = {
@@ -151,11 +159,15 @@ locals {
         OTEL_EXPORTER     = "otlp_http"
         OTEL_ENDPOINT     = "${local.internal_url["otel-collector"]}/v1/traces"
         OTEL_SERVICE_NAME = "llm-gateway"
+        # LiteLLM builds its database URL from these four when DATABASE_URL is not set.
+        DATABASE_HOST = local.db_host
+        DATABASE_NAME = module.data.litellm_database_name
       }
       secrets = {
         LITELLM_MASTER_KEY = "litellm-master-key"
         LITELLM_SALT_KEY   = "litellm-salt-key"
-        DATABASE_URL       = "litellm-database-url"
+        DATABASE_USERNAME  = "${module.data.db_user_secret_arns["litellm"]}:username::"
+        DATABASE_PASSWORD  = "${module.data.db_user_secret_arns["litellm"]}:password::"
         ANTHROPIC_API_KEY  = "anthropic-api-key"
         OPENAI_API_KEY     = "openai-api-key"
         GEMINI_API_KEY     = "gemini-api-key"
@@ -172,6 +184,7 @@ locals {
       desired_count = 0
     }
 
+    # infra/otel: with ClickHouse it exports there; without, it runs the image's log-only pipeline.
     otel-collector = {
       port         = local.ports["otel-collector"]
       cpu          = 512
@@ -180,14 +193,20 @@ locals {
       priority     = 80
       health_path  = "/"
       health_port  = 13133
-      secrets      = { CLICKHOUSE_PASSWORD = "clickhouse-password" }
+      command      = var.enable_clickhouse ? null : ["--config=/etc/otelcol-contrib/debug.yaml"]
+      env          = { for k, v in { CLICKHOUSE_ENDPOINT = module.observability.clickhouse_native_endpoint } : k => v if var.enable_clickhouse }
+      secrets      = { for k, v in { CLICKHOUSE_PASSWORD = "clickhouse-password" } : k => v if var.enable_clickhouse }
     }
   }
 
+  # An override replaces a setting, except env, whose entries are added to the service's own.
   services = {
-    for k, s in local.base_services : k => merge(s, {
-      for attr, value in try(var.service_overrides[k], {}) : attr => value if value != null
-    })
+    for k, s in local.base_services : k => merge(
+      s,
+      { for attr, value in try(var.service_overrides[k], {}) : attr => value if value != null && attr != "env" },
+      # lookup, not try: try gives up on a value that is not fully known yet, and env holds module outputs.
+      { env = merge(lookup(s, "env", {}), { for name, value in coalesce(try(var.service_overrides[k].env, null), {}) : name => value }) },
+    )
   }
 }
 
@@ -206,6 +225,7 @@ module "data" {
   source = "../../modules/data"
 
   name                       = local.name
+  env                        = local.env
   vpc_id                     = module.network.vpc_id
   data_subnet_ids            = module.network.data_subnet_ids
   database_subnet_group_name = module.network.database_subnet_group_name
@@ -221,6 +241,7 @@ module "data" {
   deletion_protection = var.deletion_protection
   skip_final_snapshot = !var.deletion_protection
   log_retention_days  = var.log_retention_days
+  db_password_version = var.db_password_version
 
   app_files_cors_origins = ["https://${var.app_hostname}", "https://${local.hosts.console}"]
   force_destroy_buckets  = !var.deletion_protection
@@ -314,13 +335,11 @@ module "edge" {
   alb_dns_name  = module.platform.alb_dns_name
 
   router_bundle_path = var.router_bundle_path
+  # The bindings services/router/src/index.ts reads, besides ROUTES and the AWS key.
   router_vars = {
-    KELAY_ENV           = local.env
-    AWS_REGION          = var.region
-    APP_RESOURCE_PREFIX = module.runtime.app_resource_prefix
-    MCP_ORIGIN          = "https://${local.hosts.mcp}"
-    PREVIEW_ORIGIN      = "https://${local.hosts.preview}"
-    KELAY_ID_ISSUER     = "https://${local.hosts.id}"
+    AWS_REGION     = var.region
+    MCP_ORIGIN     = "https://${local.hosts.mcp}"
+    CONTROL_ORIGIN = "https://${local.hosts.api}"
   }
   router_secrets = var.create_router_access_key ? {
     AWS_ACCESS_KEY_ID     = module.runtime.router_access_key_id

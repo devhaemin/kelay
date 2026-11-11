@@ -21,6 +21,10 @@ aurora_instance_count = 1
 # Staging can be torn down; prod keeps this true.
 deletion_protection = false
 
+# Sign-in to Kelay ID. Each provider needs its <provider>-client-id and <provider>-client-secret secrets.
+identity_social_providers = []
+identity_email_password   = true
+
 enable_execute_command = true
 log_retention_days     = 14
 

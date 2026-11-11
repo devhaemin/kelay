@@ -48,7 +48,7 @@ variable "router_compatibility_flags" {
 }
 
 variable "router_vars" {
-  description = "Plain-text bindings for the Router (AWS region, platform origins, env)."
+  description = "Plain-text bindings for the Router: AWS_REGION, MCP_ORIGIN and CONTROL_ORIGIN (services/router/src/index.ts)."
   type        = map(string)
   default     = {}
 }

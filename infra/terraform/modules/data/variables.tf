@@ -3,6 +3,11 @@ variable "name" {
   type        = string
 }
 
+variable "env" {
+  description = "Environment name, e.g. staging or prod. Names the bootstrap task's log group."
+  type        = string
+}
+
 variable "vpc_id" {
   type = string
 }
@@ -50,6 +55,39 @@ variable "database_name" {
 variable "master_username" {
   type    = string
   default = "kelay_admin"
+}
+
+variable "platform_db_username" {
+  description = "Postgres login of control-api, identity and data-api. Owns the control DB and every app database."
+  type        = string
+  default     = "kelay_platform"
+}
+
+variable "litellm_db_username" {
+  description = "Postgres login of the LLM gateway."
+  type        = string
+  default     = "kelay_litellm"
+}
+
+variable "litellm_database_name" {
+  description = "Database the LLM gateway keeps its keys and spend logs in."
+  type        = string
+  default     = "litellm"
+}
+
+variable "db_password_version" {
+  description = <<-EOT
+    Raise it to give the service logins new passwords. Afterwards run the db-bootstrap task, which
+    sets them in Postgres, and restart the services. Until the task has run, new connections fail.
+  EOT
+  type        = number
+  default     = 1
+}
+
+variable "db_bootstrap_image" {
+  description = "Image with psql for the bootstrap task."
+  type        = string
+  default     = "public.ecr.aws/docker/library/postgres:17"
 }
 
 variable "min_capacity" {
@@ -109,7 +147,7 @@ variable "log_retention_days" {
 # RDS Proxy
 
 variable "proxy_iam_auth" {
-  description = "Client IAM auth on the proxy: DISABLED (password from the master secret) or REQUIRED (rds-db:connect tokens)."
+  description = "Client IAM auth on the proxy: DISABLED (the login's password) or REQUIRED (rds-db:connect tokens)."
   type        = string
   default     = "DISABLED"
 
