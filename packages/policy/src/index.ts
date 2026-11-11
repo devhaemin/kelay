@@ -11,3 +11,15 @@ export {
   type PolicyMatrixInput,
   type PolicyProblem,
 } from './validate.ts';
+export {
+  identLiteral,
+  kelayAuthSql,
+  migrationSql,
+  policyDefinition,
+  policyToSql,
+  quoteIdent,
+  schemaToSql,
+  type PolicyCommand,
+  type PolicyDefinition,
+} from './sql.ts';
+export { describePolicy, type CollectionSummary, type OpSummary, type PolicySummary, type RoleSummary } from './describe.ts';
