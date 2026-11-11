@@ -1,0 +1,11 @@
+{
+  "name": "@kelay/example-live-rls",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db": "docker run -d --rm --name kelay-demo-pg -p 54340:5432 -e POSTGRES_PASSWORD=kelay postgres:17",
+    "start": "tsx server.ts"
+  },
+  "dependencies": { "@kelay/contracts": "workspace:*", "@kelay/tokens": "workspace:*", "pg": "^8.23.1" },
+  "devDependencies": { "@types/pg": "^8.11.10" }
+}

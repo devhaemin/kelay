@@ -1,0 +1,1 @@
+ALTER TABLE "versions" ADD COLUMN "graphs" jsonb DEFAULT '[]'::jsonb NOT NULL;
