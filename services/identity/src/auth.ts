@@ -55,7 +55,10 @@ export interface AuthDeps {
 const invalidGrant = (description: string) =>
   new APIError('BAD_REQUEST', { error: 'invalid_grant', error_description: description });
 
-/** Options without an instance: `betterAuth()` starts its context (and DB access) eagerly, migrations must not. */
+/**
+ * The options alone, so migrations can read the schema without an instance: `betterAuth()` starts
+ * its context and queries the database as soon as it is called.
+ */
 export function authOptions(deps: AuthDeps) {
   const { apps, members, issuer } = deps;
   const [primary] = apps.list;
