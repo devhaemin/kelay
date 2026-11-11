@@ -6,8 +6,10 @@ import type { AppDetail, AppSummary, ConsoleApi } from '@/lib/api/types';
 import { DEFAULT_PROMPT } from '@/lib/build';
 import { countPolicies } from '@/lib/policy';
 import { ChatPanel } from './chat-panel';
+import { PolicyMatrixCard } from './policy-matrix-card';
 import { NewAppWorkspace } from './screen/new-app-workspace';
 import { ShipModal } from './screen/ship-modal';
+import { loadTabData } from './tab-data';
 import { TABS, isTab, loadTab } from './tab-registry';
 import { TabPlaceholder, WorkspaceShell } from './workspace-shell';
 
@@ -43,7 +45,13 @@ export async function Workspace({ id, tab, ship = false, prompt, created }: Work
   }
 
   const app = await orNotFound(api.getApp(id));
-  const [reports, thread, Tab] = await Promise.all([api.listReports(id), api.getBuilderThread(id, tab), loadTab(tab)]);
+  const [reports, thread, Tab, tabData, policy] = await Promise.all([
+    api.listReports(id),
+    api.getBuilderThread(id, tab),
+    loadTab(tab),
+    loadTabData(api, app, tab),
+    tab === 'access' ? api.getPolicy(id).catch(() => null) : null,
+  ]);
   const meta = TABS.find((t) => t.key === tab)!;
   const pending = reports[0]?.proposals.filter((p) => p.state === 'pending').length ?? 0;
 
@@ -55,7 +63,8 @@ export async function Workspace({ id, tab, ship = false, prompt, created }: Work
       chat={<ChatPanel appName={app.name} context={meta.context} messages={thread} onSend={sendBuilderMessageAction.bind(null, id, tab)} />}
       overlay={ship ? await shipModal(api, app, tab) : null}
     >
-      {Tab ? <Tab app={app} /> : <TabPlaceholder label={meta.label} />}
+      {Tab ? <Tab {...tabData} app={app} /> : <TabPlaceholder label={meta.label} />}
+      {policy && <PolicyMatrixCard policy={policy} />}
     </WorkspaceShell>
   );
 }

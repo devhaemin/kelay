@@ -97,6 +97,15 @@ export async function reopenProposalAction(id: string): Promise<ActionResult<Pro
   return run((api) => api.reopenProposal(Id.parse(id)));
 }
 
+/** One entry point for tabs that track a proposal's state rather than calling approve/reject. */
+export async function decideProposalAction(id: string, state: string): Promise<ActionResult<ProposalDecision>> {
+  return run((api) => {
+    const s = z.enum(['pending', 'approved', 'rejected']).parse(state);
+    const pid = Id.parse(id);
+    return s === 'approved' ? api.approveProposal(pid) : s === 'rejected' ? api.rejectProposal(pid) : api.reopenProposal(pid);
+  });
+}
+
 export async function requestGrantAction(input: z.input<typeof GrantRequest>): Promise<ActionResult<Grant>> {
   return run((api) => api.requestGrant(GrantRequest.parse(input)));
 }
