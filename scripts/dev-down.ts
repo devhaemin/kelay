@@ -3,7 +3,7 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { execa } from 'execa';
-import { ROOT } from './lib/config.ts';
+import { COMPOSE_FILES, ROOT } from './lib/config.ts';
 import { PID_FILE } from './lib/pid.ts';
 
 const alive = (pid: number) => {
@@ -25,4 +25,5 @@ if (existsSync(PID_FILE)) {
   rmSync(PID_FILE, { force: true });
 }
 
-await execa('docker', ['compose', 'down', ...process.argv.slice(2)], { cwd: ROOT, stdio: 'inherit' });
+// Both compose files, so the LLM gateway goes down with Postgres when `pnpm dev:up` started it.
+await execa('docker', ['compose', ...COMPOSE_FILES, 'down', ...process.argv.slice(2)], { cwd: ROOT, stdio: 'inherit' });

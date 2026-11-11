@@ -210,6 +210,7 @@ Postgres ports for parallel test containers: policy and SDK 54331, data-api 5433
 
 - All model calls go through the LLM gateway. They use the official Anthropic SDK (`@anthropic-ai/sdk`) with `baseURL = LLM_GATEWAY_URL` and the gateway key.
 - The default model is `claude-opus-5-5`; override it with env vars.
+- A service or node function without `LLM_GATEWAY_URL` and `LLM_GATEWAY_KEY` still starts. Its model calls fail with an error that begins "LLM gateway not configured". Locally, `pnpm dev:up` starts the gateway only when `ANTHROPIC_API_KEY` is set.
 - No consumer subscription logins anywhere.
 
 ## 13. Run orchestrator

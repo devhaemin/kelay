@@ -23,9 +23,15 @@ importers:
       '@kelay/policy':
         specifier: workspace:*
         version: link:packages/policy
+      '@kelay/runtime':
+        specifier: workspace:*
+        version: link:packages/runtime
       '@kelay/sdk':
         specifier: workspace:*
         version: link:packages/sdk
+      '@kelay/ticket-board-nodes':
+        specifier: workspace:*
+        version: link:examples/ticket-board-nodes
       '@kelay/tokens':
         specifier: workspace:*
         version: link:packages/tokens

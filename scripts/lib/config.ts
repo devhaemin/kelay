@@ -7,6 +7,8 @@ import { loadAppRegistry } from '@kelay/contracts/registry';
 
 export const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 export const TICKET_BOARD = 'ticket-board';
+/** `docker compose` arguments naming the root stack plus the local LLM gateway. */
+export const COMPOSE_FILES = ['-f', 'docker-compose.yml', '-f', 'infra/local/compose.services.yml'];
 
 export interface StackConfig {
   controlDatabaseUrl: string;
@@ -22,12 +24,18 @@ export interface StackConfig {
   dataApiUrl: string;
   controlApiUrl: string;
   mcpPublicBaseUrl: string;
+  runnerUrl: string;
+  /** RUNNER_LOCAL_NODES: `<app>=<module>` pairs the run orchestrator's local driver loads. */
+  runnerNodes: string;
   consoleUrl: string;
   devLoginUrl: string;
   /** Origin public app links are built from; the router that serves it is not part of the local stack. */
   appOrigin: string;
-  llmGatewayUrl: string;
+  /** Unset when nothing serves model calls: triage, reports and agent nodes then fail with "LLM gateway not configured". */
+  llmGatewayUrl: string | undefined;
   llmGatewayKey: string;
+  /** Whether `pnpm dev:up` starts LiteLLM itself: a provider key is set and no other gateway is named. */
+  startLlmGateway: boolean;
 }
 
 type Env = Record<string, string | undefined>;
@@ -41,12 +49,17 @@ const DEFAULTS = {
   DATA_API_URL: 'http://localhost:4002',
   CONTROL_API_URL: 'http://localhost:4003',
   MCP_PUBLIC_BASE_URL: 'http://localhost:4004',
+  RUNNER_URL: 'http://localhost:4007',
   CONSOLE_URL: 'http://localhost:3000',
   DEV_LOGIN_URL: 'http://localhost:4005',
   KELAY_APP_ORIGIN: 'http://localhost:8787',
-  LLM_GATEWAY_URL: 'http://localhost:4000',
   LLM_GATEWAY_KEY: 'sk-kelay-dev',
 } as const;
+
+/** Where the LiteLLM container of infra/local/compose.services.yml listens. */
+export const LOCAL_LLM_GATEWAY_URL = 'http://localhost:4000';
+/** Ticket Board's agent nodes, loaded by the run orchestrator's local driver. */
+const TICKET_BOARD_NODES = 'examples/ticket-board-nodes/src/index.ts';
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
@@ -57,6 +70,11 @@ export function configFromEnv(env: Env): StackConfig {
   const board = loadAppRegistry(absoluteAppsFile).apps[TICKET_BOARD];
   if (!board) throw new Error(`${absoluteAppsFile} has no ${TICKET_BOARD} app`);
   const issuer = trimSlash(get('KELAY_ID_ISSUER'));
+  // A gateway that runs elsewhere is used as it is. The local one exists only when there is a
+  // provider key for it to call with, whether or not .env names its address.
+  const named = env.LLM_GATEWAY_URL ? trimSlash(env.LLM_GATEWAY_URL) : undefined;
+  const namedGateway = named === LOCAL_LLM_GATEWAY_URL ? undefined : named;
+  const startLlmGateway = !!env.ANTHROPIC_API_KEY && namedGateway === undefined;
   return {
     controlDatabaseUrl: get('CONTROL_DATABASE_URL'),
     appDatabaseUrl: board.databaseUrl,
@@ -68,11 +86,14 @@ export function configFromEnv(env: Env): StackConfig {
     dataApiUrl: trimSlash(get('DATA_API_URL')),
     controlApiUrl: trimSlash(get('CONTROL_API_URL')),
     mcpPublicBaseUrl: trimSlash(get('MCP_PUBLIC_BASE_URL')),
+    runnerUrl: trimSlash(get('RUNNER_URL')),
+    runnerNodes: env.RUNNER_LOCAL_NODES || `${TICKET_BOARD}=${resolve(ROOT, TICKET_BOARD_NODES)}`,
     consoleUrl: trimSlash(get('CONSOLE_URL')),
     devLoginUrl: trimSlash(get('DEV_LOGIN_URL')),
     appOrigin: trimSlash(get('KELAY_APP_ORIGIN')),
-    llmGatewayUrl: get('LLM_GATEWAY_URL'),
+    llmGatewayUrl: namedGateway ?? (startLlmGateway ? LOCAL_LLM_GATEWAY_URL : undefined),
     llmGatewayKey: get('LLM_GATEWAY_KEY'),
+    startLlmGateway,
   };
 }
 
@@ -99,10 +120,13 @@ export function serviceEnv(cfg: StackConfig): Record<string, string> {
     DATA_API_URL: cfg.dataApiUrl,
     CONTROL_API_URL: cfg.controlApiUrl,
     MCP_PUBLIC_BASE_URL: cfg.mcpPublicBaseUrl,
+    RUNNER_URL: cfg.runnerUrl,
+    RUNNER_LOCAL_NODES: cfg.runnerNodes,
     CONSOLE_URL: cfg.consoleUrl,
     DEV_LOGIN_URL: cfg.devLoginUrl,
     KELAY_APP_ORIGIN: cfg.appOrigin,
-    LLM_GATEWAY_URL: cfg.llmGatewayUrl,
-    LLM_GATEWAY_KEY: cfg.llmGatewayKey,
+    // An empty value overrides one inherited from the shell, so "no gateway" is the same in every service.
+    LLM_GATEWAY_URL: cfg.llmGatewayUrl ?? '',
+    LLM_GATEWAY_KEY: cfg.llmGatewayUrl ? cfg.llmGatewayKey : '',
   };
 }

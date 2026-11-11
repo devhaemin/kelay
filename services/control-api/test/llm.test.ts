@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AnthropicLlm } from '../src/llm/anthropic.ts';
-import { LlmError } from '../src/llm/types.ts';
+import { LlmError, unconfiguredLlm } from '../src/llm/types.ts';
 
 interface Captured {
   url: string;
@@ -92,5 +92,15 @@ describe('AnthropicLlm', () => {
       fetch: gateway(() => ({ text: '{"valid": tr', stop_reason: 'max_tokens' })).fetch,
     });
     await expect(truncated.triage(app, { key: 'FB-3', text: 'x', route: null, source: 'chat' })).rejects.toThrow(LlmError);
+  });
+});
+
+describe('unconfiguredLlm', () => {
+  it('fails triage and reports with "LLM gateway not configured" and the missing variable', async () => {
+    const llm = unconfiguredLlm('LLM_GATEWAY_URL');
+    const triage = llm.triage(app, { key: 'FB-1', text: 'The board is slow', route: null, source: 'in-app' });
+    await expect(triage).rejects.toBeInstanceOf(LlmError);
+    await expect(triage).rejects.toThrow('LLM gateway not configured: LLM_GATEWAY_URL is not set');
+    await expect(llm.report({ app, date: '2026-11-11', tickets: [], stats: {} as never })).rejects.toThrow('LLM gateway not configured');
   });
 });

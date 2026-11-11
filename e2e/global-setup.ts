@@ -1,5 +1,5 @@
 // Brings up the whole platform for the e2e run: a disposable postgres:17 on port 54336 (contract
-// §11), migrations, the dev seed, and the four services as real processes on their own ports, so a
+// §11), migrations, the dev seed, and the five services as real processes on their own ports, so a
 // `pnpm dev:up` in another terminal is left alone. Everything is stopped afterwards.
 import { execFileSync } from 'node:child_process';
 import { createWriteStream, mkdirSync, writeFileSync } from 'node:fs';
@@ -28,7 +28,7 @@ declare module 'vitest' {
 
 const CONTAINER = 'kelay-pg-e2e';
 const PG_PORT = 54336;
-const PORTS = { identity: 4411, dataApi: 4412, controlApi: 4413, mcpGateway: 4414 };
+const PORTS = { identity: 4411, dataApi: 4412, controlApi: 4413, mcpGateway: 4414, runner: 4417 };
 const WORK_DIR = resolve(ROOT, 'node_modules/.cache/kelay/e2e');
 
 const docker = (...args: string[]) => execFileSync('docker', args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -92,6 +92,9 @@ export default async function setup(project: TestProject): Promise<() => Promise
       DATA_API_URL: `http://localhost:${PORTS.dataApi}`,
       CONTROL_API_URL: `http://localhost:${PORTS.controlApi}`,
       MCP_PUBLIC_BASE_URL: `http://localhost:${PORTS.mcpGateway}`,
+      RUNNER_URL: `http://localhost:${PORTS.runner}`,
+      // Ticket Board's real nodes with the model test double: the suite runs without a provider key.
+      RUNNER_LOCAL_NODES: `ticket-board=${resolve(ROOT, 'e2e/ticket-board-nodes.ts')}`,
       KELAY_CALLER_SECRET: 'e2e-caller-secret-0123456789abcdef-0123',
       BETTER_AUTH_SECRET: 'e2e-identity-secret-0123456789abcdef',
     });
