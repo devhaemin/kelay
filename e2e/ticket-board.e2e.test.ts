@@ -1,10 +1,12 @@
-// The Ticket Board path across the running services, nothing mocked: Kelay ID issues the tokens,
-// the Data API enforces RLS in Postgres, the Control API takes feedback, and the MCP gateway serves
-// the same rows to an assistant that went through the OAuth authorization-code flow.
+// The Ticket Board path across the running services: Kelay ID issues the tokens, the Data API
+// enforces RLS in Postgres, the Control API takes feedback, the MCP gateway serves the same rows to an
+// assistant that went through the OAuth authorization-code flow, and the run orchestrator executes
+// the app's agent graph for that assistant and for a connected app. Only the model is a stand-in:
+// the graph's nodes use the test double of e2e/ticket-board-nodes.ts, so no model is called.
 import * as oauth from 'oauth4webapi';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { beforeAll, describe, expect, inject, it } from 'vitest';
-import { audienceForApp } from '@kelay/contracts';
+import { CALLER_HEADER, audienceForApp } from '@kelay/contracts';
 import { KelayError, createKelayClient, sendFeedback } from '@kelay/sdk';
 import { remoteJwks, signCallerToken, verifyKelayToken } from '@kelay/tokens';
 import { BOARD, BUILDER, CONSENTS, CONSOLE_APP, FEEDBACK, FOREIGN_TICKET, HANDLE, ORG, PASSWORD, TEAM } from '../scripts/lib/data.ts';
@@ -19,6 +21,35 @@ const resource = `${config.mcpPublicBaseUrl}/${HANDLE}/${APP}/mcp`;
 /** What RLS should let Junho read: tickets assigned to him, plus the ones shared with the team. */
 const visibleToJunho = BOARD.filter((t) => t.assignee === 'junho' || t.shared);
 const titles = (rows: readonly object[]) => rows.map((r) => String((r as { title?: unknown }).title)).sort();
+/** What the overdue-summary graph should find for Junho: his visible tickets that are past due and not done. */
+const overdueForJunho = visibleToJunho.filter((t) => t.dueInDays <= 0 && t.status !== 'done');
+const NODES = ['collect', 'summarize', 'prioritize', 'review'];
+
+interface RecentRun {
+  action: string;
+  by: string;
+  status: string;
+  ms: number;
+  source: string;
+  caller: { kind: string; id: string | null; name: string | null };
+  nodes: { node: string; status: string; ms: number; attempt?: number; loop?: number }[] | null;
+}
+
+/** The newest recorded run of the action from this caller; the runner records a run right after it ends. */
+async function recordedRun(kind: string, id: string | null): Promise<RecentRun> {
+  let found: RecentRun | undefined;
+  await expect
+    .poll(
+      async () => {
+        const { metrics } = (await builderGet(`/v1/apps/${APP}/metrics`)).body;
+        found = (metrics.recent as RecentRun[]).find((r) => r.action === 'summarize_overdue' && r.caller.kind === kind && r.caller.id === id);
+        return !!found;
+      },
+      { timeout: 15_000, interval: 300 },
+    )
+    .toBe(true);
+  return found!;
+}
 
 let junho: KelayIdSession;
 let junhoToken: string;
@@ -316,5 +347,125 @@ describe('MCP gateway with a token from the OAuth authorization-code flow', () =
     expect(metrics.series.actions.filter((n: number) => n > 0).length).toBeGreaterThanOrEqual(13);
     expect(metrics.activeMembers).toMatchObject({ value: TEAM.length, total: TEAM.length });
     expect(metrics.recent[0]).toMatchObject({ action: 'tickets_update', status: 'blocked', by: users.junho, caller: { kind: 'agent', id: ASSISTANT_CLIENT_ID } });
+  });
+
+  it('runs the overdue summary for Junho’s assistant through the run orchestrator', async () => {
+    const mcp = new Client({ name: 'e2e-assistant', version: '1.0.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(resource), { authProvider: { token: async () => accessToken } }));
+    let output: { approved: boolean; summary: string; count: number; tickets: { id: string; title: string; rank: number; status: string }[] };
+    try {
+      const result = await mcp.callTool({ name: 'action_summarize_overdue', arguments: {} });
+      expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
+      output = result.structuredContent as typeof output;
+    } finally {
+      await mcp.close();
+    }
+
+    // The graph read tickets as Junho: his overdue ones, never Daniel's, never the other org's.
+    expect(overdueForJunho.length).toBeGreaterThan(0);
+    expect(output).toMatchObject({ approved: true, count: overdueForJunho.length });
+    expect(titles(output.tickets)).toEqual(titles(overdueForJunho));
+    expect(output.tickets.map((t) => t.rank)).toEqual(overdueForJunho.map((_, i) => i + 1));
+    expect(output.tickets.every((t) => t.status !== 'done')).toBe(true);
+    expect(output.summary).toContain(`${overdueForJunho.length} overdue ticket`);
+    for (const t of overdueForJunho) expect(output.summary).toContain(t.title);
+
+    // Recorded by the runner as a personal agent's run, with one entry per node.
+    const run = await recordedRun('agent', ASSISTANT_CLIENT_ID);
+    expect(run).toMatchObject({ by: users.junho, status: 'ok' });
+    expect(run.source).toMatch(/ \(MCP\)$/);
+    expect(run.nodes?.map((n) => [n.node, n.status, n.attempt, n.loop])).toEqual(NODES.map((node) => [node, 'ok', 1, 0]));
+    expect(run.ms).toBeGreaterThanOrEqual(run.nodes!.find((n) => n.node === 'collect')!.ms);
+  });
+});
+
+describe('Run orchestrator', () => {
+  const runner = async (method: string, path: string, body?: unknown, token = junhoToken) => {
+    const res = await fetch(`${config.runnerUrl}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${token}`, [CALLER_HEADER]: await auth.getCallerToken(), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return { status: res.status, body: (await res.json()) as any };
+  };
+
+  it('starts a run from the app’s own screen and answers with output and node trace', async () => {
+    const started = await runner('POST', `/v1/apps/${APP}/runs`, { graph: 'overdue-summary', action: 'summarize_overdue', input: {} });
+    expect(started.status).toBe(202);
+    const { run } = (await runner('GET', `/v1/runs/${started.body.runId}?wait=20`)).body;
+    expect(run).toMatchObject({ status: 'succeeded', app: APP, graph: 'overdue-summary', caller: { kind: 'user' }, error: null, costUsd: null });
+    expect(run.output).toMatchObject({ approved: true, count: overdueForJunho.length });
+    expect(run.trace.map((t: { node: string; status: string }) => [t.node, t.status])).toEqual(NODES.map((node) => [node, 'ok']));
+
+    const recorded = await recordedRun('user', null);
+    expect(recorded).toMatchObject({ by: users.junho, status: 'ok', source: 'App' });
+    expect(recorded.nodes).toHaveLength(NODES.length);
+
+    // Someone else cannot read Junho's run, and an unknown graph is not a run.
+    const mina = new KelayIdSession(config.issuer);
+    await mina.signIn(person('mina').email, PASSWORD);
+    expect((await runner('GET', `/v1/runs/${started.body.runId}`, undefined, await mina.appToken(APP))).status).toBe(404);
+    expect((await runner('POST', `/v1/apps/${APP}/runs`, { graph: 'no-such-graph' })).status).toBe(404);
+  });
+});
+
+describe('A2A between apps', () => {
+  const a2aUrl = `${config.mcpPublicBaseUrl}/${HANDLE}/${APP}/a2a`;
+  const message = { jsonrpc: '2.0', id: 1, method: 'SendMessage', params: { message: { messageId: 'e2e-1', role: 'ROLE_USER', parts: [{ text: 'Summarize my overdue tickets' }] } } };
+
+  /** A call from another app's runtime, acting for Junho with his Ticket Board token. */
+  async function callFrom(fromApp: string): Promise<{ status: number; body: any }> {
+    const res = await fetch(a2aUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'a2a-version': '1.0',
+        authorization: `Bearer ${junhoToken}`,
+        [CALLER_HEADER]: await signCallerToken({ kind: 'app-runtime', app: fromApp, env: 'prod' }, config.callerSecret),
+      },
+      body: JSON.stringify(message),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  it('advertises the endpoint on the agent card', async () => {
+    const card = await (await fetch(`${config.mcpPublicBaseUrl}/${HANDLE}/${APP}/.well-known/agent-card.json`)).json();
+    expect(card.supportedInterfaces).toEqual([{ url: a2aUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }]);
+    expect(card.skills.map((s: { id: string }) => s.id)).toContain('action_summarize_overdue');
+  });
+
+  it('refuses an app that has no connected link to Ticket Board', async () => {
+    const refused = await callFrom('team-wiki');
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({ error: { code: 'denied' } });
+
+    // A link that is only requested is still not a connection.
+    const requested = await builderCall('POST', '/v1/grants', { fromApp: 'docs', toApp: APP, kind: 'A2A', purpose: 'Pull overdue tickets into a status document' });
+    expect(requested.status).toBe(201);
+    expect(requested.body.grant.status).toBe('pending');
+    expect((await callFrom('docs')).status).toBe(403);
+  });
+
+  it('runs the graph for a connected app as the user, and records the app as the caller', async () => {
+    const requested = await builderCall('POST', '/v1/grants', { fromApp: 'team-wiki', toApp: APP, kind: 'A2A', purpose: 'Put overdue tickets into the weekly notes' });
+    expect(requested.status).toBe(201);
+    expect((await builderCall('POST', `/v1/grants/${requested.body.grant.id}/allow`)).body.grant.status).toBe('connected');
+
+    const { status, body } = await callFrom('team-wiki');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ jsonrpc: '2.0', id: 1, result: { message: { role: 'ROLE_AGENT', metadata: { action: 'summarize_overdue' } } } });
+    const output = body.result.message.parts[0].data;
+    expect(output).toMatchObject({ approved: true, count: overdueForJunho.length });
+    expect(titles(output.tickets)).toEqual(titles(overdueForJunho));
+
+    const run = await recordedRun('app', 'team-wiki');
+    expect(run).toMatchObject({ by: users.junho, status: 'ok', source: 'Team Wiki', caller: { kind: 'app', id: 'team-wiki', name: 'Team Wiki' } });
+    expect(run.nodes?.map((n) => n.node)).toEqual(NODES);
+
+    // The call is counted on the grant the App Graph shows; Docs is still refused.
+    await expect
+      .poll(async () => (await builderGet(`/v1/grants?app=${APP}`)).body.grants.find((g: { id: string }) => g.id === requested.body.grant.id)?.calls, { timeout: 10_000, interval: 300 })
+      .toBe(1);
+    expect((await callFrom('docs')).status).toBe(403);
   });
 });

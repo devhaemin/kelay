@@ -207,7 +207,11 @@ To change a port or a secret, copy [`.env.example`](.env.example) to `.env` and 
 - an access rule the builder saves and deploys through the Control API changes what the Data API returns to Junho;
 - feedback sent with `sendFeedback` from `@kelay/sdk` becomes a ticket that the builder sees in the Control API;
 - an assistant completes the OAuth authorization-code flow (PKCE, consent page), and the MCP gateway's `tickets_list` returns the same rows as the screen;
-- the builder sees those tool calls in the Control API (`GET /v1/apps/ticket-board/tool-calls`) next to the seeded ones.
+- the builder sees those tool calls in the Control API (`GET /v1/apps/ticket-board/tool-calls`) next to the seeded ones;
+- the assistant's `action_summarize_overdue` call runs the `overdue-summary` graph through the run orchestrator as Junho, returns his overdue tickets, and is recorded as a personal agent's run with one entry per node;
+- an A2A `SendMessage` from Team Wiki runs the same graph once the builder allows the link, and is refused for an app without a connected link.
+
+The graph's nodes are the real ones from `examples/ticket-board-nodes`; only the model is replaced by that package's test double ([`e2e/ticket-board-nodes.ts`](e2e/ticket-board-nodes.ts)), so the suite needs no provider key and calls no model.
 
 Service logs from the run are in `node_modules/.cache/kelay/e2e/services.log`.
 
@@ -218,8 +222,9 @@ Service logs from the run are in `node_modules/.cache/kelay/e2e/services.log`.
 | [`design/prototype/index.html`](design/prototype/index.html) | The canonical prototype, with sample data |
 | [`design/screenshots/`](design/screenshots) | Captures of the prototype, used on this page |
 | [`apps/console`](apps/console) | The console, a Next.js port of the prototype. [`PROTOTYPE_SYNC.md`](apps/console/PROTOTYPE_SYNC.md) maps each prototype screen to its console file |
-| [`packages/`](packages) | `sdk` is what Kelay apps import. `contracts`, `policy`, `graph` and `tokens` hold the shared types, the RLS generator, the agent graph compiler and the token helpers |
-| [`services/`](services) | `control-api`, `data-api`, `identity` (Kelay ID), `mcp-gateway` and `router` |
+| [`packages/`](packages) | `sdk` is what Kelay apps import, and `runtime` is what their agent nodes are written against. `contracts`, `policy`, `graph` and `tokens` hold the shared types, the RLS generator, the agent graph compiler and the token helpers |
+| [`services/`](services) | `control-api`, `data-api`, `identity` (Kelay ID), `mcp-gateway`, `runner` (the run orchestrator) and `router` |
+| [`examples/ticket-board-nodes`](examples/ticket-board-nodes) | Ticket Board's agent graph nodes (collect → summarize ∥ prioritize → review), written with `@kelay/runtime` |
 | [`examples/live-rls`](examples/live-rls) | A live demo of the trust boundary, where Postgres RLS decides what each person can see and move |
 | [`docs/infrastructure.md`](docs/infrastructure.md) | The infrastructure design |
 | [`docs/contracts.md`](docs/contracts.md) | The contracts that every service and package builds against |
