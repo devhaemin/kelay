@@ -192,6 +192,17 @@ describe('writes under RLS', () => {
     ]);
   });
 
+  it('denies a member inserting a row they could not read back (RETURNING needs read access)', async () => {
+    const hidden = await call({ op: 'insert', collection: 'tickets', values: { title: 'For bob', status: 'todo', assignee_id: 'bob' } }, { as: alice });
+    expect(hidden.status).toBe(403);
+    expect(hidden.body.error?.code).toBe('denied');
+    const shared = await call(
+      { op: 'insert', collection: 'tickets', values: { title: 'For bob', status: 'todo', assignee_id: 'bob', shared: true } },
+      { as: alice },
+    );
+    expect(shared.status).toBe(200);
+  });
+
   it('denies a guest insert', async () => {
     const r = await call({ op: 'insert', collection: 'tickets', values: { title: 'Nope', status: 'todo' } }, { as: gina });
     expect(r.status).toBe(403);
