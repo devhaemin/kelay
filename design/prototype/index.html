@@ -168,15 +168,36 @@
   .kpi .delta { font-size: 12px; }
   .up { color: var(--green); } .down { color: var(--red); }
   .two { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; margin-bottom: 16px; }
-  .graph-canvas { position: relative; height: 340px; background: radial-gradient(circle, #e4e2db 1px, transparent 1px) 0 0 / 18px 18px; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
-  .graph-canvas svg.edges { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .gnode { position: absolute; transform: translate(-50%, -50%); background: var(--surface); border: 1.5px solid var(--border); border-radius: 12px; padding: 8px 12px; min-width: 120px; box-shadow: 0 2px 8px rgba(0,0,0,.05); cursor: pointer; font-size: 12px; }
-  .gnode:hover, .gnode.sel { border-color: var(--accent); }
-  .gnode .t { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
-  .gnode .s { color: var(--muted); margin-top: 2px; }
-  .gnode.warn { border-color: #f0c27a; }
-  .gnode.err { border-color: #f0a3a3; }
   .node-detail { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .conn-row { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; cursor: pointer; }
+  .conn-row:last-child { border-bottom: none; }
+  .conn-row:hover { background: #fcfbf8; }
+  .conn-row .what { color: var(--muted); font-size: 12px; }
+
+  /* App Graph page */
+  .graph-page { display: grid; grid-template-columns: 1fr 320px; gap: 16px; margin-bottom: 16px; }
+  .app-graph { position: relative; height: 540px; background: radial-gradient(circle, #e4e2db 1px, transparent 1px) 0 0 / 18px 18px; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
+  .app-graph > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .app-graph > svg line { transition: opacity .15s; }
+  .anode { position: absolute; transform: translate(-50%, -50%); background: var(--surface); border: 1.5px solid #d6d3cb; border-radius: 12px; padding: 8px 12px 8px 8px; display: flex; gap: 8px; align-items: center; cursor: pointer; min-width: 150px; box-shadow: 0 2px 8px rgba(0,0,0,.05); transition: opacity .15s, box-shadow .15s; z-index: 2; }
+  .anode:hover { border-color: #b9b6ad; }
+  .anode .app-icon { width: 28px; height: 28px; font-size: 14px; border-radius: 8px; }
+  .anode .n { font-weight: 600; font-size: 13px; white-space: nowrap; }
+  .anode .s { font-size: 11px; color: var(--muted); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+  .anode.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .anode.identity { background: var(--accent-soft); border-color: var(--accent); border-radius: 999px; padding-right: 16px; }
+  .anode.identity .app-icon { background: var(--accent); color: #fff; border-radius: 50%; }
+  .anode.external { border-style: dashed; background: #fcfbf8; }
+  .anode.off .n, .anode.off .app-icon { opacity: .55; }
+  .elabel { position: absolute; transform: translate(-50%, -50%); font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: #3a3935; cursor: pointer; white-space: nowrap; z-index: 1; transition: opacity .15s; }
+  .elabel.pending { background: var(--amber-soft); color: var(--amber); border-color: #f3dcb0; }
+  .elabel.sel { border-color: var(--accent); color: var(--accent); }
+  .dim { opacity: .2; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); align-items: center; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 22px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
+  .proto-tag { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
+  .proto-tag.mcp { background: var(--accent-soft); color: var(--accent); }
+  .proto-tag.a2a { background: #f1eafe; color: var(--violet); }
   .kv { display: grid; grid-template-columns: 110px 1fr; gap: 8px 12px; font-size: 13px; }
   .kv dt { color: var(--muted); } .kv dd { margin: 0; }
   table { width: 100%; border-collapse: collapse; }
@@ -272,6 +293,8 @@
     .chat { display: none; }
     .two { grid-template-columns: 1fr; }
     .users-layout { grid-template-columns: 1fr; }
+    .graph-page { grid-template-columns: 1fr; }
+    .app-graph { height: 460px; overflow-x: auto; }
     .side-list { display: none; }
   }
 </style>
@@ -356,24 +379,35 @@ const USERS = [
   ['9a10…3e7c', 'jw.choi@gmail.com', 'google', 'Sep 22, 2026', '2 weeks ago', 'active', 'Pro'],
 ];
 
-const GRAPH = {
-  nodes: [
-    { id: 'in', x: 9, y: 50, t: 'Input', s: 'photo + brief', icon: 'bolt', runs: 612, lat: '—', err: 0 },
-    { id: 'plan', x: 29, y: 50, t: 'Planner', s: 'GPT · 2.1s avg', icon: 'sparkle', runs: 612, lat: '2.1s', err: 0.3 },
-    { id: 'write', x: 52, y: 26, t: 'Writer', s: 'Claude · 4.8s avg', icon: 'msg', runs: 608, lat: '4.8s', err: 0.5 },
-    { id: 'design', x: 52, y: 74, t: 'Designer', s: 'Gemini · 11.2s avg', icon: 'monitor', runs: 608, lat: '11.2s', err: 4.6, state: 'warn' },
-    { id: 'review', x: 74, y: 50, t: 'Reviewer', s: 'Claude · 1.9s avg', icon: 'check', runs: 590, lat: '1.9s', err: 0.2 },
-    { id: 'out', x: 92, y: 50, t: 'Page output', s: 'export / save', icon: 'ext', runs: 574, lat: '—', err: 0 },
-  ],
-  edges: [['in','plan',612],['plan','write',608],['plan','design',608],['write','review',605],['design','review',580],['review','out',574],['review','plan',38]],
+/* App graph: every app of this builder, connected over MCP / A2A, sharing one identity */
+const LINKS = [
+  { id: 'l1', from: 'detail-page', to: 'cardnews', kind: 'MCP', what: 'Reuse product copy and images for card news', status: 'connected', calls: 214, since: 'Oct 14' },
+  { id: 'l2', from: 'meeting-notes', to: 'lead-qualifier', kind: 'A2A', what: 'Send sales call notes to update lead scores', status: 'connected', calls: 31, since: 'Nov 2' },
+  { id: 'l3', from: 'cs-reply', to: 'meeting-notes', kind: 'MCP', what: 'Search meeting decisions when answering', status: 'connected', calls: 58, since: 'Oct 30' },
+  { id: 'l4', from: 'lead-qualifier', to: 'cs-reply', kind: 'A2A', what: 'Hand off qualified leads with open questions to support', status: 'pending', calls: 0, since: 'Nov 11' },
+  { id: 'l5', from: 'agents', to: 'detail-page', kind: 'MCP', what: 'Users run the app from their own AI assistant', status: 'connected', calls: 96, since: 'Oct 20' },
+  { id: 'l6', from: 'agents', to: 'cs-reply', kind: 'MCP', what: 'Users run the app from their own AI assistant', status: 'connected', calls: 41, since: 'Oct 25' },
+  { id: 'l7', from: 'agents', to: 'meeting-notes', kind: 'MCP', what: 'Users run the app from their own AI assistant', status: 'connected', calls: 12, since: 'Nov 5' },
+];
+const GPOS = {
+  id: { x: 50, y: 50 },
+  agents: { x: 12, y: 50 },
+  'detail-page': { x: 21, y: 21 },
+  cardnews: { x: 50, y: 8 },
+  'cs-reply': { x: 79, y: 21 },
+  invoice: { x: 22, y: 86 },
+  'lead-qualifier': { x: 50, y: 92 },
+  'meeting-notes': { x: 79, y: 84 },
 };
+const IDENTITY_USERS = 2140;
 
 /* ============ State ============ */
 const state = {
   device: 'pc',
   env: 'dev',
   chatOpen: true,
-  selectedNode: 'design',
+  graphSel: null,
+  lastFocus: null,
   proposals: PROPOSALS.map(() => 'pending'),
   highlight: null,
   pendingPrompt: null,
@@ -387,6 +421,7 @@ function parse() {
   const h = location.hash.replace(/^#\/?/, '');
   const [a, b, c] = h.split('/');
   if (a === 'apps') return { name: 'apps' };
+  if (a === 'graph') return { name: 'graph', focus: b };
   if (a === 'app') return { name: 'app', id: b || APPS[0].id, tab: c || 'screen' };
   return { name: 'home' };
 }
@@ -408,7 +443,7 @@ function topbar(active) {
     <nav class="topnav">
       <a href="#/" class="${active === 'home' ? 'active' : ''}">Build</a>
       <a href="#/apps" class="${active === 'apps' ? 'active' : ''}">My Apps</a>
-      <a href="#/apps">Docs</a>
+      <a href="#/graph" class="${active === 'graph' ? 'active' : ''}">App Graph</a>
     </nav>
     <div class="spacer"></div>
     <button class="btn ghost sm">Upgrade</button>
@@ -654,26 +689,8 @@ function lineChart() {
     <circle cx="${x(13)}" cy="${y(612)}" r="4" fill="#4f6bff"/>
   </svg>`;
 }
-function agentGraph() {
-  const N = Object.fromEntries(GRAPH.nodes.map(n => [n.id, n]));
-  const edges = GRAPH.edges.map(([a, b, c]) => {
-    const A = N[a], B = N[b];
-    if (a === 'review' && b === 'plan') {
-      return `<path d="M${A.x},${A.y + 8} C${A.x},96 ${B.x},96 ${B.x},${B.y + 8}" fill="none" stroke="#f0c27a" stroke-width=".35" stroke-dasharray="1 .8" vector-effect="non-scaling-stroke" style="stroke-width:1.5px"/>
-        <text x="${(A.x + B.x) / 2}" y="90" font-size="3" fill="#b7791f" text-anchor="middle">retry · ${c}</text>`;
-    }
-    const w = Math.max(1.5, c / 200);
-    return `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${b === 'design' || a === 'design' ? '#f0c27a' : '#c9cff8'}" vector-effect="non-scaling-stroke" style="stroke-width:${w}px"/>`;
-  }).join('');
-  const nodes = GRAPH.nodes.map(n => `
-    <div class="gnode ${n.state || ''} ${state.selectedNode === n.id ? 'sel' : ''}" data-node="${n.id}" style="left:${n.x}%;top:${n.y}%">
-      <div class="t">${ic(n.icon, 13)} ${n.t} ${n.err > 2 ? '<span class="pill amber" style="height:18px;font-size:10px">'+n.err+'% err</span>' : ''}</div>
-      <div class="s">${n.s}</div>
-    </div>`).join('');
-  return `<div class="graph-canvas"><svg class="edges" viewBox="0 0 100 100" preserveAspectRatio="none">${edges}</svg>${nodes}</div>`;
-}
-function tabMonitoring() {
-  const n = GRAPH.nodes.find(x => x.id === state.selectedNode) || GRAPH.nodes[0];
+function tabMonitoring(app) {
+  const conns = LINKS.filter(l => l.from === app.id || l.to === app.id);
   return `
   <div class="toolbar">
     <div class="seg"><button>24h</button><button class="on">14d</button><button>30d</button></div>
@@ -690,44 +707,212 @@ function tabMonitoring() {
   </div>
   <div class="two">
     <div class="card">
-      <div class="card-head"><h3>Agent graph</h3><span class="muted small">Live flow · last 24h</span><span class="spacer"></span><span class="small muted">Click a node</span></div>
-      ${agentGraph()}
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>${n.t}</h3>${n.err > 2 ? '<span class="pill amber">Degraded</span>' : '<span class="pill green">Healthy</span>'}</div>
-      <div class="node-detail">
-        <dl class="kv">
-          <dt>Runs (24h)</dt><dd>${n.runs}</dd>
-          <dt>Avg latency</dt><dd>${n.lat}</dd>
-          <dt>Error rate</dt><dd class="${n.err > 2 ? 'down' : ''}">${n.err}%</dd>
-          <dt>Model</dt><dd>${n.s.split(' · ')[0]}</dd>
-        </dl>
-        ${n.err > 2 ? `<div class="banner" style="margin:0;background:var(--amber-soft);border-color:#f3dcb0">
-          <span class="small">Timeouts on photos &gt; 8MB. Linked to <span class="ticket-ref">FB-115</span></span></div>` : ''}
-        <button class="btn sm" style="align-self:flex-start">View traces ${ic('ext', 13)}</button>
-      </div>
-    </div>
-  </div>
-  <div class="two">
-    <div class="card">
       <div class="card-head"><h3>Runs & errors</h3><span class="spacer"></span>
         <span class="small muted"><span style="color:#4f6bff">━</span> Runs &nbsp; <span style="color:#d64545">┅</span> Errors</span></div>
       <div style="padding:12px">${lineChart()}</div>
     </div>
     <div class="card">
-      <div class="card-head"><h3>Recent runs</h3></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Run</th><th>User</th><th>Status</th><th>Time</th></tr></thead>
-        <tbody>
-          <tr><td class="mono">run_8f21</td><td>mina.kim</td><td><span class="pill green">ok</span></td><td>18.2s</td></tr>
-          <tr><td class="mono">run_8f20</td><td>d.park</td><td><span class="pill red">timeout</span></td><td>60.0s</td></tr>
-          <tr><td class="mono">run_8f1f</td><td>shop.owner</td><td><span class="pill green">ok</span></td><td>21.7s</td></tr>
-          <tr><td class="mono">run_8f1e</td><td>hj.lee</td><td><span class="pill amber">retried</span></td><td>34.5s</td></tr>
-          <tr><td class="mono">run_8f1d</td><td>sungmin</td><td><span class="pill green">ok</span></td><td>16.9s</td></tr>
-        </tbody>
-      </table></div>
+      <div class="card-head"><h3>Connections</h3><span class="muted small">${conns.length}</span><span class="spacer"></span>
+        <a class="btn sm" href="#/graph/${app.id}">${ic('share', 13)} Open app graph</a></div>
+      ${conns.length ? conns.map(l => `
+        <a class="conn-row" href="#/graph/${l.id}">
+          <span class="proto-tag ${l.kind.toLowerCase()}">${l.kind}</span>
+          <div style="flex:1;min-width:0"><div>${nodeName(l.from)} → ${nodeName(l.to)}</div><div class="what">${l.what}</div></div>
+          ${l.status === 'pending' ? '<span class="pill amber">Pending</span>' : `<span class="small muted">${l.calls}/day</span>`}
+        </a>`).join('') : `<div class="node-detail muted">Not connected to other apps yet.</div>`}
     </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>Recent runs</h3></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Run</th><th>User</th><th>Status</th><th>Time</th><th>Called from</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">run_8f21</td><td>mina.kim</td><td><span class="pill green">ok</span></td><td>18.2s</td><td>App</td></tr>
+        <tr><td class="mono">run_8f20</td><td>d.park</td><td><span class="pill red">timeout</span></td><td>60.0s</td><td>App</td></tr>
+        <tr><td class="mono">run_8f1f</td><td>shop.owner</td><td><span class="pill green">ok</span></td><td>21.7s</td><td>Personal agent (MCP)</td></tr>
+        <tr><td class="mono">run_8f1e</td><td>hj.lee</td><td><span class="pill amber">retried</span></td><td>34.5s</td><td>Card News Maker (MCP)</td></tr>
+        <tr><td class="mono">run_8f1d</td><td>sungmin</td><td><span class="pill green">ok</span></td><td>16.9s</td><td>App</td></tr>
+      </tbody>
+    </table></div>
   </div>`;
+}
+
+/* ============ 4. App Graph (all apps) ============ */
+function nodeName(k) {
+  if (k === 'agents') return 'Personal agents';
+  if (k === 'id') return 'Keley ID';
+  return (APPS.find(a => a.id === k) || {}).name || k;
+}
+function graphRelated() {
+  const sel = state.graphSel;
+  if (!sel) return null;
+  if (sel.type === 'link') { const l = LINKS.find(x => x.id === sel.id); return { nodes: new Set([l.from, l.to]), links: new Set([l.id]), ident: new Set() }; }
+  const k = sel.id;
+  if (k === 'id') return { nodes: new Set(['id', ...APPS.map(a => a.id)]), links: new Set(), ident: new Set(APPS.map(a => a.id)) };
+  const ls = LINKS.filter(l => l.from === k || l.to === k);
+  const nodes = new Set([k, ...ls.flatMap(l => [l.from, l.to])]);
+  if (k !== 'agents') nodes.add('id');
+  return { nodes, links: new Set(ls.map(l => l.id)), ident: new Set(k !== 'agents' ? [k] : []) };
+}
+function edgeStyle(l) {
+  if (l.status === 'pending') return 'stroke="#e0a548" stroke-dasharray="6 5"';
+  return l.kind === 'A2A' ? 'stroke="#8b5cf6"' : 'stroke="#7c8ad6"';
+}
+function appGraph() {
+  const rel = graphRelated();
+  const sel = state.graphSel || {};
+  const P = GPOS;
+  const identEdges = APPS.map(a => `<line x1="${P.id.x}" y1="${P.id.y}" x2="${P[a.id].x}" y2="${P[a.id].y}" stroke="#c9c6bd" stroke-dasharray="2 4" vector-effect="non-scaling-stroke" style="stroke-width:1.5px" class="${rel && !rel.ident.has(a.id) ? 'dim' : ''}"/>`).join('');
+  const linkEdges = LINKS.map(l => `<line x1="${P[l.from].x}" y1="${P[l.from].y}" x2="${P[l.to].x}" y2="${P[l.to].y}" ${edgeStyle(l)} vector-effect="non-scaling-stroke" style="stroke-width:${l.status === 'pending' ? 2 : Math.max(1.5, Math.min(4, l.calls / 60))}px" class="${rel && !rel.links.has(l.id) ? 'dim' : ''}"/>`).join('');
+  const labels = LINKS.map(l => {
+    const mx = (P[l.from].x + P[l.to].x) / 2, my = (P[l.from].y + P[l.to].y) / 2;
+    const txt = l.status === 'pending' ? `${l.kind} · waiting for you` : `${l.kind} · ${l.calls}/day`;
+    return `<div class="elabel ${l.status === 'pending' ? 'pending' : ''} ${sel.type === 'link' && sel.id === l.id ? 'sel' : ''} ${rel && !rel.links.has(l.id) ? 'dim' : ''}" data-glink="${l.id}" style="left:${mx}%;top:${my}%">${txt}</div>`;
+  }).join('');
+  const node = (k, inner, cls = '') => `<div class="anode ${cls} ${sel.type === 'node' && sel.id === k ? 'sel' : ''} ${rel && !rel.nodes.has(k) ? 'dim' : ''}" data-gnode="${k}" style="left:${P[k].x}%;top:${P[k].y}%">${inner}</div>`;
+  const nodes = [
+    node('id', `<div class="app-icon">${ic('user', 14)}</div><div><div class="n">Keley ID</div><div class="s">${IDENTITY_USERS.toLocaleString()} people · one sign-in</div></div>`, 'identity'),
+    node('agents', `<div class="app-icon" style="background:var(--surface-2)">${ic('sparkle', 14)}</div><div><div class="n">Personal agents</div><div class="s">Claude · ChatGPT · Cursor</div></div>`, 'external'),
+    ...APPS.map(a => node(a.id, `<div class="app-icon" style="background:${a.color}">${a.emoji}</div><div><div class="n">${a.name}</div><div class="s">${a.status === 'live' ? '<span class="dot" style="color:var(--green)"></span>' : ''}${a.users.toLocaleString()} users${a.status !== 'live' ? ' · ' + a.status : ''}</div></div>`, a.status === 'live' ? '' : 'off')),
+  ].join('');
+  return `<div class="app-graph"><svg viewBox="0 0 100 100" preserveAspectRatio="none">${identEdges}${linkEdges}</svg>${labels}${nodes}</div>`;
+}
+function graphPanel() {
+  const sel = state.graphSel;
+  if (!sel) return `
+    <div class="card-head"><h3>Apps</h3><span class="spacer"></span><span class="small muted">Click to trace</span></div>
+    ${APPS.map(a => {
+      const n = LINKS.filter(l => l.from === a.id || l.to === a.id);
+      const p = n.filter(l => l.status === 'pending').length;
+      return `<div class="conn-row" data-gnode="${a.id}">
+        <div class="app-icon" style="background:${a.color};width:26px;height:26px;font-size:13px">${a.emoji}</div>
+        <div style="flex:1;min-width:0"><div>${a.name}</div><div class="what">${n.length ? n.length + ' connection' + (n.length > 1 ? 's' : '') : 'Not connected'}</div></div>
+        ${p ? '<span class="pill amber">1 pending</span>' : ''}
+      </div>`;
+    }).join('')}`;
+  if (sel.type === 'link') {
+    const l = LINKS.find(x => x.id === sel.id);
+    return `
+    <div class="card-head"><span class="proto-tag ${l.kind.toLowerCase()}">${l.kind}</span><h3>Connection</h3><span class="spacer"></span>${l.status === 'pending' ? '<span class="pill amber">Waiting for approval</span>' : '<span class="pill green">Connected</span>'}</div>
+    <div class="node-detail">
+      <div style="font-weight:600">${nodeName(l.from)} → ${nodeName(l.to)}</div>
+      <div class="muted" style="line-height:1.5">${l.what}</div>
+      <dl class="kv">
+        <dt>Protocol</dt><dd>${l.kind === 'MCP' ? 'MCP · tool call' : 'A2A · agent hand-off'}</dd>
+        <dt>${l.status === 'pending' ? 'Requested' : 'Approved'}</dt><dd>${l.since}</dd>
+        <dt>Calls / day</dt><dd>${l.status === 'pending' ? '—' : l.calls}</dd>
+        <dt>Runs as</dt><dd>The signed-in user</dd>
+      </dl>
+      <div class="small muted" style="line-height:1.5">Each call keeps the user’s own Keley ID. ${nodeName(l.to)}’s access rules still apply, so nobody gets more than they already have.</div>
+      ${l.status === 'pending'
+        ? `<div style="display:flex;gap:8px"><button class="btn sm" data-reject-link="${l.id}">Reject</button><button class="btn sm primary" data-allow-link="${l.id}">${ic('check', 14)} Allow</button></div>
+           <div class="small muted">Suggested by the Self-Improvement Agent in today’s report.</div>`
+        : `<div style="display:flex;gap:8px"><button class="btn sm">View calls</button><button class="btn sm" style="color:var(--red)">Pause</button></div>`}
+    </div>`;
+  }
+  const k = sel.id;
+  if (k === 'id') {
+    return `
+    <div class="card-head"><h3>Keley ID</h3><span class="spacer"></span><span class="pill blue">Identity</span></div>
+    <div class="node-detail">
+      <div class="muted" style="line-height:1.5">People sign in once and use every app you publish. Each app keeps its own roles and access rules.</div>
+      <dl class="kv">${APPS.map(a => `<dt>${a.emoji} ${a.name.split(' ')[0]}</dt><dd>${a.users.toLocaleString()} users</dd>`).join('')}</dl>
+      <div class="small muted">${IDENTITY_USERS.toLocaleString()} unique people · 38% use 2+ apps</div>
+    </div>`;
+  }
+  if (k === 'agents') {
+    const ls = LINKS.filter(l => l.from === 'agents');
+    return `
+    <div class="card-head"><h3>Personal agents</h3><span class="spacer"></span><span class="pill">External</span></div>
+    <div class="node-detail">
+      <div class="muted" style="line-height:1.5">Your users add your apps to their own AI assistant over MCP. Calls run with that user’s Keley ID.</div>
+      <dl class="kv"><dt>Apps exposed</dt><dd>${ls.length}</dd><dt>Calls / day</dt><dd>${ls.reduce((s, l) => s + l.calls, 0)}</dd><dt>Clients</dt><dd>Claude, ChatGPT, Cursor</dd></dl>
+    </div>`;
+  }
+  const a = APPS.find(x => x.id === k);
+  const ls = LINKS.filter(l => l.from === k || l.to === k);
+  return `
+  <div class="card-head"><div class="app-icon" style="background:${a.color};width:26px;height:26px;font-size:13px">${a.emoji}</div><h3>${a.name}</h3><span class="spacer"></span>${statusPill(a.status)}</div>
+  <div class="node-detail" style="padding-bottom:4px">
+    <dl class="kv"><dt>Users</dt><dd>${a.users.toLocaleString()}</dd><dt>Runs</dt><dd>${a.runs}</dd><dt>Connections</dt><dd>${ls.length}</dd></dl>
+    <div><div class="small muted" style="margin-bottom:6px">MCP endpoint</div>
+      <div class="url" style="height:30px;font-size:12px"><span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">https://${a.id}.${ME.handle}.keley.app/mcp</span><button class="btn sm ghost" style="height:22px">Copy</button></div></div>
+  </div>
+  ${ls.map(l => `
+    <div class="conn-row" data-glink="${l.id}">
+      <span class="proto-tag ${l.kind.toLowerCase()}">${l.kind}</span>
+      <div style="flex:1;min-width:0"><div>${l.from === k ? '→ ' + nodeName(l.to) : '← ' + nodeName(l.from)}</div><div class="what">${l.what}</div></div>
+      ${l.status === 'pending' ? '<span class="pill amber">Pending</span>' : ''}
+    </div>`).join('')}
+  <div class="node-detail" style="padding-top:8px"><a class="btn sm primary" href="#/app/${a.id}/screen" style="align-self:flex-start">Open app ${ic('ext', 13)}</a></div>`;
+}
+function viewGraph() {
+  const pending = LINKS.filter(l => l.status === 'pending');
+  const live = LINKS.filter(l => l.status === 'connected');
+  return `
+  ${topbar('graph')}
+  <main class="page" style="max-width:1320px">
+    <div class="page-title">
+      <div>
+        <h1>App Graph</h1>
+        <p>All ${APPS.length} of your apps, how they call each other, and the one identity your users share.</p>
+      </div>
+      <button class="btn">${ic('plus', 14)} Connect apps</button>
+    </div>
+    ${pending.map(l => `
+    <div class="banner" style="border-color:#f3dcb0;background:var(--amber-soft)">
+      <span class="proto-tag a2a">${l.kind}</span>
+      <span><b>${nodeName(l.from)}</b> wants to call <b>${nodeName(l.to)}</b> <span class="muted">— ${l.what.toLowerCase()}</span></span>
+      <span class="spacer"></span>
+      <button class="btn sm" data-glink="${l.id}">Details</button>
+      <button class="btn sm" data-reject-link="${l.id}">Reject</button>
+      <button class="btn sm primary" data-allow-link="${l.id}">Allow</button>
+    </div>`).join('')}
+    <div class="kpis">
+      <div class="kpi"><div class="label">Apps</div><div class="val">${APPS.length}</div><div class="delta muted">${APPS.filter(a => a.status === 'live').length} live</div></div>
+      <div class="kpi"><div class="label">Connections</div><div class="val">${live.length}</div><div class="delta muted">${pending.length} pending</div></div>
+      <div class="kpi"><div class="label">Cross-app calls / day</div><div class="val">${live.reduce((s, l) => s + l.calls, 0)}</div><div class="delta up">▲ 18%</div></div>
+      <div class="kpi"><div class="label">People (one Keley ID)</div><div class="val">${IDENTITY_USERS.toLocaleString()}</div><div class="delta muted">38% use 2+ apps</div></div>
+    </div>
+    <div class="graph-page">
+      <div class="card">
+        <div class="card-head">
+          <h3>Graph</h3><span class="spacer"></span>
+          <div class="legend">
+            <span><i style="border-color:#7c8ad6"></i>MCP</span>
+            <span><i style="border-color:#8b5cf6"></i>A2A</span>
+            <span><i style="border-color:#e0a548;border-top-style:dashed"></i>Pending</span>
+            <span><i style="border-color:#c9c6bd;border-top-style:dotted"></i>Identity</span>
+          </div>
+          ${state.graphSel ? `<button class="btn sm ghost" id="clearSel">Clear</button>` : ''}
+        </div>
+        ${appGraph()}
+      </div>
+      <div class="card">${graphPanel()}</div>
+    </div>
+    <div class="card table-wrap">
+      <div class="card-head"><h3>All connections</h3></div>
+      <table>
+        <thead><tr><th>From</th><th></th><th>To</th><th>What it does</th><th>Protocol</th><th>Calls / day</th><th>Since</th><th>Status</th></tr></thead>
+        <tbody>
+          ${LINKS.map(l => `
+          <tr data-glink="${l.id}" style="cursor:pointer">
+            <td>${nodeName(l.from)}</td><td class="muted">→</td><td>${nodeName(l.to)}</td>
+            <td class="muted">${l.what}</td><td><span class="proto-tag ${l.kind.toLowerCase()}">${l.kind}</span></td>
+            <td>${l.status === 'pending' ? '—' : l.calls}</td><td class="muted">${l.since}</td>
+            <td>${l.status === 'pending' ? '<span class="pill amber">Pending</span>' : '<span class="pill green">Connected</span>'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </main>`;
+}
+function bindGraph() {
+  document.querySelectorAll('[data-gnode]').forEach(b => b.onclick = () => { state.graphSel = { type: 'node', id: b.dataset.gnode }; render(); });
+  document.querySelectorAll('[data-glink]').forEach(b => b.onclick = () => { state.graphSel = { type: 'link', id: b.dataset.glink }; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  document.querySelectorAll('[data-allow-link]').forEach(b => b.onclick = (e) => { e.stopPropagation(); const l = LINKS.find(x => x.id === b.dataset.allowLink); l.status = 'connected'; l.calls = 0; l.since = 'Nov 11'; state.graphSel = { type: 'link', id: l.id }; toast(`${nodeName(l.from)} can now call ${nodeName(l.to)}`); render(); });
+  document.querySelectorAll('[data-reject-link]').forEach(b => b.onclick = (e) => { e.stopPropagation(); const i = LINKS.findIndex(x => x.id === b.dataset.rejectLink); LINKS.splice(i, 1); state.graphSel = null; toast('Connection request rejected'); render(); });
+  const c = document.getElementById('clearSel'); if (c) c.onclick = () => { state.graphSel = null; render(); };
 }
 
 /* --- Users tab --- */
@@ -877,7 +1062,7 @@ function tabFeedback() {
 
 /* --- Agent chat panel --- */
 function chatPanel(app, tab) {
-  const ctx = { screen: 'Screen · Key benefits section', monitoring: 'Monitoring · Designer node', users: 'Users', feedback: 'Feedback · Daily report' }[tab];
+  const ctx = { screen: 'Screen · Key benefits section', monitoring: 'Monitoring', users: 'Users', feedback: 'Feedback · Daily report' }[tab];
   let msgs;
   if (app.isNew && state.pendingPrompt) {
     msgs = `
@@ -930,7 +1115,6 @@ function chatPanel(app, tab) {
 
 function bindApp(r) {
   document.querySelectorAll('[data-dev]').forEach(b => b.onclick = () => { state.device = b.dataset.dev; render(); });
-  document.querySelectorAll('[data-node]').forEach(b => b.onclick = () => { state.selectedNode = b.dataset.node; render(); });
   document.querySelectorAll('[data-uf]').forEach(b => b.onclick = () => { state.userFilter = b.dataset.uf; render(); });
   document.querySelectorAll('[data-user]').forEach(b => b.onclick = () => { state.drawerUser = +b.dataset.user; render(); });
   const cd = document.getElementById('closeDrawer'); if (cd) cd.onclick = () => { state.drawerUser = null; render(); };
@@ -956,10 +1140,15 @@ function render() {
   if (r.name !== 'app') { state.drawerUser = null; }
   if (r.name === 'home') { root.innerHTML = viewHome(); bindHome(); }
   else if (r.name === 'apps') { root.innerHTML = viewApps(); bindApps(); }
+  else if (r.name === 'graph') {
+    if (r.focus && r.focus !== state.lastFocus) state.graphSel = { type: r.focus in GPOS ? 'node' : 'link', id: r.focus };
+    state.lastFocus = r.focus;
+    root.innerHTML = viewGraph(); bindGraph();
+  }
   else { root.innerHTML = viewApp(r); bindApp(r); }
 
   const cur = r.name === 'app' ? r.tab : r.name;
-  const links = [['home', '#/', '1 Home'], ['apps', '#/apps', '2 My Apps'], ['screen', '#/app/detail-page/screen', '3 Screen'], ['monitoring', '#/app/detail-page/monitoring', 'Monitoring'], ['users', '#/app/detail-page/users', 'Users'], ['feedback', '#/app/detail-page/feedback', 'Feedback']];
+  const links = [['home', '#/', '1 Home'], ['apps', '#/apps', '2 My Apps'], ['graph', '#/graph', 'App Graph'], ['screen', '#/app/detail-page/screen', '3 Screen'], ['monitoring', '#/app/detail-page/monitoring', 'Monitoring'], ['users', '#/app/detail-page/users', 'Users'], ['feedback', '#/app/detail-page/feedback', 'Feedback']];
   document.getElementById('proto').innerHTML = '<span>Screens</span>' + links.map(([k, h, l]) => `<a href="${h}" class="${cur === k ? 'on' : ''}">${l}</a>`).join('');
 }
 render();
