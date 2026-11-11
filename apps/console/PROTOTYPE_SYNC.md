@@ -40,4 +40,5 @@ against the commit above, and port the changes using the map below.
 - Access rules are read from the app's `PolicyMatrix`, one row per role and scope, not from hand-written sentences. Switching a rule off, changing the rows it applies to and "Add rule" (role, operation, rows) save the matrix as a draft; a banner offers to deploy it to Development. "Preview as" shows what the Control API reads from the app database as that member.
 - QA's "Run all checks" starts a real run and then ticks the results in; before the first run the tab offers the button on its own.
 - The ticket drawer can change a ticket's status and priority, and its conversation lists the replies the API has.
+- The account menu shows the builder's email under their name when the Control API knows it.
 - The Next.js dev indicator is off because it covers the Story bar.

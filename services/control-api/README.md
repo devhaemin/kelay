@@ -27,6 +27,38 @@ These existed before and are unchanged, except:
 - Version objects (`version`, `activeVersion`, `versions[]`) now also have `status: "draft" | "deployed"` and `callerTokenRef: string | null`.
 - `GET /v1/apps/:app/versions` lists deployed versions only.
 
+- `GET /v1/apps/:app/members` → each member is the `app_members` row plus the person's Kelay ID profile: `name`, `email`, `provider` (`"google" | "email" | "kakao" | "github"`), `createdAt` and `lastSignInAt` (the start of their newest session). All five are `null` for a user id Kelay ID has no account for. `q` matches the user id, name or email. `PATCH …/members/:userId` answers with the same shape.
+
+**`GET /v1/me`** (a console token, or an app token with that app's `x-kelay-caller`) → `200`
+
+```jsonc
+{ "me": { "userId", "name", "email", "provider", "createdAt", "lastSignInAt",   // the Kelay ID profile, as for members
+          "app": "kelay-console", "org": "orum", "role": "builder", "plan": "pro",   // from the token
+          "handle": "orum" } }                                                  // null until the person creates their first app
+```
+
+The profile comes from Kelay ID's `user`, `account` and `session` tables in the control DB, which the control API reads and never writes (`src/services/profiles.ts`).
+
+- `GET /v1/grants` → each grant now also has `callsPerDay`: the runs of the last 24 hours that the source app made in the target app. `calls` stays the running total reported through `POST /internal/v1/grants/calls`.
+
+### App Graph
+
+**`GET /v1/graph/overview`** → `200`
+
+```jsonc
+{
+  "overview": {
+    "people": 12,               // distinct members (not banned) across the builder's apps
+    "multiAppPeople": 10,       // of those, members of two or more apps
+    "callsPerDay": 61,          // runs of the last 24 hours that came from another app or a member's assistant
+    "callsDeltaPct": 18,        // those runs, last 7 days vs the 7 days before; null when there were none before
+    "agentCallsPerDay": { "ticket-board": 30 }   // assistant runs of the last 24 hours per app; apps with none are left out
+  }
+}
+```
+
+This is the console's `GraphOverview`. The apps, the links and the connected assistants on the graph come from `GET /v1/apps`, `GET /v1/grants` and `GET /v1/apps/:app/consents`.
+
 ### Access rules
 
 **`GET /v1/apps/:app/schema`** → `200`
@@ -47,7 +79,7 @@ These existed before and are unchanged, except:
 
 - The matrix is checked with `validatePolicy` from `@kelay/policy` against the dev schema. Unknown roles or collections answer `400 invalid_request` and the message lists every problem.
 - The rules are stored as a draft version: a copy of the active dev version with the new policy and the next version number. Saving again updates the same draft.
-- The next `POST /v1/apps/:app/envs/dev/deploy` turns the draft into the deployed version (same number). The rules reach the database when that version's migration is applied.
+- The next `POST /v1/apps/:app/envs/dev/deploy` turns the draft into the deployed version (same number). That deploy applies the rules to the dev database (see Deploy below).
 
 **`POST /v1/apps/:app/policy/preview`** with `{ "as": "<member userId>", "env"?: "dev" | "prod" }` (`env` defaults to `dev`) → `200`
 
@@ -190,6 +222,10 @@ Newest first. This is the console's `ToolCall` plus `userId`, `clientId`, `clien
 - `schema`, `policy` and `graphs` left out of the body carry over from the env's active version. For dev, rules saved with `PUT …/policy` take the place of the active policy.
 - Each deploy mints the app-runtime caller token for that app × env (contracts §4) and stores where it went as `version.callerTokenRef`. The `local` driver has nowhere to keep it, so the response carries it; the `aws` driver sets it as `KELAY_CALLER_TOKEN` on the app's functions. `POST /v1/apps/:app/publish` does the same when it creates a prod version.
 - The token lasts `CALLER_TOKEN_TTL_SECONDS` (one year by default). A new deploy mints a new one.
+- **App database.** Before the driver runs, a deploy applies the version's schema and access rules to the env's database: `migrationSql(schema, policy)` from `@kelay/policy`, through the `AppDatabaseMigrator` passed to `createControlApi` as `appMigrator` (default `PgAppDatabaseMigrator`). `POST /v1/apps/:app/publish` does the same for the prod database, also when it only moves the alias back to an older version, so the database always enforces the rules of the version that is live.
+  - The database is the env's `databaseUrl`. An env without one gets it from `APP_DATABASE_URL_TEMPLATE` (`{app}`, `{env}`); with neither, the migration is skipped and logged as `app_db_migration_skipped`. The same holds for the `local` and the `aws` driver.
+  - A version with a schema and no policy gets RLS with no policies: every row is denied. A version without a schema is not migrated.
+  - The migration connects as the login role in the URL, which must be the role the Data API connects with (contracts §3). When it fails, the deploy answers `500 internal` and no version is recorded.
 
 ## Routes for platform services
 

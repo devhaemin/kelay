@@ -101,6 +101,14 @@ describe('schema and access rules', () => {
     const shown = await h.req('GET', `/v1/apps/${APP}/schema`, { token: builder });
     expect(shown.body).toMatchObject({ schema: ticketBoardSchema, policy: membersOnly, version: { number: 2 }, draft: null });
 
+    // The deploy applied the saved rules to the dev database: members read their own tickets only and may delete them.
+    const memberPolicies = async () =>
+      (await boardSql(`SELECT policyname, qual FROM pg_policies WHERE schemaname = 'app' AND tablename = 'tickets' AND policyname LIKE '%\\_member' ORDER BY policyname`)).rows;
+    const applied = await memberPolicies();
+    expect(applied.map((p) => p.policyname)).toEqual(['tickets_create_member', 'tickets_delete_member', 'tickets_read_member', 'tickets_update_member']);
+    expect(applied.find((p) => p.policyname === 'tickets_read_member').qual).not.toContain('shared');
+    expect(h.migrations.at(-1)).toMatchObject({ app: APP, env: 'dev', policy: membersOnly });
+
     // A later build that sends nothing about access keeps the rules.
     const next = await h.req('POST', `/v1/apps/${APP}/envs/dev/deploy`, {
       token: builder,
@@ -125,11 +133,13 @@ describe('preview as a member', () => {
     for (const [userId, role, org] of [['mina', 'member', 'orum'], ['jiwoo', 'admin', 'orum'], ['gina', 'guest', 'orum'], ['zed', 'admin', 'acme']] as const) {
       await h.req('PUT', `/internal/v1/apps/${APP}/members/${userId}`, { caller: svc, body: { org, role } });
     }
-    // Back to the fixture policy, which is what the app database was migrated with.
+    // Back to the fixture policy; the deploy applies it to the app database again.
     await h.req('POST', `/v1/apps/${APP}/envs/dev/deploy`, {
       token: builder,
       body: { commit: 'e5', artifactUrl: `s3://kelay-builds/${APP}/e5.zip`, configVersion: 'cfg-e5', policy: ticketBoardPolicy },
     });
+    const { rows } = await boardSql(`SELECT policyname FROM pg_policies WHERE schemaname = 'app' AND policyname = 'tickets_delete_member'`);
+    expect(rows).toEqual([]);
   });
 
   it('counts what a member can read, update and delete through RLS, with the rows', async () => {

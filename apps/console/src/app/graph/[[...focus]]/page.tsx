@@ -24,7 +24,7 @@ export default async function GraphPage({ params }: { params: Promise<{ focus?: 
       <TopBar active="graph" me={me} signedIn={api.mode === 'http'} />
       <GraphView
         apps={apps}
-        grants={withAgentLinks(grants, consents, apps)}
+        grants={withAgentLinks(grants, consents, apps, overview?.agentCallsPerDay)}
         consents={consents}
         overview={overview}
         focus={focus?.[0] ? decodeURIComponent(focus[0]) : null}

@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, inject, it } from 'vitest';
 import { audienceForApp } from '@kelay/contracts';
 import { KelayError, createKelayClient, sendFeedback } from '@kelay/sdk';
 import { remoteJwks, signCallerToken, verifyKelayToken } from '@kelay/tokens';
-import { BOARD, BUILDER, CONSOLE_APP, FEEDBACK, FOREIGN_TICKET, HANDLE, ORG, PASSWORD, TEAM } from '../scripts/lib/data.ts';
+import { BOARD, BUILDER, CONSENTS, CONSOLE_APP, FEEDBACK, FOREIGN_TICKET, HANDLE, ORG, PASSWORD, TEAM } from '../scripts/lib/data.ts';
 import { KelayIdSession, redirectTarget } from '../scripts/lib/session.ts';
 import { ASSISTANT_CLIENT_ID, ASSISTANT_REDIRECT_URI } from './assistant.ts';
 
@@ -28,13 +28,25 @@ const auth = {
   getCallerToken: () => signCallerToken({ kind: 'app-runtime', app: APP, env: 'prod' }, config.callerSecret),
 };
 
-async function builderGet(path: string): Promise<{ status: number; body: any }> {
-  const session = new KelayIdSession(config.issuer);
-  await session.signIn(BUILDER.email, PASSWORD);
-  const token = await session.appToken(CONSOLE_APP);
-  const res = await fetch(`${config.controlApiUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+let builderToken: Promise<string> | undefined;
+
+async function builderCall(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
+  // One console token for the run; it outlives the suite (15 minutes).
+  builderToken ??= (async () => {
+    const session = new KelayIdSession(config.issuer);
+    await session.signIn(BUILDER.email, PASSWORD);
+    return session.appToken(CONSOLE_APP);
+  })();
+  const token = await builderToken;
+  const res = await fetch(`${config.controlApiUrl}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
   return { status: res.status, body: await res.json() };
 }
+
+const builderGet = (path: string) => builderCall('GET', path);
 
 beforeAll(async () => {
   junho = new KelayIdSession(config.issuer);
@@ -103,6 +115,44 @@ describe('Data API under Junho’s token', () => {
   });
 });
 
+describe('Access rules saved in the console reach the app database', () => {
+  const tickets = createKelayClient({ dataApiUrl: config.dataApiUrl, app: APP, ...auth }).collection('tickets');
+
+  /** Saves the rules as a draft, then deploys the build that is already in Development with them. */
+  async function saveAndDeploy(policy: unknown): Promise<void> {
+    const saved = await builderCall('PUT', `/v1/apps/${APP}/policy`, { policy });
+    expect(saved.status).toBe(200);
+    const detail = await builderGet(`/v1/apps/${APP}`);
+    const dev = detail.body.envs.find((e: { name: string }) => e.name === 'dev').activeVersion;
+    const deployed = await builderCall('POST', `/v1/apps/${APP}/envs/dev/deploy`, { commit: dev.commit, artifactUrl: dev.artifactUrl, configVersion: dev.configVersion });
+    expect(deployed.status).toBe(201);
+    expect(deployed.body.version).toMatchObject({ id: saved.body.draft.id, status: 'deployed' });
+  }
+
+  it('changes what Junho reads once the builder deploys a narrower rule, and back', async () => {
+    const original = (await builderGet(`/v1/apps/${APP}/schema`)).body.policy;
+    expect(original.member.tickets.read).toBe('mine_shared');
+    const shared = BOARD.find((t) => t.shared && t.assignee === 'seoyeon')!;
+    expect(titles(await tickets.list())).toEqual(titles(visibleToJunho));
+
+    try {
+      // Saving alone is a draft: the database still answers with the deployed rules.
+      const draft = await builderCall('PUT', `/v1/apps/${APP}/policy`, { policy: { ...original, member: { ...original.member, tickets: { ...original.member.tickets, read: 'mine' } } } });
+      expect(draft.status).toBe(200);
+      expect(titles(await tickets.list())).toEqual(titles(visibleToJunho));
+
+      await saveAndDeploy(draft.body.draft.policy);
+      expect(titles(await tickets.list())).toEqual(titles(BOARD.filter((t) => t.assignee === 'junho')));
+      expect(await tickets.get(shared.id)).toBeNull();
+    } finally {
+      await saveAndDeploy(original);
+    }
+    expect(titles(await tickets.list())).toEqual(titles(visibleToJunho));
+    expect(await tickets.get(shared.id)).toMatchObject({ title: shared.title });
+    expect((await builderGet(`/v1/apps/${APP}/schema`)).body).toMatchObject({ policy: original, draft: null });
+  });
+});
+
 describe('Feedback and the builder’s ticket board (Control API)', () => {
   const text = `The Done column is empty after I reload the board (e2e ${Date.now()})`;
   let ticketId: string;
@@ -129,6 +179,21 @@ describe('Feedback and the builder’s ticket board (Control API)', () => {
       reporter: users.junho,
       reporterOrg: ORG,
     });
+  });
+
+  it('shows the builder each member’s Kelay ID profile, and their own', async () => {
+    const { status, body } = await builderGet(`/v1/apps/${APP}/members`);
+    expect(status).toBe(200);
+    const row = body.members.find((m: { userId: string }) => m.userId === users.junho);
+    expect(row).toMatchObject({ role: 'member', name: person('junho').name, email: person('junho').email, provider: 'email' });
+    // Junho signed in at the start of this run.
+    expect(Date.now() - Date.parse(row.lastSignInAt)).toBeLessThan(10 * 60_000);
+    expect(Date.parse(row.createdAt)).toBeLessThanOrEqual(Date.parse(row.lastSignInAt));
+    expect(body.members.map((m: { name: string }) => m.name).sort()).toEqual(TEAM.map((p) => p.name).sort());
+    expect((await builderGet(`/v1/apps/${APP}/members?q=${encodeURIComponent('junho@')}`)).body.members.map((m: { userId: string }) => m.userId)).toEqual([users.junho]);
+
+    const me = await builderGet('/v1/me');
+    expect(me.body.me).toMatchObject({ userId: builderId, name: BUILDER.name, email: BUILDER.email, provider: 'email', handle: HANDLE, org: ORG, role: 'builder' });
   });
 
   it('lists the builder’s apps and keeps an app user off the builder routes', async () => {
@@ -216,5 +281,40 @@ describe('MCP gateway with a token from the OAuth authorization-code flow', () =
     } finally {
       await mcp.close();
     }
+  });
+
+  it('shows the builder those tool calls next to the seeded assistants’ calls', async () => {
+    type Call = { clientId: string; clientName: string | null; tool: string; result: string; userId: string; args: string };
+    // The gateway posts call records to the Control API in the background, a couple of seconds after the call.
+    let mine: Call[] = [];
+    let all: Call[] = [];
+    await expect
+      .poll(
+        async () => {
+          all = (await builderGet(`/v1/apps/${APP}/tool-calls?limit=500`)).body.toolCalls;
+          mine = all.filter((c) => c.clientId === ASSISTANT_CLIENT_ID);
+          return mine.length;
+        },
+        { timeout: 15_000, interval: 500 },
+      )
+      .toBe(2);
+    // Newest first.
+    expect(mine.map((c) => [c.tool, c.result, c.userId])).toEqual([
+      ['tickets_update', 'denied', users.junho],
+      ['tickets_list', 'ok', users.junho],
+    ]);
+    expect(mine[0]!.args).toContain(BOARD.find((t) => t.shared && t.assignee === 'seoyeon')!.id);
+
+    // Seeded history from the two assistants members connected, each tied to its consent.
+    const seeded = all.filter((c) => c.clientId !== ASSISTANT_CLIENT_ID);
+    expect(seeded.length).toBeGreaterThan(50);
+    expect(new Set(seeded.map((c) => c.clientName))).toEqual(new Set(CONSENTS.map((c) => c.clientName)));
+    expect(seeded.every((c) => (c as Call & { consentId: string | null }).consentId)).toBe(true);
+
+    const { metrics } = (await builderGet(`/v1/apps/${APP}/metrics?range=14d`)).body;
+    expect(metrics.series.actions).toHaveLength(14);
+    expect(metrics.series.actions.filter((n: number) => n > 0).length).toBeGreaterThanOrEqual(13);
+    expect(metrics.activeMembers).toMatchObject({ value: TEAM.length, total: TEAM.length });
+    expect(metrics.recent[0]).toMatchObject({ action: 'tickets_update', status: 'blocked', by: users.junho, caller: { kind: 'agent', id: ASSISTANT_CLIENT_ID } });
   });
 });

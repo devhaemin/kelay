@@ -79,7 +79,8 @@ describe('QA runs with the access-rule checks', () => {
       token: builder,
       body: { commit: 'b2', artifactUrl: `s3://kelay-builds/${APP}/b2.zip`, configVersion: 'cfg-b2', policy: blind },
     });
-    await sql(`DROP POLICY "projects_read_admin" ON app.projects`);
+    // The deploy applied the new rules, so the admin's read policy on projects is gone from the database.
+    expect((await sql(`SELECT 1 FROM pg_policies WHERE schemaname = 'app' AND policyname = 'projects_read_admin'`)).rowCount).toBe(0);
     const { qa } = (await h.req('POST', `/v1/apps/${APP}/qa/run`, { token: builder })).body;
     const admin = qa.roles.find((r: { role: string }) => r.role === 'admin').checks.filter((c: { collection: string }) => c.collection === 'projects');
     expect(admin.map((c: { name: string; status: string }) => [c.name, c.status])).toEqual([

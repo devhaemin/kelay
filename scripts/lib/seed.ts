@@ -1,7 +1,7 @@
 // Seeds the Ticket Board scenario through the services' own code paths, in process: accounts through
 // Kelay ID sign-up, apps, envs, versions, members, grants and consents through Control API routes.
-// Rows no route can produce with fixed content (feedback keys, model-written reports, app data) go
-// straight into the databases. Every step skips what already exists, so re-running is safe.
+// Two weeks of activity go through the ingest routes the services use. Rows no route can produce with
+// fixed content (feedback keys, model-written reports, app data) go straight into the databases. Every step skips what already exists, so re-running is safe.
 import pg from 'pg';
 import { CALLER_HEADER } from '@kelay/contracts';
 import { loadAppRegistry } from '@kelay/contracts/registry';
@@ -18,6 +18,7 @@ import {
 } from '@kelay/control-api';
 import { createIdentity } from '@kelay/identity';
 import { localJwks, signCallerToken } from '@kelay/tokens';
+import { ACTIVITY_DAYS, buildActivity } from './activity.ts';
 import { TICKET_BOARD, type StackConfig } from './config.ts';
 import {
   APPS,
@@ -42,6 +43,8 @@ import { KelayIdSession } from './session.ts';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
+/** The ingest routes take at most 500 records per request. */
+const INGEST_BATCH = 500;
 
 export interface SeedResult {
   builderId: string;
@@ -154,6 +157,19 @@ export async function seed(cfg: StackConfig, log: (line: string) => void = () =>
     for (const c of CONSENTS) {
       await call('service', 'PUT', '/internal/v1/consents', { userId: users[c.user], app: c.app, clientId: c.clientId, clientName: c.clientName, scopes: c.scopes });
     }
+
+    // ---- activity: after the consents, so each assistant call is tied to its connection
+    const activity = buildActivity(users, new Date());
+    const active = new Set((await pool.query<{ app: string }>('select distinct app from runs')).rows.map((r) => r.app));
+    const runs = activity.runs.filter((r) => !active.has(r.app));
+    const calls = activity.calls.filter((c) => !active.has(c.app));
+    for (let i = 0; i < runs.length; i += INGEST_BATCH) await call('service', 'POST', '/internal/v1/runs', { runs: runs.slice(i, i + INGEST_BATCH) });
+    for (let i = 0; i < calls.length; i += INGEST_BATCH) await call('service', 'POST', '/internal/v1/mcp-calls', { calls: calls.slice(i, i + INGEST_BATCH) });
+    log(
+      runs.length + calls.length > 0
+        ? `activity: ${runs.length} runs and ${calls.length} assistant tool calls over the last ${ACTIVITY_DAYS} days`
+        : 'activity: left as it is (the apps already have runs)',
+    );
 
     await seedFeedback(database, users, builderId);
     await seedAppData(cfg, users);

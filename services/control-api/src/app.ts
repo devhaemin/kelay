@@ -6,6 +6,7 @@ import type { AppEnv } from './auth.ts';
 import { createAppDatabases } from './appdb.ts';
 import { DEFAULT_CALLER_TOKEN_TTL_SECONDS, DEFAULT_DEDUPE_THRESHOLD, type ControlApiDeps, type Ctx } from './deps.ts';
 import { ApiError, errorBody, sendError } from './errors.ts';
+import { PgAppDatabaseMigrator } from './deploy/migrator.ts';
 import { createLogger } from './log.ts';
 import { appRoutes } from './routes/apps.ts';
 import { consentRoutes } from './routes/consents.ts';
@@ -13,6 +14,7 @@ import { deployRoutes } from './routes/deploy.ts';
 import { feedbackRoutes } from './routes/feedback.ts';
 import { grantRoutes } from './routes/grants.ts';
 import { internalRoutes } from './routes/internal.ts';
+import { meRoutes } from './routes/me.ts';
 import { monitoringRoutes } from './routes/monitoring.ts';
 import { policyRoutes } from './routes/policy.ts';
 import { publicRoutes } from './routes/public.ts';
@@ -29,6 +31,7 @@ export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
     ...deps,
     logger,
     appDbs,
+    appMigrator: deps.appMigrator ?? new PgAppDatabaseMigrator(),
     qa: deps.qa ?? new PolicyQaRunner(appDbs),
     dedupeThreshold: deps.dedupeThreshold ?? DEFAULT_DEDUPE_THRESHOLD,
     callerTokenTtlSeconds: deps.callerTokenTtlSeconds ?? DEFAULT_CALLER_TOKEN_TTL_SECONDS,
@@ -68,7 +71,7 @@ export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
     }
   });
 
-  for (const routes of [appRoutes, policyRoutes, monitoringRoutes, qaRoutes, feedbackRoutes, reportRoutes, grantRoutes, consentRoutes, deployRoutes, internalRoutes, publicRoutes]) {
+  for (const routes of [meRoutes, appRoutes, policyRoutes, monitoringRoutes, qaRoutes, feedbackRoutes, reportRoutes, grantRoutes, consentRoutes, deployRoutes, internalRoutes, publicRoutes]) {
     app.route('/', routes(ctx) as unknown as Hono<RootEnv>);
   }
   return app;

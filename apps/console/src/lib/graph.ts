@@ -40,9 +40,14 @@ export const mcpEndpointFor = (a: Pick<AppSummary, 'handle' | 'id'>): string => 
 
 /**
  * Personal-agent edges. When the Control API does not model them as grants, derive one edge per
- * app from members' MCP consents.
+ * app from members' MCP consents; `callsPerDay` is what their assistants called in the last day.
  */
-export function withAgentLinks(grants: readonly Grant[], consents: readonly Consent[], apps: readonly AppSummary[]): Grant[] {
+export function withAgentLinks(
+  grants: readonly Grant[],
+  consents: readonly Consent[],
+  apps: readonly AppSummary[],
+  callsPerDay: Readonly<Record<string, number>> = {},
+): Grant[] {
   if (grants.some((g) => g.from === AGENTS_NODE)) return [...grants];
   const byApp = new Map<string, Consent[]>();
   for (const c of consents) byApp.set(c.app, [...(byApp.get(c.app) ?? []), c]);
@@ -55,7 +60,7 @@ export function withAgentLinks(grants: readonly Grant[], consents: readonly Cons
       kind: 'MCP',
       what: `Members use ${nodeName(apps, app)} from their own AI assistant`,
       status: 'connected',
-      callsPerDay: 0,
+      callsPerDay: callsPerDay[app] ?? 0,
       since: cs.map((c) => c.grantedAt).sort()[0] ?? new Date(0).toISOString(),
       proposalId: null,
     }));

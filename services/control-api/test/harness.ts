@@ -9,6 +9,7 @@ import { createAppDatabases } from '../src/appdb.ts';
 import { CONSOLE_APP } from '../src/auth.ts';
 import { createDatabase, runMigrations, type Database } from '../src/db/client.ts';
 import { LocalDeployDriver, type DeployDriver } from '../src/deploy/driver.ts';
+import { PgAppDatabaseMigrator, type AppMigrationInput } from '../src/deploy/migrator.ts';
 import { createLogger } from '../src/log.ts';
 import type { AppInfo, Llm, ReportDraft, ReportRequest, TriageItem, TriageLabel } from '../src/llm/types.ts';
 import type { QaRunner } from '../src/qa/runner.ts';
@@ -69,6 +70,8 @@ export interface Harness {
   llm: FakeLlm;
   deploy: DeployDriver;
   queue: RecordingQueue;
+  /** Every app database migration a deploy or publish asked for, in order. */
+  migrations: AppMigrationInput[];
   databaseUrl: string;
   builder(sub: string, role?: string): Promise<string>;
   appUser(app: string, sub: string, extra?: { org?: string; role?: string; plan?: string }): Promise<string>;
@@ -98,9 +101,20 @@ export async function createHarness(opts: { deploy?: DeployDriver; dedupeThresho
   const deploy = opts.deploy ?? new LocalDeployDriver();
   const queue = new RecordingQueue(new PgImprovementQueue(database.db));
   const appDbs = createAppDatabases();
+  // The template below names databases of the compose stack. A test must never touch those, so only
+  // databases made by `appDatabase` are really migrated; every request is recorded.
+  const migrations: AppMigrationInput[] = [];
+  const ownDatabases = new Set<string>();
+  const pgMigrator = new PgAppDatabaseMigrator();
   const app = createControlApi({
     db: database.db,
     appDbs,
+    appMigrator: {
+      async migrate(input) {
+        migrations.push(input);
+        if (ownDatabases.has(input.databaseUrl)) await pgMigrator.migrate(input);
+      },
+    },
     auth: { issuer: signer.issuer, jwks: signer.verifier, callerSecret: CALLER_SECRET },
     llm,
     deploy,
@@ -119,6 +133,7 @@ export async function createHarness(opts: { deploy?: DeployDriver; dedupeThresho
     llm,
     deploy,
     queue,
+    migrations,
     databaseUrl,
     builder: (sub, role = 'builder') =>
       signer.sign({ sub, app: CONSOLE_APP, aud: audienceForApp(CONSOLE_APP), org: 'kelay', role, plan: 'pro' }),
@@ -142,6 +157,7 @@ export async function createHarness(opts: { deploy?: DeployDriver; dedupeThresho
       await a.query(`create database ${dbName}`);
       await a.end();
       const url = ADMIN_URL.replace(/\/[^/]*$/, `/${dbName}`);
+      ownDatabases.add(url);
       const client = new pg.Client({ connectionString: url });
       await client.connect();
       appDatabases.push({ name: dbName, client });

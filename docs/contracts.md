@@ -51,7 +51,7 @@ An app declares its roles, collections and actions. See `fixtures/ticket-board/s
 
 - **Field types:** `text`→`text`, `number`→`double precision`, `boolean`→`boolean`, `timestamp`→`timestamptz`, `uuid`→`uuid`, `json`→`jsonb`, `ref`→`uuid references app.<ref>(id)`. `required` means `not null`.
 - **`updated_at`** is set by a `BEFORE UPDATE` trigger on every collection table (`kelay.touch_updated_at()`), so it is correct whoever writes the row.
-- **Schema changes.** The migration from `@kelay/policy` (`migrationSql`) can be re-run. A field added to the schema later becomes `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. A `required` field added this way is nullable in the database, because existing rows have no value for it. Columns of removed fields stay.
+- **Schema changes.** The control API applies the migration from `@kelay/policy` (`migrationSql`) to an env's database on every deploy to it and on every publish. It can be re-run. A field added to the schema later becomes `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. A `required` field added this way is nullable in the database, because existing rows have no value for it. Columns of removed fields stay.
 - **Ownership.** `ownerField` names the text column that decides "mine" for the `mine` and `mine_shared` scopes. It defaults to `owner_id`; for tickets the fixture uses `assignee_id`.
 - **Actions** may name an agent graph (`graph`) that runs when the action is called.
 
@@ -160,6 +160,8 @@ The control API serves the same `AppRegistryEntry` to service callers at `GET /i
 The control API owns the migrations. Other services read only:
 
 - `app_members(app text, user_id text, org text, role text, plan text, status text, primary key (app, user_id))`
+
+In the other direction, the control API reads Kelay ID's `user`, `account` and `session` tables (better-auth's, in the same database) to show a member's name, email, sign-in provider and last sign-in. It never writes them.
 
 **Member writes go through the control API**, so the table has one writer:
 

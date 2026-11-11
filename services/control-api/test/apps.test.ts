@@ -71,7 +71,8 @@ describe('members', () => {
 
     const list = await h.req('GET', '/v1/apps/ticket-board/members', { token: jy });
     expect(list.body.members).toHaveLength(4);
-    expect(list.body.members[0]).toEqual({ app: 'ticket-board', userId: 'u1', org: 'orum', role: 'member', plan: 'free', status: 'active' });
+    // Kelay ID's tables are not in this database yet, so the profile fields are empty.
+    expect(list.body.members[0]).toEqual({ app: 'ticket-board', userId: 'u1', org: 'orum', role: 'member', plan: 'free', status: 'active', name: null, email: null, provider: null, createdAt: null, lastSignInAt: null });
     expect(list.body.counts).toEqual({ all: 4, active: 3, unconfirmed: 1, banned: 0, admin: 1 });
     expect((await h.req('GET', '/v1/apps/ticket-board/members?status=unconfirmed', { token: jy })).body.members.map((m: { userId: string }) => m.userId)).toEqual(['u5']);
   });
@@ -103,6 +104,43 @@ describe('members', () => {
     expect(bad.status).toBe(400);
     expect(bad.body.error.message).toContain('admin, member, guest');
     expect((await h.req('PATCH', '/v1/apps/ticket-board/members/u1', { token: jy, body: { role: 'guest' } })).status).toBe(200);
+  });
+
+  it('adds the Kelay ID profile to members and answers GET /v1/me', async () => {
+    const me = await h.req('GET', '/v1/me', { token: jy });
+    expect(me.body.me).toEqual({ userId: 'jeongyun', name: null, email: null, provider: null, createdAt: null, lastSignInAt: null, app: 'kelay-console', org: 'kelay', role: 'builder', plan: 'pro', handle: 'jeongyun' });
+
+    // The columns of better-auth's tables that the control API reads.
+    await h.database.pool.query(`
+      create table "user" (id text primary key, name text not null, email text not null, "createdAt" timestamptz not null);
+      create table account (id text primary key, "userId" text not null, "providerId" text not null, "createdAt" timestamptz not null);
+      create table session (id text primary key, "userId" text not null, "createdAt" timestamptz not null);
+      insert into "user" values ('u1', 'Mina Kim', 'mina@orum.test', '2026-10-01T00:00:00Z'), ('u2', 'Daniel Park', 'daniel@orum.test', '2026-10-02T00:00:00Z'), ('jeongyun', 'Jeongyun Lee', 'jeongyun@orum.test', '2026-09-01T00:00:00Z');
+      insert into account values ('a1', 'u1', 'credential', '2026-10-01T00:00:00Z'), ('a2', 'u1', 'github', '2026-10-05T00:00:00Z'), ('a3', 'u2', 'google', '2026-10-02T00:00:00Z');
+      insert into session values ('s1', 'u1', '2026-11-01T09:00:00Z'), ('s2', 'u1', '2026-11-10T09:00:00Z');`);
+
+    const list = await h.req('GET', '/v1/apps/ticket-board/members', { token: jy });
+    const byId = Object.fromEntries(list.body.members.map((m: { userId: string }) => [m.userId, m]));
+    expect(byId.u1).toMatchObject({ role: 'guest', name: 'Mina Kim', email: 'mina@orum.test', provider: 'email', createdAt: '2026-10-01T00:00:00.000Z', lastSignInAt: '2026-11-10T09:00:00.000Z' });
+    expect(byId.u2).toMatchObject({ name: 'Daniel Park', provider: 'google', lastSignInAt: null });
+    expect(byId.u3).toMatchObject({ name: null, email: null, provider: null });
+    expect(list.body.counts.all).toBe(list.body.members.length);
+
+    // Search covers the name and email as well as the id.
+    const found = async (q: string) => (await h.req('GET', `/v1/apps/ticket-board/members?q=${encodeURIComponent(q)}`, { token: jy })).body.members.map((m: { userId: string }) => m.userId);
+    expect(await found('mina')).toEqual(['u1']);
+    expect(await found('DANIEL@orum')).toEqual(['u2']);
+    expect(await found('u3')).toEqual(['u3']);
+
+    const patched = await h.req('PATCH', '/v1/apps/ticket-board/members/u2', { token: jy, body: { plan: 'team' } });
+    expect(patched.body.member).toMatchObject({ plan: 'team', name: 'Daniel Park', email: 'daniel@orum.test' });
+
+    expect((await h.req('GET', '/v1/me', { token: jy })).body.me).toMatchObject({ name: 'Jeongyun Lee', email: 'jeongyun@orum.test', provider: null, handle: 'jeongyun' });
+    // A person who builds nothing has no handle; an app token must come through its app's runtime.
+    expect((await h.req('GET', '/v1/me', { token: await h.builder('stranger') })).body.me).toMatchObject({ userId: 'stranger', handle: null });
+    expect((await h.req('GET', '/v1/me', { token: await h.appUser('ticket-board', 'u1') })).status).toBe(403);
+    expect((await h.req('GET', '/v1/me', { token: await h.appUser('ticket-board', 'u1'), caller: await h.appCaller('ticket-board') })).body.me).toMatchObject({ name: 'Mina Kim', app: 'ticket-board', role: 'member', handle: null });
+    expect((await h.req('GET', '/v1/me')).status).toBe(401);
   });
 
   it('gives new members a role the app declares', async () => {

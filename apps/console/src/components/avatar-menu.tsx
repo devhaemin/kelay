@@ -16,7 +16,10 @@ export function AvatarMenu({ me, signedIn }: { me: Builder; signedIn: boolean })
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content className="menu" align="end" sideOffset={8}>
-          <DropdownMenu.Label className="menu-label">{me.name}</DropdownMenu.Label>
+          <DropdownMenu.Label className="menu-label">
+            {me.name}
+            {me.email && <span style={{ display: 'block', marginTop: 2, textTransform: 'none', letterSpacing: 0 }}>{me.email}</span>}
+          </DropdownMenu.Label>
           <DropdownMenu.CheckboxItem className="menu-item" checked={story} onCheckedChange={setStory}>
             <span style={{ flex: 1 }}>Story mode</span>
             <DropdownMenu.ItemIndicator><Icon name="check" size={14} /></DropdownMenu.ItemIndicator>

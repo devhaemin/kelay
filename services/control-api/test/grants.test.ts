@@ -55,6 +55,45 @@ describe('grants', () => {
     expect(all.body.grants.map((g: { status: string }) => g.status)).toEqual(['pending']);
   });
 
+  it('counts a link’s calls of the last day and the graph’s totals from members and runs', async () => {
+    const svc = await h.service('identity');
+    // u1 uses two of Jeongyun's apps, u2 one, u3 is banned from the only one they had.
+    for (const [app, user] of [['ticket-board', 'u1'], ['team-wiki', 'u1'], ['ticket-board', 'u2'], ['docs', 'u3'], ['crm', 'u9']] as const) {
+      await h.req('PUT', `/internal/v1/apps/${app}/members/${user}`, { caller: svc, body: { org: 'orum' } });
+    }
+    await h.req('PATCH', '/v1/apps/docs/members/u3', { token: jy, body: { status: 'banned' } });
+
+    const hoursAgo = (n: number) => new Date(Date.now() - n * 60 * 60 * 1000).toISOString();
+    const fromBoard = { app: 'team-wiki', action: 'pages_append', status: 'ok', caller: { kind: 'app', id: 'ticket-board' } };
+    const fromAgent = { app: 'ticket-board', action: 'tickets_list', status: 'ok', caller: { kind: 'agent', id: 'https://claude.ai/client.json' } };
+    const recorded = await h.req('POST', '/internal/v1/runs', {
+      caller: await h.service('router'),
+      body: {
+        runs: [
+          { ...fromBoard, at: hoursAgo(1) }, { ...fromBoard, at: hoursAgo(5) }, { ...fromBoard, at: hoursAgo(30) },
+          { ...fromBoard, at: hoursAgo(9 * 24) }, { ...fromBoard, at: hoursAgo(10 * 24) },
+          { ...fromAgent, at: hoursAgo(2) }, { ...fromAgent, at: hoursAgo(3 * 24) }, { ...fromAgent, at: hoursAgo(8 * 24) },
+          // A member's own screen action and another builder's app do not count.
+          { app: 'ticket-board', action: 'tickets_update', status: 'ok', at: hoursAgo(1) },
+          { app: 'crm', action: 'contacts_list', status: 'ok', caller: { kind: 'app', id: 'docs' }, at: hoursAgo(1) },
+        ],
+      },
+    });
+    expect(recorded.body).toEqual({ recorded: 10, skipped: 0 });
+
+    const { grants } = (await h.req('GET', '/v1/grants', { token: jy })).body;
+    expect(grants.find((g: { fromApp: string; toApp: string }) => g.fromApp === 'ticket-board' && g.toApp === 'team-wiki')).toMatchObject({ kind: 'A2A', calls: 3, callsPerDay: 2 });
+    expect(grants.find((g: { toApp: string }) => g.toApp === 'docs')).toMatchObject({ callsPerDay: 0 });
+
+    const overview = await h.req('GET', '/v1/graph/overview', { token: jy });
+    expect(overview.status).toBe(200);
+    // This week: 3 app calls and 2 assistant calls; the week before: 2 and 1.
+    expect(overview.body.overview).toEqual({ people: 2, multiAppPeople: 1, callsPerDay: 3, callsDeltaPct: 67, agentCallsPerDay: { 'ticket-board': 1 } });
+
+    expect((await h.req('GET', '/v1/graph/overview', { token: other })).body.overview).toEqual({ people: 1, multiAppPeople: 0, callsPerDay: 1, callsDeltaPct: null, agentCallsPerDay: {} });
+    expect((await h.req('GET', '/v1/graph/overview', { caller: await h.service() })).status).toBe(401);
+  });
+
   it('lets only the target app owner decide, and only source app owners request', async () => {
     const fromOther = await h.req('POST', '/v1/grants', { token: other, body: { fromApp: 'crm', toApp: 'docs', kind: 'MCP', purpose: 'Link contracts' } });
     expect(fromOther.status).toBe(201);

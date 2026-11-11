@@ -177,6 +177,8 @@ pnpm dev:up
 
 The seed also adds board tickets, projects and comments to the app database, and feedback tickets, two improvement reports with proposals, app-to-app connections and assistant consents to the control DB. The data follows the prototype and lives in [`scripts/lib/data.ts`](scripts/lib/data.ts).
 
+So that Monitoring and the Agent tab are not empty, the seed records 14 days of activity as well: screen actions, tool calls from the two seeded assistants and calls between the connected apps ([`scripts/lib/activity.ts`](scripts/lib/activity.ts)). An app that already has runs is left alone. From then on the activity is real: the MCP gateway reports every tool call to the Control API (`CONTROL_API_URL`), so a call you make from an assistant shows up in the Agent tab a few seconds later.
+
 **Other commands.**
 
 | Command | What it does |
@@ -195,8 +197,10 @@ To change a port or a secret, copy [`.env.example`](.env.example) to `.env` and 
 
 - Junho signs in at Kelay ID and gets a Ticket Board token with his role;
 - the Data API returns only his own tickets and the shared ones, lets him move his own ticket, and denies a change to someone else's;
+- an access rule the builder saves and deploys through the Control API changes what the Data API returns to Junho;
 - feedback sent with `sendFeedback` from `@kelay/sdk` becomes a ticket that the builder sees in the Control API;
-- an assistant completes the OAuth authorization-code flow (PKCE, consent page), and the MCP gateway's `tickets_list` returns the same rows as the screen.
+- an assistant completes the OAuth authorization-code flow (PKCE, consent page), and the MCP gateway's `tickets_list` returns the same rows as the screen;
+- the builder sees those tool calls in the Control API (`GET /v1/apps/ticket-board/tool-calls`) next to the seeded ones.
 
 Service logs from the run are in `node_modules/.cache/kelay/e2e/services.log`.
 

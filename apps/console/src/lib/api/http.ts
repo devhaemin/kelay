@@ -161,12 +161,12 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     };
   }
 
-  // app_members rows (contracts §9); the Control API returns them as stored, without profile fields.
+  // app_members rows (contracts §9) with the person's Kelay ID profile: name, email, provider, sign-in times.
   function toMember(raw: Json): Member {
     const userId = str(raw.userId) || str(raw.user_id);
     return {
       userId,
-      // Without a profile the id stands in for the name; ids are long, so the head of one is shown.
+      // A member Kelay ID has no account for has no profile; the head of the id stands in for the name.
       name: str(raw.name) || str(raw.email) || (userId.length > 12 ? `${userId.slice(0, 8)}…` : userId),
       email: str(raw.email),
       role: str(raw.role, 'member'),
@@ -235,7 +235,7 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       kind: raw.kind === 'A2A' ? 'A2A' : 'MCP',
       what: str(raw.purpose),
       status: oneOf(raw.status, ['pending', 'connected', 'rejected'] as const, 'pending'),
-      callsPerDay: num(raw.calls),
+      callsPerDay: num(raw.callsPerDay),
       since: str(raw.decidedAt) || str(raw.createdAt),
       proposalId: null,
     };
@@ -395,10 +395,14 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     mode: 'http',
 
     async getMe() {
-      const me = await optional(request('GET', '/v1/me')); // PROVISIONAL
-      if (me) {
-        const b = obj(me.builder ?? me);
-        return { name: str(b.name) || str(b.handle), handle: str(b.handle), email: str(b.email), team: str(b.team) } satisfies Builder;
+      // 404 only from a Control API older than the route.
+      const body = await optional(request('GET', '/v1/me'));
+      if (body) {
+        const me = obj(body.me);
+        const handle = str(me.handle);
+        const email = str(me.email);
+        // The builder's org is the team their apps are for.
+        return { name: str(me.name) || handle || email || 'Builder', handle, email, team: str(me.org) } satisfies Builder;
       }
       const apps = await api.listApps();
       const handle = apps[0]?.handle ?? 'me';
@@ -506,8 +510,16 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     },
 
     async getGraphOverview() {
-      const body = await optional(request('GET', '/v1/graph/overview')); // PROVISIONAL
-      return body ? (obj(body.overview ?? body) as unknown as GraphOverview) : null;
+      // 404 only from a Control API older than the route.
+      const body = await optional(request('GET', '/v1/graph/overview'));
+      if (!body) return null;
+      const o = obj(body.overview);
+      return {
+        people: num(o.people),
+        multiAppPeople: num(o.multiAppPeople),
+        callsDeltaPct: typeof o.callsDeltaPct === 'number' ? o.callsDeltaPct : null,
+        agentCallsPerDay: Object.fromEntries(Object.entries(obj(o.agentCallsPerDay)).map(([app, n]) => [app, num(n)])),
+      } satisfies GraphOverview;
     },
 
     async listConsents(app) {
