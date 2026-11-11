@@ -20,7 +20,7 @@ import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { unavailableActionRunner, type ActionRunner } from './actions.ts';
-import { buildAgentCard, type OAuthEndpoints } from './agent-card.ts';
+import { buildAgentCard, kelayIdOAuthEndpoints, type OAuthEndpoints } from './agent-card.ts';
 import { appUrls, authenticate, challengeHeader, protectedResourceMetadata, type AppUrls, type AuthResult } from './auth.ts';
 import { createDataApi, type DataApi } from './data-api.ts';
 import { stdoutMeter, type MeterSink } from './metering.ts';
@@ -38,8 +38,8 @@ export interface GatewayConfig {
   callerSecret: string;
   /** MCP_RATE_PER_MIN, default 60. */
   ratePerMin?: number;
-  /** Kelay ID OAuth endpoints, advertised in the A2A agent card. */
-  oauth: OAuthEndpoints;
+  /** Kelay ID OAuth endpoints, advertised in the A2A agent card. Defaults to `kelayIdOAuthEndpoints(issuer)`. */
+  oauth?: OAuthEndpoints;
 }
 
 export interface GatewayDeps {
@@ -82,6 +82,19 @@ const A2A_UNSUPPORTED_OPERATION = -32004;
 
 const errorBody = (code: ErrorCode, message: string): ErrorResponse => ({ error: { code, message } });
 
+const ARGS_SUMMARY_LENGTH = 200;
+
+/** Arguments as the Monitoring and Agent tabs show them: compact JSON, cut short. */
+function argsSummary(args: Args): string {
+  let text: string;
+  try {
+    text = JSON.stringify(args) ?? '';
+  } catch {
+    text = '';
+  }
+  return text.length > ARGS_SUMMARY_LENGTH ? `${text.slice(0, ARGS_SUMMARY_LENGTH - 1)}…` : text;
+}
+
 const methodOf = (message: unknown): unknown =>
   typeof message === 'object' && message !== null && !Array.isArray(message) ? (message as { method?: unknown }).method : undefined;
 
@@ -100,9 +113,11 @@ export function createGateway(deps: GatewayDeps): Hono {
     now,
   });
 
-  const rateKeys = (app: string, caller: Caller): string[] => [`user:${app}:${caller.claims.sub}`, `client:${caller.claims.azp}`];
+  const oauth = config.oauth ?? kelayIdOAuthEndpoints(config.issuer);
+  // One assistant product serves many apps; a busy app must not use up the client's budget for the others.
+  const rateKeys = (app: string, caller: Caller): string[] => [`user:${app}:${caller.claims.sub}`, `client:${app}:${caller.claims.azp}`];
 
-  async function execute(app: PreparedApp, tool: PreparedTool, raw: Args, caller: Caller): Promise<CallToolResult> {
+  async function execute(app: PreparedApp, tool: PreparedTool, raw: Args, caller: Caller, outcome: { denied?: true }): Promise<CallToolResult> {
     const { def } = tool;
     const verdict = limiter.take(rateKeys(app.slug, caller));
     if (!verdict.ok) {
@@ -113,9 +128,9 @@ export function createGateway(deps: GatewayDeps): Hono {
     const args = checked.value;
     const { target } = def;
     if (target.kind === 'action') {
-      const outcome = await actions.run({ app: app.slug, action: target.action, input: args, claims: caller.claims, userToken: caller.token });
-      if (!outcome.ok) return toolError(outcome.message);
-      const { output } = outcome;
+      const ran = await actions.run({ app: app.slug, action: target.action, input: args, claims: caller.claims, userToken: caller.token });
+      if (!ran.ok) return toolError(ran.message);
+      const { output } = ran;
       const isObject = typeof output === 'object' && output !== null && !Array.isArray(output);
       return {
         content: [{ type: 'text', text: typeof output === 'string' ? output : JSON.stringify(output) }],
@@ -126,14 +141,16 @@ export function createGateway(deps: GatewayDeps): Hono {
     if (!result.ok && ['internal', 'unreachable', 'forbidden_caller'].includes(result.code)) {
       onError(new Error(`data api ${result.code} for ${app.slug}/${def.name}: ${result.message}`));
     }
+    if (!result.ok && result.code === 'denied') outcome.denied = true;
     return present(target.op, target.collection, args, result);
   }
 
   async function callTool(app: PreparedApp, tool: PreparedTool, args: Args, caller: Caller): Promise<CallToolResult> {
     const started = now();
     let result: CallToolResult;
+    const outcome: { denied?: true } = {};
     try {
-      result = await execute(app, tool, args, caller);
+      result = await execute(app, tool, args, caller, outcome);
     } catch (e) {
       onError(e as Error);
       result = toolError(INTERNAL_FAILURE);
@@ -146,6 +163,8 @@ export function createGateway(deps: GatewayDeps): Hono {
       tool: tool.def.name,
       ms: Math.round(now() - started),
       ok: !result.isError,
+      ...outcome,
+      args: argsSummary(args),
     });
     return result;
   }
@@ -167,7 +186,7 @@ export function createGateway(deps: GatewayDeps): Hono {
       entry,
       urls,
       version,
-      card: buildAgentCard({ schema: entry.schema, urls, version, oauth: config.oauth }),
+      card: buildAgentCard({ schema: entry.schema, urls, version, oauth }),
       mcp: createMcpHandler(
         (ctx) => {
           const caller = ctx.authInfo?.extra?.caller as Caller | undefined;
@@ -275,7 +294,7 @@ export function createGateway(deps: GatewayDeps): Hono {
     });
   });
 
-  http.notFound((c) => c.json(errorBody('invalid_request', 'Not found.'), 404));
+  http.notFound((c) => fail(c, 'not_found', 'Not found.'));
 
   return http;
 }

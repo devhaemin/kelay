@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import aslValidator from 'asl-validator';
-import type { GraphSpec, NodeInvocation } from '@kelay/contracts';
+import { NODE_FUNCTION_ARN_PLACEHOLDER, type GraphSpec, type NodeInvocation } from '@kelay/contracts';
 import {
   compileToAsl,
   DONE_STATE,
@@ -96,9 +96,15 @@ describe('compileToAsl', () => {
     expect((asl.States.collect as AslTask).Retry).toEqual([LAMBDA_TRANSIENT_RETRY]);
   });
 
-  it('rounds retry intervals up to whole seconds and applies ASL defaults', () => {
-    const m = compileToAsl({ name: 'g1', start: 'a', nodes: { a: { retry: { maxAttempts: 3, intervalSeconds: 0.2 } } } }, opts);
+  it('applies ASL retry defaults and rejects fractional intervals', () => {
+    const m = compileToAsl({ name: 'g1', start: 'a', nodes: { a: { retry: { maxAttempts: 3 } } } }, opts);
     expect((m.States.a as AslTask).Retry[1]).toEqual({ ErrorEquals: ['States.ALL'], MaxAttempts: 3, IntervalSeconds: 1, BackoffRate: 2 });
+    expect(() => compileToAsl({ name: 'g1', start: 'a', nodes: { a: { retry: { maxAttempts: 3, intervalSeconds: 0.2 } } } }, opts)).toThrow(GraphError);
+  });
+
+  it('keeps the node function placeholder for the control API to substitute', () => {
+    const m = compileToAsl(overdueSummaryGraph(), { ...opts, functionArn: NODE_FUNCTION_ARN_PLACEHOLDER });
+    expect((m.States.collect as AslTask).Arguments.FunctionName).toBe('${NodeFunctionArn}');
   });
 
   it('resolves a function ARN per node', () => {

@@ -24,7 +24,7 @@ export type {
   Scope,
   Where,
 } from '@kelay/contracts';
-export { CALLER_HEADER, HTTP_STATUS, RESERVED_COLUMNS, audienceForApp } from '@kelay/contracts';
+export { CALLER_HEADER, HTTP_STATUS, RESERVED_COLUMNS, USER_AUTHORIZATION_HEADER, audienceForApp } from '@kelay/contracts';
 
 export type {
   AnyRow,

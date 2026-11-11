@@ -103,6 +103,12 @@ export interface CallerClaims {
 
 export const CALLER_HEADER = 'x-kelay-caller';
 
+/**
+ * Where the router puts the caller's own `authorization` (the user token) on requests it signs with
+ * SigV4 for a Lambda function URL, since the signature occupies `authorization` there.
+ */
+export const USER_AUTHORIZATION_HEADER = 'x-kelay-authorization';
+
 // ---------------------------------------------------------------- §5 Data API
 
 const Scalar = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -160,6 +166,8 @@ export const ErrorCode = z.enum([
   'denied',
   'unknown_app',
   'unknown_collection',
+  'not_found',
+  'conflict',
   'rate_limited',
   'internal',
 ]);
@@ -176,6 +184,8 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   denied: 403,
   unknown_app: 404,
   unknown_collection: 404,
+  not_found: 404,
+  conflict: 409,
   rate_limited: 429,
   internal: 500,
 };
@@ -192,7 +202,34 @@ export const AppRegistry = z.object({ apps: z.record(AppSlug, AppRegistryEntry) 
 export type AppRegistry = z.infer<typeof AppRegistry>;
 export type AppRegistryEntry = z.infer<typeof AppRegistryEntry>;
 
-// ---------------------------------------------------------------- §7 agent graph
+// ---------------------------------------------------------------- §7 MCP · A2A gateway
+
+/**
+ * Scopes MCP clients may request from Kelay ID. `openid` is left out on purpose: with it the token's
+ * `aud` would also name the userinfo endpoint, and MCP tokens carry exactly the app's resource URL.
+ */
+export const MCP_SCOPES = ['offline_access'] as const;
+
+/** One metered tool call. The gateway logs it and, when CONTROL_API_URL is set, posts it to the control API. */
+export const McpCallRecord = z.object({
+  type: z.literal('mcp_call'),
+  app: AppSlug,
+  sub: z.string().min(1),
+  /** The MCP client id (`azp`). */
+  client: z.string().min(1),
+  tool: z.string().min(1).max(200),
+  ms: z.number().int().min(0),
+  ok: z.boolean(),
+  /** Set when the call failed because the user's role may not do it. */
+  denied: z.boolean().optional(),
+  /** The call's arguments as compact JSON, cut to 200 characters. */
+  args: z.string().max(200).optional(),
+  /** ISO-8601 time of the call; the receiver uses its own clock when absent. */
+  at: z.iso.datetime().optional(),
+});
+export type McpCallRecord = z.infer<typeof McpCallRecord>;
+
+// ---------------------------------------------------------------- §10 agent graph
 
 export const GraphNode = z.object({
   /** Next node, or two or more nodes that run in parallel and must share one `next` (the join). */
@@ -201,18 +238,36 @@ export const GraphNode = z.object({
   timeoutSeconds: z.number().int().positive().max(900).optional(),
   retry: z
     .object({
+      /** Retries after the first try (ASL `MaxAttempts`): 2 means up to 3 invocations. */
       maxAttempts: z.number().int().min(0).max(10),
-      intervalSeconds: z.number().positive().optional(),
+      /** Whole seconds before the first retry (ASL `IntervalSeconds`); defaults to 1. */
+      intervalSeconds: z.number().int().positive().optional(),
       backoffRate: z.number().min(1).optional(),
     })
     .optional(),
-  /** Output must contain `approved: boolean`. Not approved → back to `onReject`, at most `maxLoops` times. */
+  /**
+   * Output must be an object with `approved: boolean`. Not approved → back to `onReject` with that output as
+   * its input, at most `maxLoops` times for this review; after that the run continues as if approved.
+   */
   review: z.object({ onReject: Ident, maxLoops: z.number().int().min(1).max(5) }).optional(),
 });
 export type GraphNode = z.infer<typeof GraphNode>;
 
 export const GraphSpec = z.object({ name: AppSlug, start: Ident, nodes: z.record(Ident, GraphNode) });
 export type GraphSpec = z.infer<typeof GraphSpec>;
+
+/** Input of a graph execution (Step Functions `StartExecution` input, or `runLocal` options). */
+export interface GraphExecutionInput {
+  input?: unknown;
+  /** The user's Kelay ID token, handed to every node invocation. */
+  userToken: string;
+}
+
+/**
+ * Placeholder for the node function's alias ARN in compiled ASL handed to the control API
+ * (`POST /v1/apps/:app/envs/:env/deploy`, `graphs[].definition`); the deploy driver substitutes it.
+ */
+export const NODE_FUNCTION_ARN_PLACEHOLDER = '${NodeFunctionArn}';
 
 /** Payload every agent node function receives. */
 export interface NodeInvocation {
@@ -221,16 +276,18 @@ export interface NodeInvocation {
   env: 'dev' | 'prod';
   graph: string;
   node: string;
+  /** 1 on the first try, then 2, 3, … on retries. */
   attempt: number;
+  /** Review rejections so far in this run, across all review nodes; 0 until the first one. */
   loop: number;
   input: unknown;
   /** The user's Kelay ID token: nodes call the Data API as that user. */
   userToken: string;
 }
 
-// ---------------------------------------------------------------- §8 control DB shared tables
+// ---------------------------------------------------------------- §9 control DB shared tables
 
-/** Columns of `app_members` in the control DB (owned by control-api; read by identity). */
+/** Columns of `app_members` in the control DB. Only control-api writes it; identity reads it. */
 export interface AppMemberRow {
   app: string;
   user_id: string;
@@ -240,7 +297,7 @@ export interface AppMemberRow {
   status: 'active' | 'unconfirmed' | 'banned';
 }
 
-// ---------------------------------------------------------------- §9 local ports
+// ---------------------------------------------------------------- §11 local ports
 
 export const LOCAL_PORTS = {
   llmGateway: 4000,

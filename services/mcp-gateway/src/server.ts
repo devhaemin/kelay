@@ -4,7 +4,7 @@ import { LOCAL_PORTS } from '@kelay/contracts';
 import { loadAppRegistry } from '@kelay/contracts/registry';
 import { remoteJwks } from '@kelay/tokens';
 import { z } from 'zod';
-import { authorizationServerMetadataUrl, createGateway } from './index.ts';
+import { createControlApiMeter, createGateway, stdoutMeter, teeMeter } from './index.ts';
 
 const Env = z.object({
   PORT: z.coerce.number().int().positive().default(LOCAL_PORTS.mcpGateway),
@@ -15,6 +15,7 @@ const Env = z.object({
   KELAY_APPS_FILE: z.string().min(1),
   DATA_API_URL: z.url(),
   MCP_RATE_PER_MIN: z.coerce.number().int().positive().default(60),
+  CONTROL_API_URL: z.url().optional(),
 });
 const env = Env.parse(process.env);
 
@@ -22,8 +23,14 @@ const env = Env.parse(process.env);
 // pnpm reports that directory as INIT_CWD while the script itself runs in the package directory.
 const registry = loadAppRegistry(resolve(process.env.INIT_CWD ?? process.cwd(), env.KELAY_APPS_FILE));
 
-// Kelay ID is better-auth, which serves its OAuth endpoints under the same base path as its JWKS.
-const authBase = env.KELAY_ID_JWKS_URL.replace(/\/jwks\/?$/, '');
+// Call records always go to stdout; with CONTROL_API_URL they also reach the control API, which feeds Monitoring.
+const controlMeter = env.CONTROL_API_URL
+  ? createControlApiMeter({
+      controlApiUrl: env.CONTROL_API_URL,
+      callerSecret: env.KELAY_CALLER_SECRET,
+      onError: (error) => console.error(JSON.stringify({ type: 'meter_error', message: error.message })),
+    })
+  : undefined;
 
 const app = createGateway({
   config: {
@@ -32,14 +39,10 @@ const app = createGateway({
     dataApiUrl: env.DATA_API_URL,
     callerSecret: env.KELAY_CALLER_SECRET,
     ratePerMin: env.MCP_RATE_PER_MIN,
-    oauth: {
-      authorizationUrl: `${authBase}/oauth2/authorize`,
-      tokenUrl: `${authBase}/oauth2/token`,
-      metadataUrl: authorizationServerMetadataUrl(env.KELAY_ID_ISSUER),
-    },
   },
   registry,
   jwks: remoteJwks(env.KELAY_ID_JWKS_URL),
+  ...(controlMeter ? { meter: teeMeter(stdoutMeter, controlMeter.sink) } : {}),
 });
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
@@ -47,5 +50,5 @@ const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => server.close(() => process.exit(0)));
+  process.on(signal, () => server.close(() => void (controlMeter?.flush() ?? Promise.resolve()).finally(() => process.exit(0))));
 }

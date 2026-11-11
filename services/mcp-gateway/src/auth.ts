@@ -1,13 +1,10 @@
 // OAuth resource-server side of the gateway (contract §7): Kelay ID issues the tokens, the gateway verifies them
 // and tells unauthenticated clients where to find the authorization server (RFC 9728).
-import type { KelayClaims } from '@kelay/contracts';
+import { MCP_SCOPES, type KelayClaims } from '@kelay/contracts';
 import { verifyKelayToken, type VerifyOptions } from '@kelay/tokens';
 
-/** Scopes advertised to MCP clients, with the wording used where a client shows them. */
-export const SCOPES: Record<string, string> = {
-  openid: 'Sign in with your Kelay ID',
-  profile: 'See your name and profile picture',
-  email: 'See your email address',
+/** Scopes Kelay ID grants MCP clients (contract §7), with the wording used where a client shows them. */
+export const SCOPES: Record<(typeof MCP_SCOPES)[number], string> = {
   offline_access: 'Stay connected without signing in again',
 };
 

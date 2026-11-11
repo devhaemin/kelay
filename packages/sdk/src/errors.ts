@@ -26,6 +26,7 @@ const FALLBACK_BY_STATUS: Record<number, ErrorCode> = {
   401: 'unauthenticated',
   403: 'denied',
   404: 'unknown_app',
+  409: 'conflict',
   429: 'rate_limited',
 };
 

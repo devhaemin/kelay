@@ -12,7 +12,20 @@ Every service and package builds against these contracts. The types and validato
   - `test`: `vitest run`;
   - for services, `dev` (via `tsx watch`) and `build`.
 - **HTTP services** use Hono on `@hono/node-server`, and Zod (v4) for validation.
-- **Tests that need Postgres** run against a disposable `postgres:17` container on the port listed in §10, and must clean it up.
+- **Tests that need Postgres** run against a disposable `postgres:17` container on the port listed in §11, and must clean it up.
+- **Errors.** Every service answers failures with `{ error: { code, message } }`. `code` is an `ErrorCode` and the HTTP status is `HTTP_STATUS[code]`:
+
+  | Code | Status | Meaning |
+  |---|---|---|
+  | `invalid_request` | 400 | The request is malformed or fails validation. |
+  | `unauthenticated` | 401 | The user token is missing or invalid. |
+  | `forbidden_caller` | 403 | The caller token is missing, invalid or for another app. |
+  | `denied` | 403 | The user is known but may not do this. |
+  | `unknown_app`, `unknown_collection` | 404 | The app or collection does not exist. |
+  | `not_found` | 404 | Any other resource (ticket, version, proposal, route) does not exist. |
+  | `conflict` | 409 | The request is valid but the resource is not in a state that allows it. |
+  | `rate_limited` | 429 | A rate limit was reached. |
+  | `internal` | 500 | The service failed. |
 
 ## 1. Identifiers
 
@@ -37,6 +50,8 @@ An app declares its roles, collections and actions. See `fixtures/ticket-board/s
   ```
 
 - **Field types:** `text`→`text`, `number`→`double precision`, `boolean`→`boolean`, `timestamp`→`timestamptz`, `uuid`→`uuid`, `json`→`jsonb`, `ref`→`uuid references app.<ref>(id)`. `required` means `not null`.
+- **`updated_at`** is set by a `BEFORE UPDATE` trigger on every collection table (`kelay.touch_updated_at()`), so it is correct whoever writes the row.
+- **Schema changes.** The migration from `@kelay/policy` (`migrationSql`) can be re-run. A field added to the schema later becomes `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. A `required` field added this way is nullable in the database, because existing rows have no value for it. Columns of removed fields stay.
 - **Ownership.** `ownerField` names the text column that decides "mine" for the `mine` and `mine_shared` scopes. It defaults to `owner_id`; for tickets the fixture uses `assignee_id`.
 - **Actions** may name an agent graph (`graph`) that runs when the action is called.
 
@@ -46,8 +61,11 @@ An app declares its roles, collections and actions. See `fixtures/ticket-board/s
 
 **Install order.** Every app database first runs [`packages/contracts/sql/kelay_auth.sql`](../packages/contracts/sql/kelay_auth.sql). It provides:
 - `kelay.claims()`, `kelay.uid()`, `kelay.role()`, `kelay.org()`, `kelay.plan()`;
+- `kelay.touch_updated_at()`, the trigger function behind `updated_at` (§2);
 - the `app` schema;
 - the `kelay_runtime` role (NOLOGIN, NOBYPASSRLS).
+
+`migrationSql` then grants `kelay_runtime` to the role that runs the migration, when that role may not yet `SET ROLE` to it. Run the migration as the login role the Data API connects with: a managed database's admin user is not a superuser, and without the grant its `SET LOCAL ROLE kelay_runtime` fails.
 
 **Scope semantics.** Every policy also requires `org_id = kelay.org()`.
 
@@ -86,6 +104,9 @@ COMMIT;
 - Claims (`CallerClaims`): `{ kind: 'app-runtime', app, env }` or `{ kind: 'service', svc }`.
 - Platform services accept app-runtime callers only for their own `app`.
 - Use `@kelay/tokens`: `verifyKelayToken`, `signCallerToken`, `verifyCallerToken`. `createDevSigner` is for tests and local runs.
+- The control API mints an app's `app-runtime` caller token when it deploys a version (`POST /v1/apps/:app/envs/:env/deploy`). The version stores only a reference to it (`callerTokenRef`). The `local` deploy driver returns the token itself in the deploy response; the `aws` driver puts it in the functions' environment.
+
+**Behind the router.** The router signs requests to a Lambda function URL with SigV4, and the signature takes over `authorization`. On those requests the router moves the caller's own `authorization` (the user token) to **`x-kelay-authorization`** (`USER_AUTHORIZATION_HEADER`). It drops every inbound `x-kelay-*` header first, so an app can trust the ones it receives. App server code reads the user token with `userTokenFromHeaders` or `requireUserToken` from `@kelay/sdk/server`, which check `x-kelay-authorization` first and `authorization` second.
 
 ## 5. Data API — `POST /v1/apps/:app/query`
 
@@ -100,22 +121,29 @@ COMMIT;
   - An update or delete that changes 0 rows while a select with the same `where` sees ≥ 1 row also maps to `denied`. This is how a screen learns "you can't move that ticket" instead of silently doing nothing.
 - **App lookup.** Apps resolve through the registry (§6). In the MVP that is `KELAY_APPS_FILE`, loaded with `loadAppRegistry` from `@kelay/contracts/registry`.
 
+### Feedback — `POST /v1/apps/:app/feedback` (control API)
+
+Same two headers as the Data API. Body `{ text, route?, context? }`. The `201` response is `{ ticketId }`, where `ticketId` is the ticket's **key** (`FB-131`), numbered per app. It is the key builders see on the Feedback board and the one proposals cite in `refs`; the ticket's UUID never leaves the control API through this route.
+
 ## 6. App registry (MVP)
 
-`fixtures/apps.local.json` maps an app slug to its handle, `databaseUrl`, schema and policy (inline or by file). Later the control API serves the same data at `GET /internal/v1/apps/:app`, for service callers.
+`fixtures/apps.local.json` maps an app slug to its handle, `databaseUrl`, schema and policy (inline or by file).
+
+The control API serves the same `AppRegistryEntry` to service callers at `GET /internal/v1/apps/:app?env=dev|prod`. `env` defaults to `prod`. The entry comes from that environment's active version and database; an environment with no deployed schema or no database answers `unknown_app`.
 
 ## 7. MCP · A2A gateway
 
 - **Endpoint.** One MCP server per app at `POST {MCP_PUBLIC_BASE_URL}/:handle/:app/mcp` (Streamable HTTP). The resource URL is exactly that URL.
 - **Unauthenticated calls** get `401` with `WWW-Authenticate: Bearer resource_metadata="{MCP_PUBLIC_BASE_URL}/.well-known/oauth-protected-resource/:handle/:app/mcp"`. That metadata document (RFC 9728) lists Kelay ID as the authorization server.
 - **Tokens.** Verify `aud = resource URL`, `app` and `azp`.
+- **Scopes.** Kelay ID grants MCP clients one scope, `offline_access` (`MCP_SCOPES`), which allows refresh tokens. `openid`, `profile` and `email` are not offered: with `openid` the token's `aud` would also name the userinfo endpoint, and an MCP token must carry exactly the app's resource URL. What a client may do is decided by the user's role through RLS, not by scopes. The protected resource metadata and the agent card advertise the same list.
 - **Tools generated from `AppSchema`:**
   - `<collection>_list` (where, limit), `<collection>_get` (id), `<collection>_create`, `<collection>_update` (id + values), `<collection>_delete` (id);
   - `action_<name>` for each action.
   - Every tool calls the Data API with the user's token, so RLS applies.
-- **Limits.** A token bucket per `sub × app` and per `azp` client, set by `MCP_RATE_PER_MIN` (default 60).
-- **Metering.** One JSON log line per call: `{type:"mcp_call", app, sub, client, tool, ms, ok}`.
-- **A2A.** The gateway serves an A2A agent card at `/:handle/:app/.well-known/agent-card.json`.
+- **Limits.** Two token buckets, each set by `MCP_RATE_PER_MIN` (default 60): one per `sub × app` and one per `azp × app`. A request takes a token from both. The client bucket is per app so that one busy app cannot use up an assistant's budget for every other app.
+- **Metering.** One `McpCallRecord` per tool call, written as a JSON log line: `{type:"mcp_call", app, sub, client, tool, ms, ok, denied?, args?}`. `denied` is set when the user's role refused the call; `args` is the arguments as JSON, cut to 200 characters. When `CONTROL_API_URL` is set, the gateway also posts the records to `POST {CONTROL_API_URL}/internal/v1/mcp-calls` as `{ calls: McpCallRecord[] }` (at most 500 per request, each stamped with `at`). It sends them in batches in the background, so a slow control API never delays a tool call.
+- **A2A.** The gateway serves an A2A agent card at `/:handle/:app/.well-known/agent-card.json`. Its OAuth security scheme points at Kelay ID's real endpoints (§8).
 
 ## 8. Kelay ID
 
@@ -123,6 +151,7 @@ COMMIT;
   - `jwt`, with JWKS at `/api/auth/jwks` and issuer `KELAY_ID_ISSUER`;
   - `mcp` and `cimd`, for MCP OAuth 2.1 and the Client ID Metadata Document flow (MCP 2026-07-28; DCR off).
   - Social sign-in: Google, Kakao, GitHub, and email/password in dev.
+- **OAuth endpoints.** better-auth is mounted at `/api/auth`, so the endpoints are `{KELAY_ID_ISSUER}/api/auth/oauth2/authorize` and `{KELAY_ID_ISSUER}/api/auth/oauth2/token`. The RFC 8414 metadata is at `{KELAY_ID_ISSUER}/.well-known/oauth-authorization-server`.
 - **App-scoped token.** `POST /v1/token { app }` with a session returns `{ token }`. Its claims come from `app_members` (contract §9 below) and it uses `aud = kelay:app:<app>`.
 - **MCP tokens** are bound to the app's MCP resource URL and carry the same claims plus `azp`. Consent is per user × app × client.
 
@@ -132,11 +161,20 @@ The control API owns the migrations. Other services read only:
 
 - `app_members(app text, user_id text, org text, role text, plan text, status text, primary key (app, user_id))`
 
+**Member writes go through the control API**, so the table has one writer:
+
+- `PUT /internal/v1/apps/:app/members/:userId { org, role?, plan?, status? }` (service caller). Kelay ID calls it when a person first opens an app. It creates the member or updates it; `role` defaults to `member` when the app declares it, and a banned member stays banned.
+- `PATCH /v1/apps/:app/members/:userId` and `DELETE /v1/apps/:app/members/:userId` (builder token) change a role or plan, ban, unban or remove a member.
+
 ## 10. Agent graph (`GraphSpec`)
 
-- **Nodes.** A node lists `next` (one node, or several that run in parallel and share one join node), plus optional `retry`, `timeoutSeconds`, `model` and `review`.
-- **Review.** A node with `review` must output `{ approved: boolean }`. If not approved, the run goes back to `onReject`, at most `maxLoops` times.
+- **Nodes.** A node lists `next` (one node, or several that run in parallel and share one join node), plus optional `retry`, `timeoutSeconds`, `model` and `review`. Edges through `next` may not form a cycle; the only way back is a review.
+- **Parallel.** Branch nodes each point to the same join node, and the join receives their outputs as an array in `next` order. A branch cannot have a review. If one branch fails, the run fails.
+- **Retry.** `retry.maxAttempts` counts **retries after the first try**: `2` means up to three invocations. `intervalSeconds` is a whole number of seconds before the first retry (default 1), multiplied by `backoffRate` (default 2) for each later one. `NodeInvocation.attempt` is 1 on the first try. Lambda service errors are always retried, whatever the node says.
+- **Review.** A node with `review` must output an object with `approved: boolean`; anything else fails the run with `Kelay.InvalidReviewOutput`. When `approved` is false and this review has rejected fewer than `maxLoops` times, the run goes back to `onReject` with the review's output as its input. Once `maxLoops` rejections are used up, the run continues to `next` as if approved (or ends with the review output). `NodeInvocation.loop` is the number of rejections so far in the run, across all reviews, starting at 0.
+- **Execution input** (`GraphExecutionInput`): `{ input, userToken }`. `input` becomes the start node's input (`null` when absent). `userToken` is the user's Kelay ID token; every node receives it and calls the Data API as that user.
 - **Execution.** `@kelay/graph` compiles the spec to Step Functions ASL. Node tasks invoke the app's node Lambda with a `NodeInvocation` payload. It also runs the same spec locally for tests and dev.
+- **Deploying a graph.** Compile with `functionArn: '${NodeFunctionArn}'` (`NODE_FUNCTION_ARN_PLACEHOLDER`) and send the ASL as `graphs[].definition` to the control API's deploy route. The deploy driver replaces the placeholder with the node function's alias ARN for that environment.
 
 ## 11. Local ports
 
