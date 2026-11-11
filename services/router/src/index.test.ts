@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AwsV4Signer } from 'aws4fetch';
-import worker, { ROUTE_HEADER, USER_AUTHORIZATION_HEADER, type Env } from './index.ts';
+import worker, { type Env } from './index.ts';
+import { ROUTE_HEADER, USER_AUTHORIZATION_HEADER } from './forward.ts';
 import { matchRoute } from './routes.ts';
 
 const PROD_FN = 'https://prodfn123.lambda-url.ap-northeast-2.on.aws';
