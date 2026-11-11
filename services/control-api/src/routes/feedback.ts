@@ -146,7 +146,8 @@ export function feedbackRoutes(ctx: Ctx) {
         if (t.duplicateOf) throw new ApiError('conflict', `${t.key} is already merged`);
         duplicateOfId = target.id;
         await tx.update(tickets).set({ votes: sql`${tickets.votes} + ${t.votes}`, updatedAt: ctx.now() }).where(eq(tickets.id, target.id));
-        await tx.update(tickets).set({ duplicateOf: null }).where(eq(tickets.duplicateOf, t.id));
+        // Keep merges one level deep: tickets merged into this one now point at the target.
+        await tx.update(tickets).set({ duplicateOf: target.id }).where(eq(tickets.duplicateOf, t.id));
         await tx.insert(ticketEvents).values({ ticketId: target.id, kind: 'vote', actor, data: { from: t.key, votes: t.votes } });
       }
       const [row] = await tx
