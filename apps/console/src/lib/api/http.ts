@@ -235,7 +235,7 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       kind: raw.kind === 'A2A' ? 'A2A' : 'MCP',
       what: str(raw.purpose),
       status: oneOf(raw.status, ['pending', 'connected', 'rejected'] as const, 'pending'),
-      callsPerDay: num(raw.calls),
+      callsPerDay: num(raw.callsPerDay),
       since: str(raw.decidedAt) || str(raw.createdAt),
       proposalId: null,
     };
@@ -510,8 +510,16 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     },
 
     async getGraphOverview() {
-      const body = await optional(request('GET', '/v1/graph/overview')); // PROVISIONAL
-      return body ? (obj(body.overview ?? body) as unknown as GraphOverview) : null;
+      // 404 only from a Control API older than the route.
+      const body = await optional(request('GET', '/v1/graph/overview'));
+      if (!body) return null;
+      const o = obj(body.overview);
+      return {
+        people: num(o.people),
+        multiAppPeople: num(o.multiAppPeople),
+        callsDeltaPct: typeof o.callsDeltaPct === 'number' ? o.callsDeltaPct : null,
+        agentCallsPerDay: Object.fromEntries(Object.entries(obj(o.agentCallsPerDay)).map(([app, n]) => [app, num(n)])),
+      } satisfies GraphOverview;
     },
 
     async listConsents(app) {

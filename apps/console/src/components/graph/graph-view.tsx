@@ -105,7 +105,11 @@ export function GraphView({ apps, grants: initialGrants, consents, overview, foc
         <div className="kpi">
           <div className="label">Cross-app calls / day</div>
           <div className="val">{live.reduce((s, l) => s + l.callsPerDay, 0)}</div>
-          {overview?.callsDeltaPct != null && <div className="delta up">▲ {overview.callsDeltaPct}% this week</div>}
+          {overview?.callsDeltaPct != null && (
+            <div className={clsx('delta', overview.callsDeltaPct >= 0 ? 'up' : 'muted')}>
+              {overview.callsDeltaPct >= 0 ? '▲' : '▼'} {Math.abs(overview.callsDeltaPct)}% this week
+            </div>
+          )}
         </div>
         <div className="kpi">
           <div className="label">People (one Kelay ID)</div>

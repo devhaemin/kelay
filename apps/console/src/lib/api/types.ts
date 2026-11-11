@@ -320,6 +320,8 @@ export interface GraphOverview {
   people: number;
   multiAppPeople: number;
   callsDeltaPct: number | null;
+  /** Calls members' assistants made in the last day, by app. Absent when grants carry the assistant links themselves. */
+  agentCallsPerDay?: Record<string, number>;
 }
 
 export type ChatPart = { kind: 'text'; text: string } | { kind: 'step'; text: string; done: boolean };

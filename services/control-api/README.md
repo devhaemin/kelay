@@ -39,6 +39,26 @@ These existed before and are unchanged, except:
 
 The profile comes from Kelay ID's `user`, `account` and `session` tables in the control DB, which the control API reads and never writes (`src/services/profiles.ts`).
 
+- `GET /v1/grants` → each grant now also has `callsPerDay`: the runs of the last 24 hours that the source app made in the target app. `calls` stays the running total reported through `POST /internal/v1/grants/calls`.
+
+### App Graph
+
+**`GET /v1/graph/overview`** → `200`
+
+```jsonc
+{
+  "overview": {
+    "people": 12,               // distinct members (not banned) across the builder's apps
+    "multiAppPeople": 10,       // of those, members of two or more apps
+    "callsPerDay": 61,          // runs of the last 24 hours that came from another app or a member's assistant
+    "callsDeltaPct": 18,        // those runs, last 7 days vs the 7 days before; null when there were none before
+    "agentCallsPerDay": { "ticket-board": 30 }   // assistant runs of the last 24 hours per app; apps with none are left out
+  }
+}
+```
+
+This is the console's `GraphOverview`. The apps, the links and the connected assistants on the graph come from `GET /v1/apps`, `GET /v1/grants` and `GET /v1/apps/:app/consents`.
+
 ### Access rules
 
 **`GET /v1/apps/:app/schema`** → `200`

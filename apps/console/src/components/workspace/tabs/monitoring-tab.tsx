@@ -80,7 +80,7 @@ export default function MonitoringTab({
             <Delta value={metrics.actionsToday.deltaPct} suffix="%" />
           </Kpi>
           <Kpi label="Screen errors (7d)" value={String(metrics.screenErrors7d.value)}>
-            <div className="delta muted">{metrics.screenErrors7d.note ?? 'None reached members'}</div>
+            <div className="delta muted">{metrics.screenErrors7d.note ?? (metrics.screenErrors7d.value === 0 ? 'None reached members' : 'Actions that failed on a screen')}</div>
           </Kpi>
           <Kpi label="Agent actions today" value={metrics.agentActionsToday.toLocaleString('en')}>
             <div className="delta muted">via members’ AI assistants</div>

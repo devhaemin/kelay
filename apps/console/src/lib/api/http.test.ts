@@ -86,6 +86,17 @@ describe('Control API client', () => {
     expect(unknown).toMatchObject({ name: 'zzzzzzzz…', email: '', provider: null, lastSignInAt: null });
   });
 
+  it('reads the graph overview and each link’s calls of the last day', async () => {
+    const { api } = fakeControlApi({
+      'GET /v1/graph/overview': () => ({ json: { overview: { people: 5, multiAppPeople: 5, callsPerDay: 80, callsDeltaPct: null, agentCallsPerDay: { 'ticket-board': 23 } } } }),
+      'GET /v1/grants': () => ({ json: { grants: [{ id: 'g1', fromApp: 'ticket-board', toApp: 'docs', kind: 'MCP', purpose: 'Attach documents', status: 'connected', calls: 380, callsPerDay: 36, createdAt: '2026-11-01T00:00:00Z', decidedAt: '2026-11-02T00:00:00Z' }] } }),
+    });
+    expect(await api.getGraphOverview()).toEqual({ people: 5, multiAppPeople: 5, callsDeltaPct: null, agentCallsPerDay: { 'ticket-board': 23 } });
+    expect(await api.listGrants()).toMatchObject([{ id: 'g1', from: 'ticket-board', to: 'docs', callsPerDay: 36, since: '2026-11-02T00:00:00Z' }]);
+    // A Control API without the route: the graph falls back to what the apps and links say.
+    expect(await fakeControlApi({}).api.getGraphOverview()).toBeNull();
+  });
+
   it('names the builder after their handle when the Control API has no /v1/me', async () => {
     const { api } = fakeControlApi({ 'GET /v1/apps': () => ({ json: { apps: [appView] } }) });
     expect(await api.getMe()).toEqual({ name: 'orum', handle: 'orum', email: '', team: '' });

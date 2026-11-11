@@ -112,7 +112,9 @@ export function buildActivity(users: Record<TeamKey, string>, now: Date): Activi
   const calls: McpCallRecord[] = [];
   const today = Math.floor((now.getTime() + KST) / DAY) * DAY - KST;
 
-  for (let d = ACTIVITY_DAYS - 1; d >= 0; d--) {
+  // Monitoring charts UTC days, and a Seoul day starts nine hours before the UTC day of the same date,
+  // so one more Seoul day is needed to reach the oldest of the chart's 14 buckets.
+  for (let d = ACTIVITY_DAYS; d >= 0; d--) {
     const midnight = today - d * DAY;
     const weekday = new Date(midnight + KST).getUTCDay();
     const weekend = weekday === 0 || weekday === 6;
