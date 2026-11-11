@@ -1,10 +1,10 @@
 'use client';
 
 import clsx from 'clsx';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon } from './ui';
 
-export function CopyButton({ value, label = 'Copy', className, plain }: { value: string; label?: string; className?: string; plain?: boolean }) {
+export function CopyButton({ value, label = 'Copy', className, plain, style }: { value: string; label?: string; className?: string; plain?: boolean; style?: CSSProperties }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -21,7 +21,7 @@ export function CopyButton({ value, label = 'Copy', className, plain }: { value:
   }
 
   return (
-    <button type="button" className={clsx('btn sm', !copied && !plain && 'primary', className)} onClick={copy}>
+    <button type="button" className={clsx('btn sm', !copied && !plain && 'primary', className)} style={style} onClick={copy}>
       {!plain && <Icon name={copied ? 'check' : 'link'} size={13} />} {copied ? 'Copied' : label}
     </button>
   );
