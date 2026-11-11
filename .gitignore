@@ -1,4 +1,2 @@
 .DS_Store
 node_modules/
-# raw audit output contains machine-local paths; the summary lives in design/.reviews/*.md
-design/.reviews/restraint/
