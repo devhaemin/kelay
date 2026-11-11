@@ -9,38 +9,28 @@ model_list:
     litellm_params:
       model: anthropic/claude-opus-5-5
       api_key: os.environ/ANTHROPIC_API_KEY
-    model_info:
-      provider: anthropic
 
   - model_name: claude-sonnet-5-5
     litellm_params:
       model: anthropic/claude-sonnet-5-5
       api_key: os.environ/ANTHROPIC_API_KEY
-    model_info:
-      provider: anthropic
 
   - model_name: claude-haiku-5-5
     litellm_params:
       model: anthropic/claude-haiku-5-5
       api_key: os.environ/ANTHROPIC_API_KEY
-    model_info:
-      provider: anthropic
 
   # OpenAI
   - model_name: gpt-6-astra
     litellm_params:
       model: openai/gpt-6-astra
       api_key: os.environ/OPENAI_API_KEY
-    model_info:
-      provider: openai
 
   # Google Gemini (AI Studio API)
   - model_name: gemini-4-carbon
     litellm_params:
       model: gemini/gemini-4-carbon
       api_key: os.environ/GEMINI_API_KEY
-    model_info:
-      provider: google
 
 router_settings:
   routing_strategy: simple-shuffle
@@ -50,7 +40,9 @@ router_settings:
   # "default" lets SDK callers ask for the platform default without hard-coding a model id.
   model_group_alias:
     default: claude-opus-5-5
+  # The alias is its own model group, so it needs its own fallback entry.
   fallbacks:
+    - default: [claude-sonnet-5-5]
     - claude-opus-5-5: [claude-sonnet-5-5]
     - claude-sonnet-5-5: [claude-haiku-5-5]
 

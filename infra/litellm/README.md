@@ -70,10 +70,11 @@ POST /team/new
 POST /key/generate
 { "team_id": "app:ticket-board:prod", "key_alias": "app/ticket-board/prod",
   "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
-  "rpm_limit": 600, "tags": ["app:ticket-board", "env:prod"],
+  "rpm_limit": 600,
   "metadata": { "app": "ticket-board", "env": "prod" } }
 ```
 
+- **Tags go on requests, not keys.** Key-level `tags` on `/key/generate` is a LiteLLM Enterprise feature (403 without `LITELLM_LICENSE`). The `x-litellm-tags` request header works in the open-source proxy and lands in `LiteLLM_SpendLogs.request_tags`. Both were checked against v1.106.6.
 - The Deploy service stores the returned key with the app's env and injects it into the app's node functions as `LLM_GATEWAY_KEY`.
 - The key only works for the listed models, inside the team budget and rate limits. A leaked key can therefore spend one app's budget, and nothing more.
 - Revoke the key with `/key/delete`. Rotate it with `/key/regenerate` on publish.
