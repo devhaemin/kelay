@@ -15,11 +15,13 @@ import {
 } from '@kelay/contracts';
 import { appResources } from './apps.ts';
 import { authOptions, createAuth, type AuthDeps, type SocialConfig, type SocialProvider } from './auth.ts';
+import type { ConsentRecorder } from './consents.ts';
 import { mayUseApp, pgMemberStore, type MemberStore } from './members.ts';
 import { pageRoutes } from './pages.ts';
 
 export { mcpResourceUrl, type AppResource, type AppResources } from './apps.ts';
 export { MCP_SCOPES, SOCIAL_PROVIDERS, socialFromEnv, type KelayAuth, type SocialConfig } from './auth.ts';
+export { controlApiConsents, type ConsentRecord, type ConsentRecorder, type ControlApiConsentsOptions } from './consents.ts';
 export { pgMemberStore, type MemberStore } from './members.ts';
 
 export interface IdentityDeps {
@@ -39,6 +41,11 @@ export interface IdentityDeps {
   trustedOrigins?: string[];
   /** Defaults to reading `app_members` from `database`. */
   members?: MemberStore;
+  /**
+   * Records each consent a person grants an assistant, normally `controlApiConsents`. A consent the
+   * recorder refuses is not granted. Unset keeps consents in Kelay ID only (tests, a stack without a control API).
+   */
+  consents?: ConsentRecorder;
 }
 
 const TokenRequest = z.object({ app: AppSlug });
@@ -116,6 +123,7 @@ export function createIdentity(deps: IdentityDeps) {
       members,
       emailPassword,
       social: Object.keys(social) as SocialProvider[],
+      ...(deps.consents ? { consents: deps.consents } : {}),
     }),
   );
 

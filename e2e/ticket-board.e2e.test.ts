@@ -1,6 +1,7 @@
 // The Ticket Board path across the running services, nothing mocked: Kelay ID issues the tokens,
 // the Data API enforces RLS in Postgres, the Control API takes feedback, and the MCP gateway serves
-// the same rows to an assistant that went through the OAuth authorization-code flow.
+// the same rows to an assistant that went through the OAuth authorization-code flow, until the builder
+// revokes that assistant's consent.
 import * as oauth from 'oauth4webapi';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { beforeAll, describe, expect, inject, it } from 'vitest';
@@ -207,7 +208,9 @@ describe('Feedback and the builder’s ticket board (Control API)', () => {
 describe('MCP gateway with a token from the OAuth authorization-code flow', () => {
   const client: oauth.Client = { client_id: ASSISTANT_CLIENT_ID, token_endpoint_auth_method: 'none' };
   const insecure = { [oauth.allowInsecureRequests]: true };
+  let as: oauth.AuthorizationServer;
   let accessToken: string;
+  let refreshToken: string;
 
   it('challenges a call without a token and points at Kelay ID', async () => {
     const res = await fetch(resource, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
@@ -224,7 +227,7 @@ describe('MCP gateway with a token from the OAuth authorization-code flow', () =
 
   it('issues a resource-bound token after Junho consents', async () => {
     const issuer = new URL(config.issuer);
-    const as = await oauth.processDiscoveryResponse(issuer, await oauth.discoveryRequest(issuer, { algorithm: 'oauth2', ...insecure }));
+    as = await oauth.processDiscoveryResponse(issuer, await oauth.discoveryRequest(issuer, { algorithm: 'oauth2', ...insecure }));
     const verifier = oauth.generateRandomCodeVerifier();
     const state = oauth.generateRandomState();
     const authorize = new URL(as.authorization_endpoint!);
@@ -255,6 +258,7 @@ describe('MCP gateway with a token from the OAuth authorization-code flow', () =
     });
     const tokens = await oauth.processAuthorizationCodeResponse(as, client, res);
     accessToken = tokens.access_token;
+    refreshToken = tokens.refresh_token!;
 
     const claims = await verifyKelayToken(accessToken, { jwks: remoteJwks(config.jwksUrl), issuer: config.issuer, audience: resource, app: APP });
     expect(claims).toMatchObject({ sub: users.junho, azp: ASSISTANT_CLIENT_ID, org: ORG, role: 'member' });
@@ -316,5 +320,42 @@ describe('MCP gateway with a token from the OAuth authorization-code flow', () =
     expect(metrics.series.actions.filter((n: number) => n > 0).length).toBeGreaterThanOrEqual(13);
     expect(metrics.activeMembers).toMatchObject({ value: TEAM.length, total: TEAM.length });
     expect(metrics.recent[0]).toMatchObject({ action: 'tickets_update', status: 'blocked', by: users.junho, caller: { kind: 'agent', id: ASSISTANT_CLIENT_ID } });
+  });
+
+  it('shows the builder the assistant by name, and ends its access at the next refresh once revoked', async () => {
+    type Consent = { id: string; userId: string; clientId: string; clientName: string | null; scopes: string[]; active: boolean };
+    const connected = (await builderGet(`/v1/apps/${APP}/consents`)).body.consents as Consent[];
+    const mine = connected.filter((c) => c.clientId === ASSISTANT_CLIENT_ID);
+    // Kelay ID recorded it when Junho chose Allow; the name is the one in the assistant's metadata document.
+    expect(mine).toEqual([expect.objectContaining({ userId: users.junho, clientName: 'E2E Assistant', scopes: ['offline_access'], active: true })]);
+    expect(connected.map((c) => c.clientName).sort()).toEqual(['E2E Assistant', ...CONSENTS.map((c) => c.clientName)].sort());
+
+    // While the consent stands, the assistant can refresh.
+    const refreshed = await oauth.processRefreshTokenResponse(as, client, await oauth.refreshTokenGrantRequest(as, client, oauth.None(), refreshToken, insecure));
+    expect(await verifyKelayToken(refreshed.access_token, { jwks: remoteJwks(config.jwksUrl), issuer: config.issuer, audience: resource, app: APP })).toMatchObject({ sub: users.junho });
+
+    const revoked = await builderCall('POST', `/v1/apps/${APP}/consents/${mine[0]!.id}/revoke`);
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.consent).toMatchObject({ id: mine[0]!.id, active: false });
+
+    const afterRevoke = await oauth.refreshTokenGrantRequest(as, client, oauth.None(), refreshed.refresh_token!, insecure);
+    expect(afterRevoke.status).toBe(400);
+    expect(await afterRevoke.json()).toMatchObject({ error: 'invalid_grant' });
+    const left = (await builderGet(`/v1/apps/${APP}/consents`)).body.consents as Consent[];
+    expect(left.map((c) => c.clientName).sort()).toEqual(CONSENTS.map((c) => c.clientName).sort());
+
+    // Connecting again is a new decision: Kelay ID asks Junho instead of sending the assistant straight back.
+    const authorize = new URL(as.authorization_endpoint!);
+    authorize.search = new URLSearchParams({
+      response_type: 'code',
+      client_id: ASSISTANT_CLIENT_ID,
+      redirect_uri: ASSISTANT_REDIRECT_URI,
+      scope: 'offline_access',
+      state: oauth.generateRandomState(),
+      code_challenge: await oauth.calculatePKCECodeChallenge(oauth.generateRandomCodeVerifier()),
+      code_challenge_method: 'S256',
+      resource,
+    }).toString();
+    expect((await redirectTarget(await junho.get(authorize.toString()), config.issuer)).pathname).toBe('/consent');
   });
 });

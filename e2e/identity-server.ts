@@ -3,7 +3,7 @@
 // assistant's document from memory and refuses every other client.
 import { serve } from '@hono/node-server';
 import pg from 'pg';
-import { createIdentity, migrateIdentity, type IdentityDeps } from '@kelay/identity';
+import { controlApiConsents, createIdentity, migrateIdentity, type IdentityDeps } from '@kelay/identity';
 import { loadAppRegistry } from '@kelay/contracts/registry';
 import { ASSISTANT_CLIENT_ID, ASSISTANT_METADATA } from './assistant.ts';
 
@@ -20,6 +20,7 @@ const deps: IdentityDeps = {
   secret: required('BETTER_AUTH_SECRET'),
   registry: loadAppRegistry(required('KELAY_APPS_FILE')),
   mcpPublicBaseUrl: required('MCP_PUBLIC_BASE_URL'),
+  consents: controlApiConsents({ controlApiUrl: required('CONTROL_API_URL'), callerSecret: required('KELAY_CALLER_SECRET') }),
   fetchClientMetadataResource: async (input) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url !== ASSISTANT_CLIENT_ID) return new Response('not found', { status: 404 });

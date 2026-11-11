@@ -65,8 +65,8 @@ export function authOptions(deps: AuthDeps) {
   if (!primary) throw new Error('identity: the app registry is empty, so there is no MCP resource to protect');
 
   // Runs on every authorization_code and refresh_token grant, so a ban or a revoked consent
-  // stops the assistant at its next refresh. The provider's delete-consent leaves refresh
-  // tokens valid, which is why the consent row is looked up here.
+  // stops the assistant at its next refresh. Revoking in the control API deletes the consent
+  // row and leaves refresh tokens valid, which is why the row is looked up here.
   const appClaims: OAuthProviderExtension = {
     claims: {
       async accessToken({ ctx, user, client, resources, referenceId }) {
@@ -97,8 +97,13 @@ export function authOptions(deps: AuthDeps) {
     secret: deps.secret,
     database: deps.database,
     ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
-    // The jwt plugin's session-token route would mint JWTs a resource server could mistake for access tokens.
-    disabledPaths: ['/token'],
+    disabledPaths: [
+      // The jwt plugin's session-token route would mint JWTs a resource server could mistake for access tokens.
+      '/token',
+      // Consents are revoked in the control API, which deletes Kelay ID's row with its own. Revoking
+      // here would leave the control API listing an assistant that no longer has access.
+      '/oauth2/delete-consent',
+    ],
     emailAndPassword: { enabled: deps.emailPassword },
     socialProviders: deps.social,
     plugins: [
