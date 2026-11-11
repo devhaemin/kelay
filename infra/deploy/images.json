@@ -1,4 +1,5 @@
 [
+  { "service": "builder", "context": ".", "dockerfile": "services/builder/Dockerfile" },
   { "service": "console", "context": ".", "dockerfile": "apps/console/Dockerfile" },
   { "service": "control-api", "context": ".", "dockerfile": "services/control-api/Dockerfile" },
   { "service": "data-api", "context": ".", "dockerfile": "services/data-api/Dockerfile" },

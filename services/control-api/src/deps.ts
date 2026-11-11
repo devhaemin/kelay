@@ -3,6 +3,7 @@ import type { AuthConfig } from './auth.ts';
 import type { Db } from './db/client.ts';
 import type { DeployDriver } from './deploy/driver.ts';
 import type { AppDatabaseMigrator } from './deploy/migrator.ts';
+import type { RouteStore } from './deploy/routes.ts';
 import type { Llm } from './llm/types.ts';
 import type { Logger } from './log.ts';
 import type { QaRunner } from './qa/runner.ts';
@@ -14,6 +15,8 @@ export interface ControlApiDeps {
   llm: Llm;
   deploy: DeployDriver;
   improvements: ImprovementQueue;
+  /** The Router's route table, written on every deploy and publish. Defaults to a table in memory, which no Router reads. */
+  routes?: RouteStore;
   logger?: Logger;
   /**
    * Database URL for new app envs, with `{app}` (dashes become underscores) and `{env}` placeholders,

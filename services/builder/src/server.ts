@@ -53,6 +53,11 @@ try {
       image: need('BUILDER_WORKSPACE_IMAGE'),
       executionRoleArn: need('BUILDER_EXECUTION_ROLE_ARN'),
       taskRoleArn: need('BUILDER_TASK_ROLE_ARN'),
+      ...(env.BUILDER_TASK_FAMILY_PREFIX ? { familyPrefix: env.BUILDER_TASK_FAMILY_PREFIX } : {}),
+      ...(env.BUILDER_WORKSPACE_ARCH === 'ARM64' || env.BUILDER_WORKSPACE_ARCH === 'X86_64' ? { cpuArchitecture: env.BUILDER_WORKSPACE_ARCH } : {}),
+      ...(env.BUILDER_WORKSPACE_LOG_GROUP && env.AWS_REGION ? { logGroup: env.BUILDER_WORKSPACE_LOG_GROUP, region: env.AWS_REGION } : {}),
+      ...(env.BUILDER_WORKSPACE_CPU ? { cpu: env.BUILDER_WORKSPACE_CPU } : {}),
+      ...(env.BUILDER_WORKSPACE_MEMORY ? { memory: env.BUILDER_WORKSPACE_MEMORY } : {}),
       environment: {
         BUILDER_AGENT: agent.kind,
         ...(agent.model ? { BUILDER_MODEL: agent.model } : {}),

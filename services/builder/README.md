@@ -108,7 +108,7 @@ What the workspace's dev server receives is the request as a browser on its own 
 `BUILDER_WORKSPACE_DRIVER=local|fargate` (default `local`).
 
 - **`local`**: a folder per app under `KELAY_WORKSPACES_ROOT` (default `.kelay/workspaces` in the repo), sharing the dependencies installed in `templates/starter`. The preview is `next dev` on a free port, reached through the preview proxy.
-- **`fargate`**: one ECS task per app with the app's own EFS access point, so a task sees only that app's repo. The task runs `src/runtime-server.ts` from the [workspace image](#image), and the Builder drives it over the VPC with a token only the two of them know. The task holds the gateway key for the agent and no platform secret; checks and deploys stay in the Builder. Settings: `BUILDER_ECS_CLUSTER`, `BUILDER_EFS_FILE_SYSTEM_ID`, `BUILDER_SUBNETS`, `BUILDER_SECURITY_GROUPS`, `BUILDER_WORKSPACE_IMAGE`, `BUILDER_EXECUTION_ROLE_ARN`, `BUILDER_TASK_ROLE_ARN`, and `BUILDER_WORKSPACE_API_KEY` with `ANTHROPIC_BASE_URL` for the agent. This driver has unit tests only and has not run against AWS; what the task runs is checked with the image (below).
+- **`fargate`**: one ECS task per app with the app's own EFS access point, so a task sees only that app's repo. The task runs `src/runtime-server.ts` from the [workspace image](#image), and the Builder drives it over the VPC with a token only the two of them know. The task holds the gateway key for the agent and no platform secret; checks and deploys stay in the Builder. Settings: `BUILDER_ECS_CLUSTER`, `BUILDER_EFS_FILE_SYSTEM_ID`, `BUILDER_SUBNETS`, `BUILDER_SECURITY_GROUPS`, `BUILDER_WORKSPACE_IMAGE`, `BUILDER_EXECUTION_ROLE_ARN`, `BUILDER_TASK_ROLE_ARN`, and `BUILDER_WORKSPACE_API_KEY` with `ANTHROPIC_BASE_URL` for the agent. Optional: `BUILDER_TASK_FAMILY_PREFIX` (task definitions are `<prefix>-<app>`, default `kelay-workspace`; the env's IAM allows its own prefix only), `BUILDER_WORKSPACE_ARCH` (`X86_64`, the default, or `ARM64`: the architecture the image was built for), `BUILDER_WORKSPACE_CPU`, `BUILDER_WORKSPACE_MEMORY`, and `BUILDER_WORKSPACE_LOG_GROUP` with `AWS_REGION` for the task's logs. [`infra/terraform`](../../infra/terraform) sets all of them for the `builder` service. This driver has unit tests only and has not run against AWS; what the task runs is checked with the image (below).
 
 ## Image
 
@@ -134,6 +134,8 @@ pnpm --filter @kelay/builder verify:image --image kelay/workspace
 | `BUILDER_IMPROVEMENTS=off`, `BUILDER_IMPROVEMENT_POLL_MS` | Turn off the improvement worker, or change how often it asks the Control API for a queued run (default 5000). |
 
 ## Known limits
+
+- The Builder keeps its state on its own disk (`BUILDER_HOME`) and in its memory, so it runs as one process. A new process finds the workspaces again, but with an empty `BUILDER_HOME` it has lost the transcripts and what was deployed.
 
 - A dev preview renders the app, but locally its data calls answer "Sign in with Kelay ID": the Data API and Kelay ID read apps from `KELAY_APPS_FILE`, which does not know apps built here.
 - Access rules saved as a draft in the console are replaced by the workspace's `kelay/policy.ts` on the next turn's deploy.

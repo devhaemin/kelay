@@ -174,9 +174,20 @@ resource "aws_vpc_security_group_ingress_rule" "preview" {
   referenced_security_group_id = var.platform_security_group_id
 }
 
+resource "aws_vpc_security_group_ingress_rule" "runtime" {
+  security_group_id            = aws_security_group.this.id
+  description                  = "Builder to the workspace runtime"
+  ip_protocol                  = "tcp"
+  from_port                    = var.runtime_port
+  to_port                      = var.runtime_port
+  referenced_security_group_id = var.platform_security_group_id
+}
+
 ################################################################################
-# Task definition template. The Control API registers a revision per workspace with that
-# workspace's EFS access point, because RunTask cannot override volumes.
+# Task definition template. RunTask cannot override volumes, so the Builder registers a
+# definition per workspace, `<family>-<app>`, with that workspace's EFS access point
+# (services/builder/src/drivers/fargate.ts). This one fixes the family name, the roles and
+# the sizes those definitions use.
 ################################################################################
 
 resource "aws_ecs_task_definition" "workspace" {
@@ -252,7 +263,7 @@ resource "aws_ecs_task_definition" "workspace" {
 }
 
 ################################################################################
-# Policy for the service that launches workspaces (the Control API)
+# Policy for the service that launches workspaces (the Builder)
 ################################################################################
 
 data "aws_iam_policy_document" "launcher" {

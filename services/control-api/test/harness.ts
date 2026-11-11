@@ -10,6 +10,7 @@ import { CONSOLE_APP } from '../src/auth.ts';
 import { createDatabase, runMigrations, type Database } from '../src/db/client.ts';
 import { LocalDeployDriver, type DeployDriver } from '../src/deploy/driver.ts';
 import { PgAppDatabaseMigrator, type AppMigrationInput } from '../src/deploy/migrator.ts';
+import type { RouteStore } from '../src/deploy/routes.ts';
 import { createLogger } from '../src/log.ts';
 import type { AppInfo, Llm, ReportDraft, ReportRequest, TriageItem, TriageLabel } from '../src/llm/types.ts';
 import type { QaRunner } from '../src/qa/runner.ts';
@@ -86,7 +87,7 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function createHarness(opts: { deploy?: DeployDriver; dedupeThreshold?: number; qa?: QaRunner } = {}): Promise<Harness> {
+export async function createHarness(opts: { deploy?: DeployDriver; dedupeThreshold?: number; qa?: QaRunner; routes?: RouteStore } = {}): Promise<Harness> {
   const name = `control_test_${randomBytes(6).toString('hex')}`;
   const admin = new pg.Client({ connectionString: ADMIN_URL });
   await admin.connect();
@@ -123,6 +124,7 @@ export async function createHarness(opts: { deploy?: DeployDriver; dedupeThresho
     databaseUrlTemplate: 'postgres://kelay:kelay@localhost:54320/app_{app}_{env}',
     ...(opts.dedupeThreshold ? { dedupeThreshold: opts.dedupeThreshold } : {}),
     ...(opts.qa ? { qa: opts.qa } : {}),
+    ...(opts.routes ? { routes: opts.routes } : {}),
   });
   const appDatabases: { name: string; client: pg.Client }[] = [];
 

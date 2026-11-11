@@ -4,7 +4,8 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
-  // Route table: key `app:<handle>/<app>` → {"prod":{"origin","region"?},"dev"?:{"origin","region"?}}.
+  // Route table: key `app:<handle>/<app>` → {"prod"?:{"origin","region"?},"dev"?:{"origin","region"?}}
+  // (AppRoute in @kelay/contracts). The control API writes an app's entry on every deploy and publish.
   // Replace the id with the namespace created by `wrangler kv namespace create ROUTES`.
   "kv_namespaces": [{ "binding": "ROUTES", "id": "00000000000000000000000000000000" }],
   // Local defaults (contract §11). Deployed environments override these.

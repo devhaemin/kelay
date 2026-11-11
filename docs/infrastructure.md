@@ -89,7 +89,7 @@ The rules:
 1. The Console sends the prompt to the Control API, which creates the app, its Forgejo repo and a dev env.
 2. The Control API starts a Builder workspace task: an image with the SDK toolchain and the coding agent, with the app repo on an EFS access point.
 3. The coding agent writes screens with the SDK and the agent graph spec. It commits on every turn, and runs `next dev`.
-4. The Preview proxy maps the dev preview URL to the task over HTTP and WebSocket (HMR). The Router lets only the builder's session through.
+4. The Preview proxy, which runs in the Builder service, maps the dev preview URL to the task over HTTP and WebSocket (HMR). It lets only the app's builder through: the console gets a short-lived ticket for the preview frame, and the proxy trades it for a session cookie.
 5. The workspace stops after 15 idle minutes. Its state lives in git and on EFS, so the next open resumes it.
 
 ### 4.2 End-user run

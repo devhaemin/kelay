@@ -7,6 +7,7 @@ import { createAppDatabases } from './appdb.ts';
 import { DEFAULT_CALLER_TOKEN_TTL_SECONDS, DEFAULT_DEDUPE_THRESHOLD, type ControlApiDeps, type Ctx } from './deps.ts';
 import { ApiError, errorBody, sendError } from './errors.ts';
 import { PgAppDatabaseMigrator } from './deploy/migrator.ts';
+import { MemoryRouteStore } from './deploy/routes.ts';
 import { createLogger } from './log.ts';
 import { appRoutes } from './routes/apps.ts';
 import { consentRoutes } from './routes/consents.ts';
@@ -32,6 +33,7 @@ export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
     logger,
     appDbs,
     appMigrator: deps.appMigrator ?? new PgAppDatabaseMigrator(),
+    routes: deps.routes ?? new MemoryRouteStore(),
     qa: deps.qa ?? new PolicyQaRunner(appDbs),
     dedupeThreshold: deps.dedupeThreshold ?? DEFAULT_DEDUPE_THRESHOLD,
     callerTokenTtlSeconds: deps.callerTokenTtlSeconds ?? DEFAULT_CALLER_TOKEN_TTL_SECONDS,
@@ -64,7 +66,7 @@ export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
   app.get('/healthz', async (c) => {
     try {
       await ctx.db.execute(sql`select 1`);
-      return c.json({ ok: true, service: 'control-api', db: 'ok', deployDriver: ctx.deploy.name, improvementQueue: ctx.improvements.kind });
+      return c.json({ ok: true, service: 'control-api', db: 'ok', deployDriver: ctx.deploy.name, improvementQueue: ctx.improvements.kind, routeStore: ctx.routes.name });
     } catch (e) {
       log.error({ type: 'healthz', err: (e as Error).message }, 'database unreachable');
       return c.json({ ok: false, service: 'control-api', db: 'down' }, 503);

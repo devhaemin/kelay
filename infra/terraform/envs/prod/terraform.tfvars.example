@@ -37,7 +37,6 @@ service_overrides = {
   "data-api"       = { desired_count = 2, cpu = 1024, memory = 2048, autoscaling = { min = 2, max = 10 } }
   "mcp-gateway"    = { desired_count = 2, autoscaling = { min = 2, max = 6 } }
   "llm-gateway"    = { desired_count = 2, cpu = 2048, memory = 4096, autoscaling = { min = 2, max = 10 } }
-  "preview-proxy"  = { desired_count = 2 }
   "otel-collector" = { desired_count = 2, cpu = 1024, memory = 2048 }
 }
 

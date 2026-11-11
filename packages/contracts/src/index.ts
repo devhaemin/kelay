@@ -233,6 +233,28 @@ export const AppList = z.object({ apps: z.array(z.object({ app: AppSlug, handle:
 export type AppList = z.infer<typeof AppList>;
 export type AppSummary = AppList['apps'][number];
 
+// ---------------------------------------------------------------- §6 route table
+
+/** Key of an app's entry in the Router Worker's route table (Workers KV). */
+export const routeKey = (handle: string, app: string): string => `app:${handle}/${app}`;
+
+/** Where one env of an app is served: its function URL, and the region the Router signs requests for. */
+export const AppRouteTarget = z.object({
+  origin: z.url({ protocol: /^https?$/ }),
+  region: z
+    .string()
+    .regex(/^[a-z]{2}(-[a-z]+)+-\d+$/)
+    .optional(),
+});
+export type AppRouteTarget = z.infer<typeof AppRouteTarget>;
+
+/**
+ * Value stored under `routeKey(handle, app)`. The control API writes it on every deploy and publish;
+ * the Router reads it. An env the app is not deployed to has no target.
+ */
+export const AppRoute = z.object({ prod: AppRouteTarget.optional(), dev: AppRouteTarget.optional() });
+export type AppRoute = z.infer<typeof AppRoute>;
+
 // ---------------------------------------------------------------- §7 MCP · A2A gateway
 
 /**

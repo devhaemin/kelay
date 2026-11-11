@@ -1,5 +1,7 @@
 import { SLUG } from '@kelay/contracts';
-import { z } from 'zod';
+
+// The route table's key and value are in @kelay/contracts: the control API writes what this Worker reads.
+export { AppRoute, routeKey, type AppRouteTarget as AppTarget } from '@kelay/contracts';
 
 export type Route =
   | { kind: 'mcp'; handle: string; app: string }
@@ -29,19 +31,6 @@ export function matchRoute(pathname: string): Route {
   if (third === 'mcp' || (third === '.well-known' && fourth === 'agent-card.json')) return { kind: 'mcp', handle, app };
   return { kind: 'app', handle, app };
 }
-
-/** KV key holding an app's origins. */
-export const routeKey = (handle: string, app: string): string => `app:${handle}/${app}`;
-
-const Target = z.object({
-  origin: z.url({ protocol: /^https?$/ }),
-  region: z.string().regex(/^[a-z]{2}(-[a-z]+)+-\d+$/).optional(),
-});
-
-/** Value stored under `routeKey(handle, app)`. */
-export const AppRoute = z.object({ prod: Target, dev: Target.optional() });
-export type AppRoute = z.infer<typeof AppRoute>;
-export type AppTarget = z.infer<typeof Target>;
 
 /** Lambda function URL hosts look like `<url-id>.lambda-url.<region>.on.aws`. */
 export const isLambdaFunctionUrl = (hostname: string): boolean => /^[^.]+\.lambda-url\.[a-z0-9-]+\.on\.aws$/.test(hostname);

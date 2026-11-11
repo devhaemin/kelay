@@ -60,9 +60,9 @@ Builder code is untrusted ([infrastructure §3](../../docs/infrastructure.md)). 
 
 - NFS to EFS;
 - HTTPS to interface endpoints and S3 (image layers);
-- the platform ports listed in `platform_ports` (the LLM gateway).
+- the platform ports listed in `platform_ports`: the LLM gateway for the coding agent, and the Data API and the control API for the dev preview's data calls.
 
-Workspaces carry no secrets and have no internet route. The preview proxy reaches `next dev` on port 3000.
+Workspaces carry no platform secret and have no internet route. The Builder reaches a workspace on two ports: the workspace runtime on 4007, and `next dev` on 3000 for the preview proxy.
 
 ### Platform services
 
@@ -76,7 +76,7 @@ The env roots define the eight services with ports from [contracts §11](../../d
 | data-api | 4002 | `data.<zone>` |
 | mcp-gateway | 4004 | `mcp.<zone>` |
 | llm-gateway (LiteLLM) | 4000 | `llm.<zone>` |
-| preview-proxy (held at zero tasks: nothing implements it yet) | 4005 | `preview.<zone>` |
+| builder (workspaces, app bundles and the preview proxy; one task) | 4006 | `preview.<zone>` |
 | otel-collector | 4318 (health 13133) | `otel.<zone>` |
 
 Each service is also reachable in the VPC at `http://<service>.<env>.kelay.internal:<port>`; services call each other this way. The public hosts exist for callers outside the VPC (browsers, the per-app Lambdas, users' AI assistants). They are proxied by Cloudflare, and the ALB only accepts Cloudflare's IP ranges (`restrict_alb_to_cloudflare`). A Cloudflare rule blocks `/internal/*` paths at the edge.
@@ -89,7 +89,9 @@ The ALB health-checks Kelay services at `GET /healthz`, LiteLLM at `/health/live
 
 - **Every service:** `KELAY_ENV`, the platform URLs, and `KELAY_APPS_SOURCE=control-api`, so Kelay ID, the Data API and the MCP gateway read apps from the control API ([contracts §6](../../docs/contracts.md)) instead of a file.
 - **Database access:** `CONTROL_DATABASE_URL` and `APP_DATABASE_URL_TEMPLATE` are plain settings without a login. `DB_USER` and `DB_PASSWORD` come from the `db-platform` secret; the LLM gateway gets `DATABASE_HOST`, `DATABASE_NAME`, `DATABASE_USERNAME` and `DATABASE_PASSWORD` from `db-litellm`. No service has the Aurora master login, which RDS rotates.
-- **control-api:** `KELAY_DEPLOY_DRIVER=aws` with `KELAY_LAMBDA_ROLE_ARN`, `KELAY_SFN_ROLE_ARN` and `APP_RESOURCE_PREFIX`, and `APP_RUNTIME_*` with the public hosts that app functions call. `KELAY_ROUTER_PRINCIPAL` is left unset on purpose (see the last section).
+- **control-api:** `KELAY_DEPLOY_DRIVER=aws` with `KELAY_LAMBDA_ROLE_ARN`, `KELAY_SFN_ROLE_ARN` and `APP_RESOURCE_PREFIX`, and `APP_RUNTIME_*` with the public hosts that app functions call. `KELAY_ROUTER_PRINCIPAL` is left unset on purpose (see the last section). `ROUTE_STORE=cloudflare-kv` with `CLOUDFLARE_ACCOUNT_ID`, `ROUTES_KV_NAMESPACE_ID` and the `cloudflare-kv-token` secret, for the Router's route table.
+- **builder:** the image's `src/server.ts` as its command; `BUILDER_WORKSPACE_DRIVER=fargate` with the sandboxes cluster, subnets, security group, roles, task family, architecture, sizes and log group, and the workspace image; `BUILDER_ARTIFACT_STORE=s3` with the artifacts bucket; `BUILDER_PREVIEW_URL_TEMPLATE` on the preview host; `ANTHROPIC_BASE_URL` and the gateway key for the coding agent. Its task role may start and stop workspace tasks, manage their EFS access points, and put objects under `builds/` in the artifacts bucket.
+- **console:** `BUILDER_URL`, the Builder over private DNS.
 - **identity:** `KELAY_ID_CORS_ORIGINS` (the console), `KELAY_ID_EMAIL_PASSWORD` from `identity_email_password`, and a client id and client secret for each provider in `identity_social_providers`.
 - **otel-collector:** with `enable_clickhouse` it exports to ClickHouse (`CLICKHOUSE_ENDPOINT`, `CLICKHOUSE_PASSWORD`); without, it runs the image's log-only pipeline.
 - **Router Worker:** `MCP_ORIGIN`, `CONTROL_ORIGIN` and `AWS_REGION`, beside the `ROUTES` namespace and the AWS key.
@@ -206,9 +208,9 @@ Terraform creates no per-app resources. The Deploy service runs inside `control-
 | Function URL | on the alias | `AuthType` must be `AWS_IAM` (other values are denied). Only the Router user may call it, through its own IAM policy: `lambda:InvokeFunctionUrl` plus `lambda:InvokeFunction` when invoked through a function URL. The function gets no resource policy, which is why `KELAY_ROUTER_PRINCIPAL` stays unset. |
 | Step Functions state machine per app × env × graph | `kelay-app-*` | Same required tags. Runs as `kelay-<env>-app-states`, which may only invoke `kelay-app-*` functions. Express for runs under 5 minutes, Standard for longer ones. Versions and aliases are published alongside the Lambda alias. |
 | Log groups | `/aws/lambda/kelay-app-*`, `/aws/vendedlogs/states/kelay-app-*` | Created with retention by the Deploy service. |
-| Build bundles | `s3://<artifacts>/builds/...` | Read by Lambda at deploy time, expired after `build_retention_days`. |
-| Route entry | Workers KV `ROUTES`: `/<handle>/<app>` → function URL | Not written by the Control API yet: upload it with `infra/deploy/upload-routes.sh`. |
-| Builder workspace | ECS task in `kelay-<env>-sandboxes` | The Control API creates an EFS access point per workspace and registers a `kelay-<env>-workspace*` task definition revision with it. RunTask cannot override volumes, so a revision is the only way to attach the access point. The revision may only use the two sandbox roles. |
+| Build bundles | `s3://<artifacts>/builds/<app>/<commit>/web.zip` and `nodes.zip` | Written by the Builder after each turn, read by Lambda at deploy time, expired after `build_retention_days`. |
+| Route entry | Workers KV `ROUTES`: `app:<handle>/<app>` → the function URL of each env | Written by the control API on every deploy and publish, deleted when the app is archived. |
+| Builder workspace | ECS task in `kelay-<env>-sandboxes` | The Builder creates an EFS access point per app and registers a task definition `kelay-<env>-workspace-<app>` with it. RunTask cannot override volumes, so a definition per app is the only way to attach the access point. The definition may only use the two sandbox roles. |
 | App databases | `app_<app>_dev`, `app_<app>_prod` on the Aurora cluster | Created by the Control API through RDS Proxy the first time a version is deployed to the env, as the `kelay_platform` login, following contracts §3. |
 
 Guardrails enforced in IAM:
@@ -224,6 +226,7 @@ Agent-graph runs are started by the run orchestrator policy, attached to the sam
 ## Open items
 
 - **Forgejo** is not provisioned here, and no service reads a Forgejo setting yet.
-- **The builder service** will need the sandbox settings (`terraform output sandbox`), the workspace image and the `preview-proxy` service; none of them is wired to a task today.
+- **The Builder** runs as one task and keeps the state of its workspaces on that task ([deploy.md, What is still open](../../docs/deploy.md#what-is-still-open)).
+- **One host per dev preview** (`<app>.preview.<zone>`) is not provisioned: it needs a wildcard DNS record, a certificate for `*.preview.<zone>` and a listener rule. Previews are served under `preview.<zone>/preview/<app>/`.
 - **ALB access logs** are off. They need a log bucket with the ELB delivery policy.
 - **Platform services share one task security group**, and each gets its own IAM role. The control API, Kelay ID and the Data API share one Postgres login (`kelay_platform`); the control API and the Data API have to, because the control API's migration grants `kelay_runtime` to the login the Data API uses. Giving Kelay ID its own is a follow-up.

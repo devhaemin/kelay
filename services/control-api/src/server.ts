@@ -7,6 +7,7 @@ import { createDatabase } from './db/client.ts';
 import { AwsDeployDriver } from './deploy/aws.ts';
 import { LocalDeployDriver, type DeployDriver } from './deploy/driver.ts';
 import { PgAppDatabaseMigrator } from './deploy/migrator.ts';
+import { routeStoreFromEnv, type RouteStore } from './deploy/routes.ts';
 import { AnthropicLlm } from './llm/anthropic.ts';
 import { unconfiguredLlm, type Llm } from './llm/types.ts';
 import { createLogger } from './log.ts';
@@ -63,6 +64,14 @@ const deploy: DeployDriver =
       })
     : new LocalDeployDriver();
 
+let routes: RouteStore;
+try {
+  routes = routeStoreFromEnv(env);
+} catch (e) {
+  log.fatal({ type: 'config', err: (e as Error).message }, (e as Error).message);
+  process.exit(1);
+}
+
 const improvements: ImprovementQueue = env.IMPROVEMENT_QUEUE_URL
   ? new SqsImprovementQueue({ queueUrl: env.IMPROVEMENT_QUEUE_URL })
   : new PgImprovementQueue(database.db);
@@ -78,6 +87,7 @@ const app = createControlApi({
   auth: { issuer: need('KELAY_ID_ISSUER'), jwks: remoteJwks(need('KELAY_ID_JWKS_URL')), callerSecret: need('KELAY_CALLER_SECRET') },
   llm,
   deploy,
+  routes,
   improvements,
   logger: log,
   ...(env.APP_DATABASE_URL_TEMPLATE ? { databaseUrlTemplate: env.APP_DATABASE_URL_TEMPLATE } : {}),
@@ -87,7 +97,7 @@ const app = createControlApi({
 
 const port = Number(env.PORT ?? LOCAL_PORTS.controlApi);
 const server = serve({ fetch: app.fetch, port }, (info) => {
-  log.info({ type: 'listen', port: info.port, deployDriver: deploy.name, improvementQueue: improvements.kind, llmGateway: missingLlm ? 'not configured' : env.LLM_GATEWAY_URL }, 'control-api listening');
+  log.info({ type: 'listen', port: info.port, deployDriver: deploy.name, routeStore: routes.name, improvementQueue: improvements.kind, llmGateway: missingLlm ? 'not configured' : env.LLM_GATEWAY_URL }, 'control-api listening');
 });
 
 const shutdown = (signal: string) => {

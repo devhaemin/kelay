@@ -45,6 +45,8 @@ beforeEach(() => {
   routes.clear();
   routes.set('app:orum/ticket-board', JSON.stringify({ prod: { origin: PROD_FN }, dev: { origin: DEV_FN, region: 'us-west-2' } }));
   routes.set('app:orum/wiki', JSON.stringify({ prod: { origin: 'http://localhost:3000/' } }));
+  // Deployed to Development and not published yet: what the control API writes after a first build.
+  routes.set('app:orum/draft', JSON.stringify({ dev: { origin: DEV_FN, region: 'us-west-2' } }));
 });
 
 afterEach(() => {
@@ -166,6 +168,18 @@ describe('app routes', () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toMatchObject({ error: { code: 'unknown_app' } });
     expect(sent).toBeUndefined();
+  });
+
+  it('serves an app that only has a dev environment on the dev host, and answers 404 for it on the app domain', async () => {
+    const dev = await call('https://dev.kelay.app/orum/draft/board');
+    expect(dev.response.status).toBe(201);
+    expect(new URL(dev.sent!.url).host).toBe('devfn456.lambda-url.us-west-2.on.aws');
+    upstream.mockClear();
+
+    const prod = await call('https://kelay.app/orum/draft/board');
+    expect(prod.response.status).toBe(404);
+    expect(await prod.response.json()).toEqual({ error: { code: 'unknown_app', message: 'orum/draft has no prod environment.' } });
+    expect(prod.sent).toBeUndefined();
   });
 
   it('answers 500 internal for a malformed route entry or missing AWS credentials', async () => {

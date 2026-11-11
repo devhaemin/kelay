@@ -110,7 +110,6 @@ jobs:
           infra/deploy/bootstrap-state.sh --account 111111111111
           infra/deploy/build-images.sh --env staging --account 111111111111 --push --tag ci
           infra/deploy/set-secrets.sh --env staging --account 111111111111 --file infra/deploy/secrets.env.example
-          infra/deploy/upload-routes.sh --namespace-id 00000000000000000000000000000000 --file infra/deploy/routes.example.json
           for env in staging prod; do
             node infra/deploy/render-services.mjs --env "$env" --tag ci --out "infra/deploy/out/$env/services.tfvars.json"
             node infra/deploy/render-router-config.mjs --env "$env" --kv-namespace-id 00000000000000000000000000000000 \

@@ -83,7 +83,8 @@ describe('Fargate workspace driver', () => {
       Tags: expect.arrayContaining([{ Key: 'kelay:app', Value: 'team-board' }]),
     });
     const registered = ecs.commandCalls(RegisterTaskDefinitionCommand)[0]!.args[0].input;
-    expect(registered).toMatchObject({ family: 'kelay-workspace-team-board', requiresCompatibilities: ['FARGATE'], networkMode: 'awsvpc' });
+    // The architecture is the one the image is built for.
+    expect(registered).toMatchObject({ family: 'kelay-workspace-team-board', requiresCompatibilities: ['FARGATE'], networkMode: 'awsvpc', runtimePlatform: { cpuArchitecture: 'X86_64' } });
     expect(registered.volumes).toEqual([
       { name: 'workspace', efsVolumeConfiguration: { fileSystemId: 'fs-0abc', transitEncryption: 'ENABLED', authorizationConfig: { accessPointId: 'fsap-team', iam: 'ENABLED' } } },
     ]);
@@ -125,6 +126,7 @@ describe('Fargate workspace driver', () => {
       taskDefinition: {
         taskDefinitionArn: TASK_DEF,
         status: 'ACTIVE',
+        runtimePlatform: { cpuArchitecture: 'X86_64' },
         containerDefinitions: [{ image: IMAGE }],
         volumes: [{ efsVolumeConfiguration: { fileSystemId: 'fs-0abc', authorizationConfig: { accessPointId: 'fsap-team' } } }],
       },
@@ -148,7 +150,7 @@ describe('Fargate workspace driver', () => {
   it('registers a new revision when the image changed', async () => {
     efs.on(DescribeAccessPointsCommand).resolves({ AccessPoints: [{ AccessPointId: 'fsap-team', Tags: [{ Key: 'kelay:app', Value: 'team-board' }] }] });
     ecs.on(DescribeTaskDefinitionCommand).resolves({
-      taskDefinition: { taskDefinitionArn: TASK_DEF, status: 'ACTIVE', containerDefinitions: [{ image: 'old-image' }], volumes: [{ efsVolumeConfiguration: { fileSystemId: 'fs-0abc', authorizationConfig: { accessPointId: 'fsap-team' } } }] },
+      taskDefinition: { taskDefinitionArn: TASK_DEF, status: 'ACTIVE', runtimePlatform: { cpuArchitecture: 'X86_64' }, containerDefinitions: [{ image: 'old-image' }], volumes: [{ efsVolumeConfiguration: { fileSystemId: 'fs-0abc', authorizationConfig: { accessPointId: 'fsap-team' } } }] },
     });
     ecs.on(RegisterTaskDefinitionCommand).resolves({ taskDefinition: { taskDefinitionArn: TASK_DEF.replace(':1', ':2') } });
     ecs.on(ListTasksCommand).resolves({});
@@ -156,6 +158,44 @@ describe('Fargate workspace driver', () => {
 
     await driver().open('team-board', 'jeongyun');
     expect(ecs.commandCalls(RunTaskCommand)[0]!.args[0].input.taskDefinition).toBe(TASK_DEF.replace(':1', ':2'));
+  });
+
+  it('names families, logs and sizes the way the env’s Terraform expects', async () => {
+    efs.on(DescribeAccessPointsCommand).resolves({ AccessPoints: [{ AccessPointId: 'fsap-team', Tags: [{ Key: 'kelay:app', Value: 'team-board' }] }] });
+    ecs.on(DescribeTaskDefinitionCommand).rejects(Object.assign(new Error('nope'), { name: 'ClientException' }));
+    ecs.on(RegisterTaskDefinitionCommand).resolves({ taskDefinition: { taskDefinitionArn: TASK_DEF } });
+    ecs.on(ListTasksCommand).resolves({});
+    ecs.on(RunTaskCommand).resolves({ tasks: [running('t')] });
+
+    const d = new FargateWorkspaceDriver({
+      cluster: 'kelay-staging-sandboxes',
+      fileSystemId: 'fs-0abc',
+      subnets: ['subnet-1'],
+      securityGroups: ['sg-1'],
+      image: IMAGE,
+      executionRoleArn: 'arn:aws:iam::123456789012:role/kelay-staging-sandbox-exec',
+      taskRoleArn: 'arn:aws:iam::123456789012:role/kelay-staging-sandbox-task',
+      // The launcher policy allows RunTask on task-definition/kelay-staging-workspace*.
+      familyPrefix: 'kelay-staging-workspace',
+      cpuArchitecture: 'ARM64',
+      logGroup: '/kelay/staging/sandboxes',
+      region: 'ap-northeast-2',
+      cpu: '2048',
+      memory: '8192',
+      pollMs: 1,
+      ecs: new ECSClient({ region: 'ap-northeast-2' }),
+      efs: new EFSClient({ region: 'ap-northeast-2' }),
+      fetch: runtimeFetch,
+    });
+    await d.open('team-board', 'jeongyun');
+    const registered = ecs.commandCalls(RegisterTaskDefinitionCommand)[0]!.args[0].input;
+    expect(registered).toMatchObject({ family: 'kelay-staging-workspace-team-board', cpu: '2048', memory: '8192', runtimePlatform: { cpuArchitecture: 'ARM64' } });
+    expect(registered.containerDefinitions![0]).toMatchObject({
+      portMappings: [{ containerPort: 4007 }, { containerPort: 3000 }],
+      linuxParameters: { initProcessEnabled: true },
+      logConfiguration: { logDriver: 'awslogs', options: { 'awslogs-group': '/kelay/staging/sandboxes', 'awslogs-region': 'ap-northeast-2', 'awslogs-stream-prefix': 'workspace' } },
+    });
+    expect(ecs.commandCalls(ListTasksCommand)[0]!.args[0].input.family).toBe('kelay-staging-workspace-team-board');
   });
 
   it('fails with the reason when ECS cannot place or keep the task', async () => {

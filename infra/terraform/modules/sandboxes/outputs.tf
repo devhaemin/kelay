@@ -15,6 +15,11 @@ output "task_definition_family" {
   value = aws_ecs_task_definition.workspace.family
 }
 
+output "cpu_architecture" {
+  description = "The workspace image has to be built for it, and the Builder registers its task definitions with it."
+  value       = var.cpu_architecture
+}
+
 output "container_name" {
   value = local.container_name
 }
@@ -40,6 +45,6 @@ output "log_group_name" {
 }
 
 output "launcher_policy_json" {
-  description = "Attach to the role of the service that starts workspaces (the Control API)."
+  description = "Attach to the role of the service that starts workspaces (the Builder)."
   value       = data.aws_iam_policy_document.launcher.json
 }

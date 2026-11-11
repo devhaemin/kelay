@@ -4,7 +4,7 @@ How to bring up one Kelay environment (`staging` first, then `prod`) from an emp
 
 > **Nothing here has been run against a real account.** What has been checked without one is listed under [What was verified](#what-was-verified). Treat the first staging deploy as the test of this document, and correct it where it is wrong.
 
-After this runbook the base infrastructure exists and seven services answer: `control-api`, `identity`, `data-api`, `mcp-gateway`, `llm-gateway`, `console` and `otel-collector`. Read [What is still open](#what-is-still-open) before you start: it lists what a working product still needs beyond this.
+After this runbook the base infrastructure exists and eight services answer: `control-api`, `identity`, `data-api`, `mcp-gateway`, `llm-gateway`, `console`, `builder` and `otel-collector`. Read [What is still open](#what-is-still-open) before you start: it lists what a working product still needs beyond this.
 
 ## What you need
 
@@ -12,6 +12,7 @@ After this runbook the base infrastructure exists and seven services answer: `co
 |---|---|
 | AWS account | One per environment. Credentials that can create everything in `infra/terraform` (admin-equivalent). |
 | Cloudflare zone | One per environment, on your account. An API token with: Zone DNS edit, Zone Settings edit, Zone WAF edit, Workers Routes edit, Workers Scripts edit, Workers KV Storage edit. |
+| A second Cloudflare token | For the control API, which writes app routes to Workers KV: the permission Workers KV Storage edit on the account, and nothing else. It goes into a secret in step 5. |
 | ACM certificate | In `ap-northeast-2`, for `*.<zone>` and `<zone>`, validated through DNS in Cloudflare. |
 | Tools | Terraform 1.17.2, AWS CLI v2, Docker, Node 22, pnpm 10.4.1, `jq`. `wrangler` comes with `pnpm install`. |
 | Provider keys | An Anthropic API key. An OAuth client id and client secret for each sign-in provider you want (Google, Kakao, GitHub). |
@@ -49,7 +50,7 @@ Decide how people sign in to Kelay ID, in the same file:
 
 With no provider and no email sign-in, nobody can sign in.
 
-Sizes and counts of the services live in [`infra/deploy/services/<env>.json`](../infra/deploy/services). A plain setting for one service goes there too, as `"<service>": { "env": { "NAME": "value" } }`; it is added to the settings in `main.tf`. `preview-proxy` is at zero there because nothing implements it yet.
+Sizes and counts of the services live in [`infra/deploy/services/<env>.json`](../infra/deploy/services). A plain setting for one service goes there too, as `"<service>": { "env": { "NAME": "value" } }`; it is added to the settings in `main.tf`. The Builder (`builder`) runs as one task, because it keeps the state of its workspaces itself; the file may not give it more.
 
 ### 3. First apply
 
@@ -100,6 +101,8 @@ infra/deploy/set-secrets.sh --env $ENV --file infra/deploy/secrets.$ENV.env --ex
 
 ECS cannot start a task while any secret it references is empty. Give every secret a value, `unused` for the ones you do not have (`openai-api-key`, `gemini-api-key`).
 
+`cloudflare-kv-token` is the second Cloudflare token of the table above. With a wrong one the control API still starts and still deploys; each deploy then answers `route.published: false` with Cloudflare's reason, and the app is not reachable on the app domain until a later deploy or publish writes its route.
+
 ### 6. Images
 
 ```sh
@@ -107,7 +110,7 @@ infra/deploy/build-images.sh --env $ENV --account $AWS_ACCOUNT_ID --push        
 infra/deploy/build-images.sh --env $ENV --account $AWS_ACCOUNT_ID --push --execute
 ```
 
-It builds the seven images of [`infra/deploy/images.json`](../infra/deploy/images.json) for `linux/amd64` and pushes them as `kelay-$ENV/<service>:$TAG`. The repositories are tag-immutable; a tag that is already there is skipped. The tag must be the one from step 3. If you committed since, render and apply again with the new tag.
+It builds the nine images of [`infra/deploy/images.json`](../infra/deploy/images.json) for `linux/amd64` and pushes them as `kelay-$ENV/<service>:$TAG`. `builder` and `workspace` are one Dockerfile ([`services/builder/Dockerfile`](../services/builder/Dockerfile)): the Builder service, and the task it starts for each app's workspace. It is the largest image (about 2.7 GB), because it holds the toolchain every app is built with. The repositories are tag-immutable; a tag that is already there is skipped. The tag must be the one from step 3. If you committed since, render and apply again with the new tag.
 
 ### 7. Migrate the control DB
 
@@ -127,7 +130,7 @@ It logs `migrations applied` to `/kelay/$ENV/control-api`. Kelay ID creates its 
 ECS retries on its own, but slowly. Force it:
 
 ```sh
-for s in control-api llm-gateway identity data-api mcp-gateway console otel-collector; do
+for s in control-api llm-gateway identity data-api mcp-gateway builder console otel-collector; do
   aws ecs update-service --cluster $CLUSTER --service $s --force-new-deployment --query service.serviceName
 done
 ```
@@ -154,19 +157,21 @@ pnpm --filter @kelay/router exec wrangler deploy --config "$PWD/infra/deploy/out
 pnpm --filter @kelay/router exec wrangler deploy --config "$PWD/infra/deploy/out/$ENV/wrangler.json"
 ```
 
-Routes for apps go into Workers KV. Nothing writes them automatically yet:
+Routes for apps need no step. The control API writes an app's entry to the Worker's `ROUTES` namespace on every deploy and publish (`ROUTE_STORE=cloudflare-kv`, with the `cloudflare-kv-token` secret): `app:<handle>/<app>` → `{"dev":{"origin","region"},"prod":{…}}`, the function URL of each env the app is deployed to. To read an entry:
 
 ```sh
-infra/deploy/upload-routes.sh --namespace-id "$(terraform -chdir=infra/terraform/envs/$ENV output -raw routes_kv_namespace_id)" \
-  --file infra/deploy/out/$ENV/routes.json            # same shape as infra/deploy/routes.example.json; add --execute
+pnpm --filter @kelay/router exec wrangler kv key get "app:<handle>/<app>" --remote \
+  --namespace-id "$(terraform -chdir=infra/terraform/envs/$ENV output -raw routes_kv_namespace_id)"
 ```
 
 ## Verification
 
 | Check | Expected |
 |---|---|
-| `aws ecs describe-services --cluster kelay-$ENV --services control-api identity data-api mcp-gateway llm-gateway console otel-collector --query 'services[].[serviceName,runningCount,desiredCount]'` | Running equals desired. |
-| `curl -s https://api.<zone>/healthz` | `{"ok":true,"service":"control-api","db":"ok","deployDriver":"aws",...}` |
+| `aws ecs describe-services --cluster kelay-$ENV --services control-api identity data-api mcp-gateway llm-gateway builder console otel-collector --query 'services[].[serviceName,runningCount,desiredCount]'` | Running equals desired. |
+| `curl -s https://api.<zone>/healthz` | `{"ok":true,"service":"control-api","db":"ok","deployDriver":"aws","routeStore":"cloudflare-kv",...}` |
+| `curl -s https://preview.<zone>/healthz` | `{"ok":true,"service":"builder","driver":"fargate","agent":{"kind":"claude",...}}` |
+| `curl -s -o /dev/null -w '%{http_code}' https://preview.<zone>/preview/nothing/` | `401`: a dev preview opens only from the console, for the app's builder. |
 | `curl -s https://id.<zone>/healthz`, `https://id.<zone>/.well-known/oauth-authorization-server` | `{"ok":true}` and metadata whose `issuer` is `https://id.<zone>`. |
 | `curl -s https://data.<zone>/healthz`, `https://mcp.<zone>/healthz`, `https://console.<zone>/healthz` | `{"ok":true}` each (the console adds `"service":"console"`). |
 | `curl -s https://llm.<zone>/health/liveliness` | `200` |
@@ -193,7 +198,7 @@ RDS rotates the master password on its own, and nothing depends on it. The two s
 - **A bad Terraform change.** Check out the previous commit, plan, read it, apply. Do not edit state by hand.
 - **A bad control DB migration.** Migrations only go forward. Restore the cluster to a point in time (`aws rds restore-db-cluster-to-point-in-time`) into a new cluster and repoint, or write a forward fix. Take a snapshot before step 7 on any environment that holds data.
 - **The Router.** `pnpm --filter @kelay/router exec wrangler rollback --name kelay-$ENV-router` returns to the previous version.
-- **A route.** Upload the old value again, or delete the key (see `upload-routes.sh`).
+- **A route.** An app's entry follows its deployments: publishing an earlier version writes it again, and archiving the app deletes it. To take an app off the Router by hand, delete its key: `wrangler kv key delete "app:<handle>/<app>" --namespace-id <id> --remote`. The Router caches an entry for 60 seconds.
 - **Everything (staging only).** `terraform destroy` works while `deletion_protection = false`. Secrets stay recoverable for 7 days, which blocks an immediate re-create under the same names.
 
 ## Later deploys with GitHub Actions
@@ -249,16 +254,26 @@ An idle staging env is mostly NAT, RDS Proxy, the ALB, the endpoints and the Far
 Without an AWS or Cloudflare account, on a developer machine and in CI:
 
 - **Terraform.** `fmt -check`, `validate`, and `terraform test` for both envs. The test ([`tests/wiring.tftest.hcl`](../infra/terraform/envs/staging/tests/wiring.tftest.hcl)) plans the whole env against mock providers, with ClickHouse off and on, and checks that each service is given the settings its code reads.
-- **Images.** All seven build for `linux/amd64` and run together the way Terraform configures them: the `db-bootstrap` script against Postgres 17, the control DB migration and every service logging in as `kelay_platform`, LiteLLM as `kelay_litellm`, each service's health route, and the Data API, the MCP gateway and Kelay ID reading apps from the control API.
-- **Code.** Unit tests of the registry sources, of each service on the control API source, of the database creation on first deploy and of the `aws` driver against a mocked AWS SDK; the e2e suite, which runs the file registry.
+- **Images.** The seven images of the first services build for `linux/amd64` and run together the way Terraform configures them: the `db-bootstrap` script against Postgres 17, the control DB migration and every service logging in as `kelay_platform`, LiteLLM as `kelay_litellm`, each service's health route, and the Data API, the MCP gateway and Kelay ID reading apps from the control API.
+- **The Builder image.** Built for the machine it was checked on (`linux/arm64`, not the `linux/amd64` the script pushes) and run by [`services/builder/scripts/verify-image.ts`](../services/builder/scripts/verify-image.ts) with a control API stub and the scripted agent. As the workspace task: a turn driven over the runtime protocol, the bundles built in the container, fetched and stored, the deploy received by the stub, and the web bundle answering `GET /<handle>/<app>` with 200 in the Lambda runtime emulator image (`public.ecr.aws/lambda/nodejs:22`). As the Builder service: a build over its HTTP API, and the app's `next dev` through the preview proxy (the page, a script, the HMR WebSocket).
+- **App bundles.** The test suite builds the scripted Ticket Board app with OpenNext and calls the handlers of `web.zip` and `nodes.zip` in a process of their own.
+- **Code.** Unit tests of the registry sources, of each service on the control API source, of the database creation on first deploy, of the `aws` deploy driver, the `fargate` workspace driver and the S3 artifact store against a mocked AWS SDK, of the Cloudflare KV route store against a mocked Cloudflare API, and of the preview proxy against a fake dev server; the e2e suite, which runs the file registry.
 
-Not verified, because it needs the real services: the IAM policies of the Deploy role against real Lambda and Step Functions calls, RDS Proxy with the two logins, TLS from the services to the proxy (`sslmode=verify-full`), the Cloudflare rules, and the ClickHouse exporter against ClickHouse Cloud.
+Not verified, because it needs the real services:
+
+- the IAM policies of the Deploy role against real Lambda and Step Functions calls, and of the Builder role against real ECS, EFS and S3 calls;
+- a workspace task on Fargate: its EFS access point, the security group rules between the Builder and the task, and the Builder reaching it over the VPC;
+- an app function created from a real bundle in S3, behind its function URL and the Router Worker, and a graph run on Step Functions;
+- a write to Workers KV with a real token, and the Router reading it;
+- a dev preview through Cloudflare and the load balancer, WebSocket included;
+- RDS Proxy with the two logins, TLS from the services to the proxy (`sslmode=verify-full`), the Cloudflare rules, and the ClickHouse exporter against ClickHouse Cloud.
 
 ## What is still open
 
 1. **The first builder.** The console's sign-in page takes a Kelay ID token pasted by hand, and locally `scripts/dev-login.ts` supplies it. There is no hosted flow from the console to Kelay ID's login page. A person is a builder when `app_members` has a row for them in the app `kelay-console` with the role `builder`; only the dev seed writes such a row. Until both exist, nobody can use a deployed console.
-2. **Builds and previews.** Nothing in this repository builds an app's bundle and uploads it to `s3://<artifacts>/builds/…`, which is what the `aws` driver deploys from, and no image exists for the builder `workspace` or for `preview-proxy`. The builder service is meant to provide them; `preview-proxy` stays at zero tasks until then, and the sandbox settings are available as the `sandbox` Terraform output.
-3. **Routes.** The control API does not write Workers KV. After an app's first publish, add its route with `upload-routes.sh`; the function URL is recorded on the deployed version (`resources.functionUrl`).
-4. **The gateway key.** `llm-gateway-key` has to be a key LiteLLM accepts. Create a virtual key with the master key once the gateway runs ([`infra/litellm/README.md`](../infra/litellm/README.md)), store it with `set-secrets.sh --only llm-gateway-key`, and restart `control-api`.
-5. **Rate limits in Kelay ID** are kept in each task's memory, so with several tasks the effective limit is multiplied. The client IP comes from `cf-connecting-ip` (`KELAY_ID_CLIENT_IP_HEADER`), which is only trustworthy while `restrict_alb_to_cloudflare = true`.
-6. **Forgejo** is not provisioned, and nothing reads a Forgejo setting yet.
+2. **The Builder keeps its state on its own task.** The transcripts and the per-app state (which commit is deployed, the dev caller token) are files on the task's disk, and the workspaces it has open are in its memory. A new Builder task (a deploy, a crash) finds the workspace tasks and the repos on EFS again, but it has lost the transcripts and deploys the next turn of every app as if for the first time. The service therefore runs as one task. Moving that state to the control DB or S3 comes before more than a handful of builders use an env.
+3. **Dev previews share one host.** Every preview is `https://preview.<zone>/preview/<app>/`, so the previews of one builder's apps share an origin. One host per app (`BUILDER_PREVIEW_DOMAIN`, `<app>.preview.<zone>`) needs a wildcard DNS record, a certificate for `*.preview.<zone>` on Cloudflare and on the load balancer, and a listener rule for it; none of that is in Terraform.
+4. **A dev preview does not sign anyone in.** It renders the app; its data calls answer "Sign in with Kelay ID", because the preview proxy does not pass the builder's token to agent-written code and there is no test user for a preview yet.
+5. **The gateway key.** `llm-gateway-key` has to be a key LiteLLM accepts. Create a virtual key with the master key once the gateway runs ([`infra/litellm/README.md`](../infra/litellm/README.md)), store it with `set-secrets.sh --only llm-gateway-key`, and restart `control-api` and `builder`. Every Builder workspace calls models with this same key; a key per app, with its own budget, is not there yet.
+6. **Rate limits in Kelay ID** are kept in each task's memory, so with several tasks the effective limit is multiplied. The client IP comes from `cf-connecting-ip` (`KELAY_ID_CLIENT_IP_HEADER`), which is only trustworthy while `restrict_alb_to_cloudflare = true`.
+7. **Forgejo** is not provisioned, and nothing reads a Forgejo setting yet.

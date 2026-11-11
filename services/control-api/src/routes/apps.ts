@@ -178,6 +178,8 @@ export function appRoutes(ctx: Ctx) {
       .where(eq(apps.slug, app.slug))
       .returning();
     ctx.logger.info({ type: 'app_archived', app: app.slug }, 'app archived');
+    // An archived app is no longer served. Its functions stay, so publishing again brings it back.
+    await ctx.routes.delete(app.handle, app.slug).catch((e: Error) => ctx.logger.error({ type: 'route_delete_failed', app: app.slug, err: e.message }, 'the route of an archived app was not removed'));
     return c.json({ app: appView(row!) });
   });
 

@@ -19,7 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 // Keys of `service_overrides` in infra/terraform/envs/*/variables.tf, and the services of main.tf.
 const OVERRIDE_KEYS = ['image', 'image_tag', 'cpu', 'memory', 'desired_count', 'autoscaling', 'spot', 'env'];
-const SERVICES = ['console', 'control-api', 'identity', 'data-api', 'mcp-gateway', 'llm-gateway', 'preview-proxy', 'otel-collector'];
+const SERVICES = ['console', 'control-api', 'identity', 'data-api', 'mcp-gateway', 'llm-gateway', 'builder', 'otel-collector'];
 const TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 
 function fail(message) {
@@ -56,10 +56,12 @@ for (const pair of values.set) {
   if (tag !== values.tag) overrides[service] = { ...overrides[service], image_tag: tag };
 }
 
-// A service runs `<ecr>/kelay-<env>/<service>:<tag>` unless it names another image. Nothing in this
-// repo builds an image for preview-proxy, so its tasks could never start; it must stay at zero.
+// A service runs `<ecr>/kelay-<env>/<service>:<tag>` unless it names another image. A service that
+// images.json builds no image for could never start its tasks, so it has to name one or stay at zero.
 for (const service of SERVICES) {
   const override = overrides[service] ?? {};
+  // The Builder keeps the state of its workspaces in its own memory and on its own disk.
+  if (service === 'builder' && ((override.desired_count ?? 1) > 1 || override.autoscaling)) fail('builder runs as one task: set no "autoscaling" and no "desired_count" above 1 for it');
   if (built.includes(service) || override.image) continue;
   if (override.desired_count !== 0 || override.autoscaling) {
     fail(`${service} has no image in images.json; set "image" for it in services/${values.env}.json, or "desired_count": 0 and no "autoscaling"`);

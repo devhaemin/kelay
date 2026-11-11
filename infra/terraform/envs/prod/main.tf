@@ -14,7 +14,7 @@ locals {
     "data-api"       = 4002
     "control-api"    = 4003
     "mcp-gateway"    = 4004
-    "preview-proxy"  = 4005
+    "builder"        = 4006
     "console"        = 3000
     "otel-collector" = 4318
   }
@@ -35,6 +35,8 @@ locals {
       "openai-api-key",
       "gemini-api-key",
       "clickhouse-password",
+      # A Cloudflare API token with Workers KV Storage: Edit, for the control API's route table writes.
+      "cloudflare-kv-token",
     ],
     flatten([for p in var.identity_social_providers : ["${p}-client-id", "${p}-client-secret"]]),
   )
@@ -74,6 +76,7 @@ locals {
       env = {
         CONSOLE_DATA     = "http"
         KELAY_APP_ORIGIN = "https://${var.app_hostname}"
+        BUILDER_URL      = local.internal_url["builder"]
       }
     }
 
@@ -99,10 +102,16 @@ locals {
         APP_RUNTIME_DATA_API_URL    = "https://${local.hosts.data}"
         APP_RUNTIME_CONTROL_API_URL = "https://${local.hosts.api}"
         APP_RUNTIME_LLM_GATEWAY_URL = "https://${local.hosts.llm}"
+
+        # The Router's route table: the control API writes an app's entry on every deploy and publish.
+        ROUTE_STORE            = "cloudflare-kv"
+        CLOUDFLARE_ACCOUNT_ID  = var.cloudflare_account_id
+        ROUTES_KV_NAMESPACE_ID = module.edge.routes_kv_namespace_id
       }
       secrets = merge(local.platform_db_login, {
-        KELAY_CALLER_SECRET = "kelay-caller-secret"
-        LLM_GATEWAY_KEY     = "llm-gateway-key"
+        KELAY_CALLER_SECRET  = "kelay-caller-secret"
+        LLM_GATEWAY_KEY      = "llm-gateway-key"
+        CLOUDFLARE_API_TOKEN = "cloudflare-kv-token"
       })
     }
 
@@ -174,14 +183,44 @@ locals {
       }
     }
 
-    # No service implements the preview proxy yet: the builder service is expected to take this name,
-    # port and host. Until its image exists the service is held at zero tasks, which keeps the ALB
-    # rule, the DNS name and the ECR repository in place.
-    preview-proxy = {
-      port          = local.ports["preview-proxy"]
-      host_headers  = [local.hosts.preview]
-      priority      = 70
-      desired_count = 0
+    # services/builder: workspaces as tasks of the sandboxes cluster, app bundles in the artifacts
+    # bucket, and the preview proxy. The console calls its API over private DNS; the public host is for
+    # the dev previews it proxies (https://preview.<zone>/preview/<app>/). It keeps the state of its
+    # workspaces in memory and on its own disk, so it runs as one task.
+    builder = {
+      port         = local.ports["builder"]
+      cpu          = 1024
+      memory       = 2048
+      host_headers = [local.hosts.preview]
+      priority     = 70
+      # The image's default command is the workspace runtime (services/builder/Dockerfile).
+      command = ["node", "--import", "tsx", "src/server.ts"]
+      env = {
+        BUILDER_WORKSPACE_DRIVER    = "fargate"
+        BUILDER_ECS_CLUSTER         = module.sandboxes.cluster_arn
+        BUILDER_EFS_FILE_SYSTEM_ID  = module.data.efs_id
+        BUILDER_SUBNETS             = join(",", module.sandboxes.subnet_ids)
+        BUILDER_SECURITY_GROUPS     = module.sandboxes.security_group_id
+        BUILDER_WORKSPACE_IMAGE     = local.workspace_image
+        BUILDER_EXECUTION_ROLE_ARN  = module.sandboxes.execution_role_arn
+        BUILDER_TASK_ROLE_ARN       = module.sandboxes.task_role_arn
+        BUILDER_TASK_FAMILY_PREFIX  = module.sandboxes.task_definition_family
+        BUILDER_WORKSPACE_ARCH      = module.sandboxes.cpu_architecture
+        BUILDER_WORKSPACE_CPU       = tostring(var.sandbox_cpu)
+        BUILDER_WORKSPACE_MEMORY    = tostring(var.sandbox_memory)
+        BUILDER_WORKSPACE_LOG_GROUP = module.sandboxes.log_group_name
+
+        BUILDER_PREVIEW_URL_TEMPLATE = "https://${local.hosts.preview}/preview/{app}/"
+        BUILDER_ARTIFACT_STORE       = "s3"
+        BUILDER_ARTIFACTS_BUCKET     = module.data.artifacts_bucket
+
+        # The coding agent in a workspace calls models through the LLM gateway, with the gateway's key.
+        ANTHROPIC_BASE_URL = local.internal_url["llm-gateway"]
+      }
+      secrets = {
+        KELAY_CALLER_SECRET       = "kelay-caller-secret"
+        BUILDER_WORKSPACE_API_KEY = "llm-gateway-key"
+      }
     }
 
     # infra/otel: with ClickHouse it exports there; without, it runs the image's log-only pipeline.
@@ -198,6 +237,8 @@ locals {
       secrets      = { for k, v in { CLICKHOUSE_PASSWORD = "clickhouse-password" } : k => v if var.enable_clickhouse }
     }
   }
+
+  workspace_image = coalesce(var.workspace_image, "${module.platform.ecr_repository_urls["workspace"]}:${var.image_tag}")
 
   # An override replaces a setting, except env, whose entries are added to the service's own.
   services = {
@@ -286,6 +327,7 @@ module "platform" {
     "control-api" = module.runtime.deploy_task_role_arn
   }
   task_role_policy_arns = {
+    "builder"  = [aws_iam_policy.builder.arn]
     "console"  = [aws_iam_policy.console.arn]
     "data-api" = [aws_iam_policy.data_api.arn]
   }
@@ -305,7 +347,7 @@ module "sandboxes" {
   sandbox_subnet_ids = module.network.sandbox_subnet_ids
   s3_prefix_list_id  = module.network.s3_prefix_list_id
 
-  image  = coalesce(var.workspace_image, "${module.platform.ecr_repository_urls["workspace"]}:${var.image_tag}")
+  image  = local.workspace_image
   cpu    = var.sandbox_cpu
   memory = var.sandbox_memory
 
@@ -314,7 +356,9 @@ module "sandboxes" {
   efs_security_group_id = module.data.efs_security_group_id
 
   platform_security_group_id = module.platform.tasks_security_group_id
-  platform_ports             = [local.ports["llm-gateway"]]
+  # The coding agent calls the LLM gateway. A dev preview's /api/kelay route calls the Data API and the
+  # control API as the app's Development runtime, with the caller token of the dev deploy.
+  platform_ports = [local.ports["llm-gateway"], local.ports["data-api"], local.ports["control-api"]]
 
   environment = {
     LLM_GATEWAY_URL = local.internal_url["llm-gateway"]
@@ -376,13 +420,7 @@ module "observability" {
 # Extra task permissions
 ################################################################################
 
-# The Deploy service runs inside control-api: it also starts workspaces and agent-graph runs.
-resource "aws_iam_role_policy" "deploy_sandboxes" {
-  name   = "launch-workspaces"
-  role   = module.runtime.deploy_task_role_name
-  policy = module.sandboxes.launcher_policy_json
-}
-
+# The Deploy service runs inside control-api: it also starts agent-graph runs.
 resource "aws_iam_role_policy_attachment" "deploy_orchestrator" {
   role       = module.runtime.deploy_task_role_name
   policy_arn = module.runtime.orchestrator_policy_arn
@@ -412,6 +450,23 @@ data "aws_iam_policy_document" "data_api" {
 resource "aws_iam_policy" "data_api" {
   name   = "${local.name}-data-api-files"
   policy = data.aws_iam_policy_document.data_api.json
+}
+
+# The Builder starts and stops workspace tasks, and stores the bundles it fetched from them where
+# the Deploy role reads them. A workspace task itself has neither permission.
+data "aws_iam_policy_document" "builder" {
+  source_policy_documents = [module.sandboxes.launcher_policy_json]
+
+  statement {
+    sid       = "StoreBuildBundles"
+    actions   = ["s3:PutObject"]
+    resources = ["${module.data.artifacts_bucket_arn}/builds/*"]
+  }
+}
+
+resource "aws_iam_policy" "builder" {
+  name   = "${local.name}-builder"
+  policy = data.aws_iam_policy_document.builder.json
 }
 
 # Builder agent transcripts, stored per builder.

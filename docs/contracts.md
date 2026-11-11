@@ -149,6 +149,19 @@ Who asks for what:
 - **MCP gateway:** the production entry of the app in the request path. It builds the app's tools from that entry and rebuilds them when the entry changes.
 - **Kelay ID:** the production list, every `KELAY_APPS_TTL_SECONDS`. It needs only slugs and handles, to know which MCP resources exist. Kelay ID starts with an empty list, so people can sign in before the first app is published.
 
+### Route table
+
+The Router Worker finds where `/<handle>/<app>` is served in Workers KV: the key is `routeKey(handle, app)` = `app:<handle>/<app>`, the value an `AppRoute` (`@kelay/contracts`):
+
+```jsonc
+{ "prod": { "origin": "https://<id>.lambda-url.ap-northeast-2.on.aws", "region": "ap-northeast-2" },
+  "dev":  { "origin": "https://<id>.lambda-url.ap-northeast-2.on.aws", "region": "ap-northeast-2" } }
+```
+
+- An env the app is not deployed to has no target; the Router answers `unknown_app` for it. `dev` is served on the `dev.` host of the app domain.
+- The control API writes the entry through a `RouteStore` after every deploy and publish, from the function URL of each env's active version, and deletes it when the app is archived. `ROUTE_STORE` picks the store: `memory` (default), `file` (`ROUTES_FILE`) or `cloudflare-kv` (`CLOUDFLARE_ACCOUNT_ID`, `ROUTES_KV_NAMESPACE_ID`, `CLOUDFLARE_API_TOKEN`).
+- A deploy whose route could not be written still succeeds. Its answer carries `route: { key, published: false, error }`, and the next deploy or publish writes the whole entry again.
+
 ## 7. MCP · A2A gateway
 
 - **Endpoint.** One MCP server per app at `POST {MCP_PUBLIC_BASE_URL}/:handle/:app/mcp` (Streamable HTTP). The resource URL is exactly that URL.
@@ -211,7 +224,7 @@ Both answer `201 { recorded, skipped }`; records for apps that do not exist are 
 - **Review.** A node with `review` must output an object with `approved: boolean`; anything else fails the run with `Kelay.InvalidReviewOutput`. When `approved` is false and this review has rejected fewer than `maxLoops` times, the run goes back to `onReject` with the review's output as its input. Once `maxLoops` rejections are used up, the run continues to `next` as if approved (or ends with the review output). `NodeInvocation.loop` is the number of rejections so far in the run, across all reviews, starting at 0.
 - **Execution input** (`GraphExecutionInput`): `{ input, userToken }`. `input` becomes the start node's input (`null` when absent). `userToken` is the user's Kelay ID token; every node receives it and calls the Data API as that user.
 - **Execution.** `@kelay/graph` compiles the spec to Step Functions ASL. Node tasks invoke the app's node Lambda with a `NodeInvocation` payload. It also runs the same spec locally for tests and dev.
-- **Deploying a graph.** Compile with `functionArn: '${NodeFunctionArn}'` (`NODE_FUNCTION_ARN_PLACEHOLDER`) and send the ASL as `graphs[].definition` to the control API's deploy route. The deploy driver replaces the placeholder with the node function's alias ARN for that environment.
+- **Deploying a graph.** Compile with `functionArn: '${NodeFunctionArn}'` (`NODE_FUNCTION_ARN_PLACEHOLDER`) and send the ASL as `graphs[].definition` to the control API's deploy route, with the node function's bundle as `nodesArtifactUrl` (§14). The deploy driver replaces the placeholder with the node function's alias ARN for that environment.
 
 ## 11. Local ports
 
@@ -269,5 +282,6 @@ An app's agent-node function is written against `packages/runtime`. `examples/ti
   - `ctx.model`: the graph node's `model`, else `LLM_MODEL`, else `claude-opus-5-5`.
   - `ctx.run`: `{ runId, app, env, graph, node, attempt, loop }`.
 - **Function environment.** `DATA_API_URL` and `KELAY_CALLER_TOKEN` are required; `LLM_GATEWAY_URL`, `LLM_GATEWAY_KEY` and `LLM_MODEL` are optional.
+- **In an app.** The node code is `kelay/nodes.ts`, which exports `graphs` (a `defineNodes(...)` per graph of `kelay/graphs.ts`). The Builder bundles it behind `createLambdaHandler` into `nodes.zip`, handler `nodes.handler`, and leaves it out of the app's Next.js build.
 - **Hosts.** `createLambdaHandler(graphs)` is the node function's handler: it takes a `NodeInvocation` (§10) and returns the node's output. A thrown error fails the invocation under the error's name. `createLocalNodes(graphs)` is the same code for the run orchestrator's local driver (§13), which supplies the caller token.
 - **Usage.** The runtime counts each node's model calls and adds up the cost the gateway reports for them (LiteLLM's `x-litellm-response-cost` response header). The local driver puts both on the run's trace.

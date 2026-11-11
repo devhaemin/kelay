@@ -58,6 +58,12 @@ variable "preview_port" {
   default     = 3000
 }
 
+variable "runtime_port" {
+  description = "Port of the workspace runtime inside the task, which the Builder drives the workspace through."
+  type        = number
+  default     = 4007
+}
+
 variable "workspace_path" {
   type    = string
   default = "/workspace"
@@ -82,12 +88,12 @@ variable "efs_security_group_id" {
 }
 
 variable "platform_security_group_id" {
-  description = "Platform tasks security group: source of preview traffic and target of gateway calls."
+  description = "Platform tasks security group: the Builder reaches the workspace runtime and the dev preview from it, and workspaces call the platform ports in it."
   type        = string
 }
 
 variable "platform_ports" {
-  description = "Platform service ports sandboxes may call over private DNS (e.g. LLM gateway, Forgejo)."
+  description = "Platform service ports sandboxes may call over private DNS (the LLM gateway, and the Data API and the control API for dev previews)."
   type        = list(number)
   default     = []
 }

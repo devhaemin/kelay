@@ -40,6 +40,17 @@ export interface FargateDriverOptions {
    * (ANTHROPIC_BASE_URL and the gateway's key for builder workspaces). Never a provider key or the caller secret.
    */
   environment?: Record<string, string>;
+  /**
+   * Start of every workspace task definition family; the app's slug follows. The launcher policy of
+   * infra/terraform/modules/sandboxes lets the Builder run only families that start with its own.
+   * @default kelay-workspace
+   */
+  familyPrefix?: string;
+  /** Must be the architecture the image was built for (infra/deploy/build-images.sh builds linux/amd64). @default X86_64 */
+  cpuArchitecture?: 'X86_64' | 'ARM64';
+  /** CloudWatch log group and its region for the task's output. Without it the task logs nowhere. */
+  logGroup?: string;
+  region?: string;
   cpu?: string;
   memory?: string;
   runtimePort?: number;
@@ -58,17 +69,19 @@ export class FargateWorkspaceDriver implements WorkspaceDriver {
   private readonly efs: EFSClient;
   private readonly runtimePort: number;
   private readonly previewPort: number;
+  private readonly architecture: 'X86_64' | 'ARM64';
 
   constructor(private readonly opts: FargateDriverOptions) {
     this.ecs = opts.ecs ?? new ECSClient({});
     this.efs = opts.efs ?? new EFSClient({});
     this.runtimePort = opts.runtimePort ?? 4007;
     this.previewPort = opts.previewPort ?? 3000;
+    this.architecture = opts.cpuArchitecture ?? 'X86_64';
   }
 
   private family(app: string): string {
     if (!SLUG.test(app)) throw new Error(`invalid app slug ${JSON.stringify(app)}`);
-    return `kelay-workspace-${app}`;
+    return `${this.opts.familyPrefix ?? 'kelay-workspace'}-${app}`;
   }
 
   private async findAccessPoint(app: string): Promise<string | null> {
@@ -111,7 +124,9 @@ export class FargateWorkspaceDriver implements WorkspaceDriver {
       const { taskDefinition: current } = await this.ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: family }));
       const mounted = current?.volumes?.[0]?.efsVolumeConfiguration?.authorizationConfig?.accessPointId;
       const image = current?.containerDefinitions?.[0]?.image;
-      if (current?.taskDefinitionArn && current.status === 'ACTIVE' && mounted === accessPointId && image === this.opts.image) return current.taskDefinitionArn;
+      const arch = current?.runtimePlatform?.cpuArchitecture;
+      // A definition registered before the architecture was recorded is replaced once.
+      if (current?.taskDefinitionArn && current.status === 'ACTIVE' && mounted === accessPointId && image === this.opts.image && arch === this.architecture) return current.taskDefinitionArn;
     } catch (e) {
       // ECS answers "Unable to describe task definition" as a ClientException when the family is new.
       if ((e as { name?: string }).name !== 'ClientException') throw e;
@@ -125,7 +140,7 @@ export class FargateWorkspaceDriver implements WorkspaceDriver {
         memory: this.opts.memory ?? '4096',
         executionRoleArn: this.opts.executionRoleArn,
         taskRoleArn: this.opts.taskRoleArn,
-        runtimePlatform: { cpuArchitecture: 'ARM64', operatingSystemFamily: 'LINUX' },
+        runtimePlatform: { cpuArchitecture: this.architecture, operatingSystemFamily: 'LINUX' },
         containerDefinitions: [
           {
             name: CONTAINER,
@@ -137,7 +152,13 @@ export class FargateWorkspaceDriver implements WorkspaceDriver {
               { name: 'KELAY_APP', value: app },
               { name: 'KELAY_WORKSPACES_ROOT', value: MOUNT_PATH },
               { name: 'PORT', value: String(this.runtimePort) },
+              { name: 'KELAY_PREVIEW_PORT', value: String(this.previewPort) },
             ],
+            // An init process reaps what `next dev` and the build tools leave behind.
+            linuxParameters: { initProcessEnabled: true },
+            ...(this.opts.logGroup && this.opts.region
+              ? { logConfiguration: { logDriver: 'awslogs' as const, options: { 'awslogs-group': this.opts.logGroup, 'awslogs-region': this.opts.region, 'awslogs-stream-prefix': 'workspace' } } }
+              : {}),
           },
         ],
         volumes: [

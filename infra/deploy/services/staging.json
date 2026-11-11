@@ -1,4 +1,3 @@
 {
-  "$comment": "Sizes and counts of the staging platform services; read by render-services.mjs. Keys are those of service_overrides in infra/terraform/envs/staging/variables.tf. preview-proxy has no image: no service implements it yet (docs/deploy.md, What is still open), so it stays at zero.",
-  "preview-proxy": { "desired_count": 0 }
+  "$comment": "Sizes and counts of the staging platform services; read by render-services.mjs. Keys are those of service_overrides in infra/terraform/envs/staging/variables.tf. Staging runs every service at the defaults of main.tf."
 }

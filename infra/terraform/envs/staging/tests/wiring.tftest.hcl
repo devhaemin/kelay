@@ -117,8 +117,45 @@ run "services_get_what_they_read" {
   }
 
   assert {
-    condition     = local.services["preview-proxy"].desired_count == 0
-    error_message = "preview-proxy has no image and must stay at zero tasks."
+    condition = alltrue([
+      for name in [
+        "BUILDER_WORKSPACE_DRIVER", "BUILDER_ECS_CLUSTER", "BUILDER_EFS_FILE_SYSTEM_ID", "BUILDER_SUBNETS", "BUILDER_SECURITY_GROUPS", "BUILDER_WORKSPACE_IMAGE",
+        "BUILDER_EXECUTION_ROLE_ARN", "BUILDER_TASK_ROLE_ARN", "BUILDER_TASK_FAMILY_PREFIX", "BUILDER_WORKSPACE_ARCH", "BUILDER_WORKSPACE_LOG_GROUP",
+        "BUILDER_PREVIEW_URL_TEMPLATE", "BUILDER_ARTIFACT_STORE", "BUILDER_ARTIFACTS_BUCKET", "ANTHROPIC_BASE_URL",
+      ] : contains(keys(local.services["builder"].env), name)
+    ])
+    error_message = "The Builder is missing a setting its fargate driver, its artifact store or its preview proxy reads."
+  }
+
+  assert {
+    condition = (
+      local.services["builder"].env.BUILDER_WORKSPACE_DRIVER == "fargate" &&
+      local.services["builder"].env.BUILDER_ARTIFACT_STORE == "s3" &&
+      local.services["builder"].env.BUILDER_PREVIEW_URL_TEMPLATE == "https://preview.kelay.example/preview/{app}/" &&
+      local.services["builder"].host_headers == ["preview.kelay.example"] &&
+      local.services["builder"].command == ["node", "--import", "tsx", "src/server.ts"]
+    )
+    error_message = "The Builder runs workspaces on Fargate, stores bundles in S3, and serves previews on the preview host."
+  }
+
+  assert {
+    condition     = sort(keys(local.services["builder"].secrets)) == sort(["BUILDER_WORKSPACE_API_KEY", "KELAY_CALLER_SECRET"])
+    error_message = "The Builder gets the caller secret and the gateway key for its workspaces, and no database login."
+  }
+
+  assert {
+    condition     = local.services["console"].env.BUILDER_URL == "http://builder.${local.env}.kelay.internal:4006"
+    error_message = "The console reaches the Builder over private DNS."
+  }
+
+  assert {
+    condition = (
+      local.services["control-api"].env.ROUTE_STORE == "cloudflare-kv" &&
+      alltrue([for name in ["CLOUDFLARE_ACCOUNT_ID", "ROUTES_KV_NAMESPACE_ID"] : contains(keys(local.services["control-api"].env), name)]) &&
+      local.services["control-api"].secrets.CLOUDFLARE_API_TOKEN == "cloudflare-kv-token" &&
+      contains(local.secret_names, "cloudflare-kv-token")
+    )
+    error_message = "control-api writes the Router's route table to Workers KV with a token from a secret."
   }
 
   assert {

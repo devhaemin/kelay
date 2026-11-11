@@ -220,10 +220,13 @@ Kelay ID records a consent here (`PUT /internal/v1/consents`) each time a person
 **`POST /v1/apps/:app/envs/:env/deploy`** with `{ commit, artifactUrl, nodesArtifactUrl?, configVersion, schema?, policy?, graphs? }` → `201`
 
 ```jsonc
-{ "version": Version, "callerToken": "<jwt>" }   // callerToken only with the local deploy driver
+{ "version": Version,
+  "route": { "key": "app:orum/ticket-board", "published": true },   // only when an env has a function URL; with published: false also "error"
+  "callerToken": "<jwt>" }                                          // only with the local deploy driver
 ```
 
 - `artifactUrl` is the web function's bundle (handler `index.handler`) and `nodesArtifactUrl` the node function's (`nodes.handler`); the Builder builds and stores both (`services/builder`, "Bundles"). The `aws` driver takes `s3://<bucket>/<key>` only. A deploy of the active build again (the same `artifactUrl`) keeps that version's `nodesArtifactUrl`; without one, the node function is created from `artifactUrl` too.
+- **Route.** After the version is recorded, the app's entry in the Router's route table is written again from the function URL of each env's active version (contracts §6, "Route table"), through the `RouteStore` passed to `createControlApi` as `routes`. `ROUTE_STORE` picks it for the service: `memory` (default; no Router reads it), `file` with `ROUTES_FILE`, or `cloudflare-kv` with `CLOUDFLARE_ACCOUNT_ID`, `ROUTES_KV_NAMESPACE_ID` and `CLOUDFLARE_API_TOKEN` (Workers KV Storage: Edit). A table that cannot be written does not fail the deploy: `route.published` is `false` with the reason, and the next deploy or publish writes the entry again. `POST /v1/apps/:app/publish` does the same, and `DELETE /v1/apps/:app` (archive) deletes the entry. `/healthz` names the store as `routeStore`.
 - `schema`, `policy` and `graphs` left out of the body carry over from the env's active version. For dev, rules saved with `PUT …/policy` take the place of the active policy.
 - Each deploy mints the app-runtime caller token for that app × env (contracts §4) and stores where it went as `version.callerTokenRef`. The `local` driver has nowhere to keep it, so the response carries it; the `aws` driver sets it as `KELAY_CALLER_TOKEN` on the app's functions. `POST /v1/apps/:app/publish` does the same when it creates a prod version.
 - The token lasts `CALLER_TOKEN_TTL_SECONDS` (one year by default). A new deploy mints a new one.

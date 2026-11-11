@@ -2,12 +2,13 @@
 import { Hono } from 'hono';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { AppSchema, AppSlug, PolicyMatrix } from '@kelay/contracts';
+import { AppSchema, AppSlug, PolicyMatrix, routeKey } from '@kelay/contracts';
 import { signCallerToken } from '@kelay/tokens';
 import { requireBuilder, requireBuilderOrService, type AppEnv } from '../auth.ts';
 import { apps, envs, ENV_NAMES, versions, type AppRow, type EnvName, type EnvRow, type VersionRow } from '../db/schema.ts';
 import type { Ctx } from '../deps.ts';
 import { DeployError, type DeployInput } from '../deploy/driver.ts';
+import { appRoute } from '../deploy/routes.ts';
 import { ApiError } from '../errors.ts';
 import { databaseUrlFor } from './apps.ts';
 import { checkPolicy, findDraft } from './policy.ts';
@@ -65,6 +66,26 @@ export function deployRoutes(ctx: Ctx) {
       throw new ApiError('internal', `could not apply the schema and access rules to the ${env.name} database: ${(e as Error).message}`);
     }
     ctx.logger.info({ type: 'app_db_migrated', app, env: env.name }, 'schema and access rules applied');
+  };
+
+  /**
+   * Tells the Router where the app is served now. The version is deployed and recorded by this point, so
+   * a table that cannot be written does not undo it: the answer says the route was not published, and the
+   * next deploy or publish writes the whole entry again.
+   */
+  const publishRoute = async (app: AppRow): Promise<{ key: string; published: boolean; error?: string } | undefined> => {
+    const route = await appRoute(db, app.slug);
+    // No env has a function URL (the local driver): there is nothing a Router could send requests to.
+    if (!route.dev && !route.prod) return undefined;
+    const key = routeKey(app.handle, app.slug);
+    try {
+      await ctx.routes.put(app.handle, app.slug, route);
+      ctx.logger.info({ type: 'route_published', app: app.slug, key, store: ctx.routes.name, envs: Object.keys(route) }, 'route published');
+      return { key, published: true };
+    } catch (e) {
+      ctx.logger.error({ type: 'route_publish_failed', app: app.slug, key, store: ctx.routes.name, err: (e as Error).message }, 'the route was not published');
+      return { key, published: false, error: (e as Error).message };
+    }
   };
 
   const mintCallerToken = (app: string, env: EnvName) =>
@@ -153,7 +174,8 @@ export function deployRoutes(ctx: Ctx) {
       draft?.id,
     );
     ctx.logger.info({ type: 'deploy', app: app.slug, env: env.data, version: version.number, driver: ctx.deploy.name }, 'deployed');
-    return c.json({ version: versionView(version), ...(result.callerToken ? { callerToken: result.callerToken } : {}) }, 201);
+    const route = await publishRoute(app);
+    return c.json({ version: versionView(version), ...(route ? { route } : {}), ...(result.callerToken ? { callerToken: result.callerToken } : {}) }, 201);
   });
 
   r.post('/v1/apps/:app/publish', requireBuilder(ctx.auth), jsonBody(z.object({ versionId: z.uuid() })), async (c) => {
@@ -227,7 +249,8 @@ export function deployRoutes(ctx: Ctx) {
       .where(eq(apps.slug, app.slug))
       .returning();
     ctx.logger.info({ type: 'publish', app: app.slug, version: version.number, rollback: !!existing }, 'published');
-    return c.json({ version: versionView(version), app: appView(updated!), ...(callerToken ? { callerToken } : {}) });
+    const route = await publishRoute(app);
+    return c.json({ version: versionView(version), app: appView(updated!), ...(route ? { route } : {}), ...(callerToken ? { callerToken } : {}) });
   });
 
   r.get('/v1/apps/:app/versions', requireBuilder(ctx.auth), queryParams(z.object({ env: EnvParam.optional() })), async (c) => {
