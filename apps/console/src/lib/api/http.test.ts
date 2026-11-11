@@ -67,6 +67,30 @@ describe('Control API client', () => {
     expect(report).toMatchObject({ messages: 14, valid: 8, proposals: [{ id: 'p1', state: 'approved', refs: ['FB-131'] }] });
   });
 
+  it('reads the builder profile and member profiles from the Control API', async () => {
+    const member = { app: 'ticket-board', userId: 'kq3ZtB0aYp9mW2xLr7Vd', org: 'orum', role: 'member', plan: 'team', status: 'active' };
+    const { api } = fakeControlApi({
+      'GET /v1/me': () => ({ json: { me: { userId: 'b1', name: 'Jeongyun Lee', email: 'jeongyun@orum.test', provider: 'email', app: 'kelay-console', org: 'orum', role: 'builder', plan: 'pro', handle: 'orum' } } }),
+      'GET /v1/apps/ticket-board/members': () => ({
+        json: {
+          members: [
+            { ...member, name: 'Junho Park', email: 'junho@orum.test', provider: 'email', createdAt: '2026-10-02T00:00:00.000Z', lastSignInAt: '2026-11-11T01:00:00.000Z' },
+            { ...member, userId: 'zzzzzzzzzzzzzzzzzzzz', name: null, email: null, provider: null, createdAt: null, lastSignInAt: null },
+          ],
+        },
+      }),
+    });
+    expect(await api.getMe()).toEqual({ name: 'Jeongyun Lee', handle: 'orum', email: 'jeongyun@orum.test', team: 'orum' });
+    const [junho, unknown] = await api.listMembers('ticket-board');
+    expect(junho).toMatchObject({ name: 'Junho Park', email: 'junho@orum.test', provider: 'email', createdAt: '2026-10-02T00:00:00.000Z', lastSignInAt: '2026-11-11T01:00:00.000Z' });
+    expect(unknown).toMatchObject({ name: 'zzzzzzzz…', email: '', provider: null, lastSignInAt: null });
+  });
+
+  it('names the builder after their handle when the Control API has no /v1/me', async () => {
+    const { api } = fakeControlApi({ 'GET /v1/apps': () => ({ json: { apps: [appView] } }) });
+    expect(await api.getMe()).toEqual({ name: 'orum', handle: 'orum', email: '', team: '' });
+  });
+
   it('surfaces Control API errors and treats missing provisional reads as unavailable', async () => {
     const { api } = fakeControlApi({
       'POST /v1/grants/g1/allow': () => ({ status: 403, json: { error: { code: 'denied', message: 'only the target app’s owner can decide' } } }),

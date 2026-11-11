@@ -161,12 +161,12 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     };
   }
 
-  // app_members rows (contracts §9); the Control API returns them as stored, without profile fields.
+  // app_members rows (contracts §9) with the person's Kelay ID profile: name, email, provider, sign-in times.
   function toMember(raw: Json): Member {
     const userId = str(raw.userId) || str(raw.user_id);
     return {
       userId,
-      // Without a profile the id stands in for the name; ids are long, so the head of one is shown.
+      // A member Kelay ID has no account for has no profile; the head of the id stands in for the name.
       name: str(raw.name) || str(raw.email) || (userId.length > 12 ? `${userId.slice(0, 8)}…` : userId),
       email: str(raw.email),
       role: str(raw.role, 'member'),
@@ -395,10 +395,14 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     mode: 'http',
 
     async getMe() {
-      const me = await optional(request('GET', '/v1/me')); // PROVISIONAL
-      if (me) {
-        const b = obj(me.builder ?? me);
-        return { name: str(b.name) || str(b.handle), handle: str(b.handle), email: str(b.email), team: str(b.team) } satisfies Builder;
+      // 404 only from a Control API older than the route.
+      const body = await optional(request('GET', '/v1/me'));
+      if (body) {
+        const me = obj(body.me);
+        const handle = str(me.handle);
+        const email = str(me.email);
+        // The builder's org is the team their apps are for.
+        return { name: str(me.name) || handle || email || 'Builder', handle, email, team: str(me.org) } satisfies Builder;
       }
       const apps = await api.listApps();
       const handle = apps[0]?.handle ?? 'me';

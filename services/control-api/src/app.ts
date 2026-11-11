@@ -14,6 +14,7 @@ import { deployRoutes } from './routes/deploy.ts';
 import { feedbackRoutes } from './routes/feedback.ts';
 import { grantRoutes } from './routes/grants.ts';
 import { internalRoutes } from './routes/internal.ts';
+import { meRoutes } from './routes/me.ts';
 import { monitoringRoutes } from './routes/monitoring.ts';
 import { policyRoutes } from './routes/policy.ts';
 import { publicRoutes } from './routes/public.ts';
@@ -70,7 +71,7 @@ export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
     }
   });
 
-  for (const routes of [appRoutes, policyRoutes, monitoringRoutes, qaRoutes, feedbackRoutes, reportRoutes, grantRoutes, consentRoutes, deployRoutes, internalRoutes, publicRoutes]) {
+  for (const routes of [meRoutes, appRoutes, policyRoutes, monitoringRoutes, qaRoutes, feedbackRoutes, reportRoutes, grantRoutes, consentRoutes, deployRoutes, internalRoutes, publicRoutes]) {
     app.route('/', routes(ctx) as unknown as Hono<RootEnv>);
   }
   return app;

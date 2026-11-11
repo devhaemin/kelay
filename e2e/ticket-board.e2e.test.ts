@@ -175,6 +175,21 @@ describe('Feedback and the builder’s ticket board (Control API)', () => {
     });
   });
 
+  it('shows the builder each member’s Kelay ID profile, and their own', async () => {
+    const { status, body } = await builderGet(`/v1/apps/${APP}/members`);
+    expect(status).toBe(200);
+    const row = body.members.find((m: { userId: string }) => m.userId === users.junho);
+    expect(row).toMatchObject({ role: 'member', name: person('junho').name, email: person('junho').email, provider: 'email' });
+    // Junho signed in at the start of this run.
+    expect(Date.now() - Date.parse(row.lastSignInAt)).toBeLessThan(10 * 60_000);
+    expect(Date.parse(row.createdAt)).toBeLessThanOrEqual(Date.parse(row.lastSignInAt));
+    expect(body.members.map((m: { name: string }) => m.name).sort()).toEqual(TEAM.map((p) => p.name).sort());
+    expect((await builderGet(`/v1/apps/${APP}/members?q=${encodeURIComponent('junho@')}`)).body.members.map((m: { userId: string }) => m.userId)).toEqual([users.junho]);
+
+    const me = await builderGet('/v1/me');
+    expect(me.body.me).toMatchObject({ userId: builderId, name: BUILDER.name, email: BUILDER.email, provider: 'email', handle: HANDLE, org: ORG, role: 'builder' });
+  });
+
   it('lists the builder’s apps and keeps an app user off the builder routes', async () => {
     const apps = await builderGet('/v1/apps');
     expect(apps.body.apps.find((a: { slug: string }) => a.slug === APP)).toMatchObject({ handle: HANDLE, owner: builderId, status: 'live', members: TEAM.length });

@@ -161,6 +161,8 @@ The control API owns the migrations. Other services read only:
 
 - `app_members(app text, user_id text, org text, role text, plan text, status text, primary key (app, user_id))`
 
+In the other direction, the control API reads Kelay ID's `user`, `account` and `session` tables (better-auth's, in the same database) to show a member's name, email, sign-in provider and last sign-in. It never writes them.
+
 **Member writes go through the control API**, so the table has one writer:
 
 - `PUT /internal/v1/apps/:app/members/:userId { org, role?, plan?, status? }` (service caller). Kelay ID calls it when a person first opens an app. It creates the member or updates it; `role` defaults to `member` when the app declares it, and a banned member stays banned.

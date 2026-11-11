@@ -27,6 +27,18 @@ These existed before and are unchanged, except:
 - Version objects (`version`, `activeVersion`, `versions[]`) now also have `status: "draft" | "deployed"` and `callerTokenRef: string | null`.
 - `GET /v1/apps/:app/versions` lists deployed versions only.
 
+- `GET /v1/apps/:app/members` → each member is the `app_members` row plus the person's Kelay ID profile: `name`, `email`, `provider` (`"google" | "email" | "kakao" | "github"`), `createdAt` and `lastSignInAt` (the start of their newest session). All five are `null` for a user id Kelay ID has no account for. `q` matches the user id, name or email. `PATCH …/members/:userId` answers with the same shape.
+
+**`GET /v1/me`** (a console token, or an app token with that app's `x-kelay-caller`) → `200`
+
+```jsonc
+{ "me": { "userId", "name", "email", "provider", "createdAt", "lastSignInAt",   // the Kelay ID profile, as for members
+          "app": "kelay-console", "org": "orum", "role": "builder", "plan": "pro",   // from the token
+          "handle": "orum" } }                                                  // null until the person creates their first app
+```
+
+The profile comes from Kelay ID's `user`, `account` and `session` tables in the control DB, which the control API reads and never writes (`src/services/profiles.ts`).
+
 ### Access rules
 
 **`GET /v1/apps/:app/schema`** → `200`

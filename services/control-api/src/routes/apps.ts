@@ -1,13 +1,14 @@
 // Builder routes: apps CRUD and per-app membership (the Users tab).
 import { Hono } from 'hono';
-import { and, asc, eq, getTableColumns, ilike, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AppSlug, Ident } from '@kelay/contracts';
 import { requireBuilder, type AppEnv } from '../auth.ts';
 import type { Executor } from '../db/client.ts';
-import { appMembers, apps, builders, envs, versions, ENV_NAMES, type AppRow } from '../db/schema.ts';
+import { appMembers, apps, builders, envs, versions, ENV_NAMES, type AppRow, type MemberRow } from '../db/schema.ts';
 import type { Ctx } from '../deps.ts';
 import { ApiError, isUniqueViolation } from '../errors.ts';
+import { loadProfiles, NO_PROFILE } from '../services/profiles.ts';
 import { appView, jsonBody, loadApp, queryParams, versionView } from './util.ts';
 
 const CreateApp = z.object({
@@ -70,6 +71,12 @@ export function appRoutes(ctx: Ctx) {
   const r = new Hono<AppEnv>();
   const builder = requireBuilder(ctx.auth);
   const { db } = ctx;
+
+  /** app_members rows with the person's Kelay ID profile; the profile fields are null for an id Kelay ID does not know. */
+  const withProfiles = async (rows: MemberRow[]) => {
+    const profiles = await loadProfiles(db, rows.map((m) => m.userId));
+    return rows.map((m) => ({ ...m, ...(profiles.get(m.userId) ?? NO_PROFILE) }));
+  };
 
   r.get('/v1/apps', builder, async (c) => {
     const p = c.get('principal');
@@ -182,9 +189,12 @@ export function appRoutes(ctx: Ctx) {
       q.status ? eq(appMembers.status, q.status) : undefined,
       q.role ? eq(appMembers.role, q.role) : undefined,
       q.org ? eq(appMembers.org, q.org) : undefined,
-      q.q ? ilike(appMembers.userId, `%${q.q.replace(/[%_\\]/g, '\\$&')}%`) : undefined,
     );
-    const members = await db.select().from(appMembers).where(where).orderBy(asc(appMembers.userId));
+    // `q` matches the name and email as well as the user id, and those come from Kelay ID's tables.
+    const needle = q.q?.trim().toLowerCase();
+    const members = (await withProfiles(await db.select().from(appMembers).where(where).orderBy(asc(appMembers.userId)))).filter(
+      (m) => !needle || [m.userId, m.name, m.email].some((v) => v?.toLowerCase().includes(needle)),
+    );
     const [counts] = await db
       .select({
         all: sql<number>`count(*)::int`,
@@ -212,7 +222,7 @@ export function appRoutes(ctx: Ctx) {
       .returning();
     if (!member) throw new ApiError('not_found', 'no such member');
     ctx.logger.info({ type: 'member_updated', app: app.slug, user: member.userId, changes: Object.keys(body) }, 'member updated');
-    return c.json({ member });
+    return c.json({ member: (await withProfiles([member]))[0] });
   });
 
   r.delete('/v1/apps/:app/members/:userId', builder, async (c) => {
