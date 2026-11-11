@@ -1,18 +1,26 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { CALLER_HEADER, audienceForApp } from '@kelay/contracts';
+import { migrationSql } from '@kelay/policy';
 import { createDevSigner, signCallerToken, type DevSigner } from '@kelay/tokens';
 import { createControlApi } from '../src/app.ts';
+import { createAppDatabases } from '../src/appdb.ts';
 import { CONSOLE_APP } from '../src/auth.ts';
 import { createDatabase, runMigrations, type Database } from '../src/db/client.ts';
 import { LocalDeployDriver, type DeployDriver } from '../src/deploy/driver.ts';
 import { createLogger } from '../src/log.ts';
 import type { AppInfo, Llm, ReportDraft, ReportRequest, TriageItem, TriageLabel } from '../src/llm/types.ts';
+import type { QaRunner } from '../src/qa/runner.ts';
 import { PgImprovementQueue, type ImprovementQueue } from '../src/queue/improvement.ts';
 import type { ImprovementRunRow } from '../src/db/schema.ts';
 import { ADMIN_URL } from './global-setup.ts';
 
 export const CALLER_SECRET = 'test-caller-secret-0123456789abcdef';
+
+const fixture = (name: string) => JSON.parse(readFileSync(new URL(`../../../packages/contracts/fixtures/ticket-board/${name}`, import.meta.url), 'utf8'));
+export const ticketBoardSchema = fixture('schema.json');
+export const ticketBoardPolicy = fixture('policy.json');
 
 /** Deterministic stand-in for the model: keywords decide the label, the report cites the top tickets. */
 export class FakeLlm implements Llm {
@@ -67,10 +75,15 @@ export interface Harness {
   appCaller(app: string, env?: 'dev' | 'prod'): Promise<string>;
   service(svc?: string): Promise<string>;
   req(method: string, path: string, opts?: { token?: string; caller?: string; body?: unknown }): Promise<{ status: number; body: any }>;
+  /**
+   * Creates an app database migrated to the ticket-board fixture, points the app's env at it and deploys the
+   * fixture schema and policy there. `sql` runs queries as the database owner, who bypasses RLS.
+   */
+  appDatabase(app: string, builder: string, env?: 'dev' | 'prod'): Promise<{ url: string; sql: pg.Client['query'] }>;
   close(): Promise<void>;
 }
 
-export async function createHarness(opts: { deploy?: DeployDriver; dedupeThreshold?: number } = {}): Promise<Harness> {
+export async function createHarness(opts: { deploy?: DeployDriver; dedupeThreshold?: number; qa?: QaRunner } = {}): Promise<Harness> {
   const name = `control_test_${randomBytes(6).toString('hex')}`;
   const admin = new pg.Client({ connectionString: ADMIN_URL });
   await admin.connect();
@@ -84,8 +97,10 @@ export async function createHarness(opts: { deploy?: DeployDriver; dedupeThresho
   const llm = new FakeLlm();
   const deploy = opts.deploy ?? new LocalDeployDriver();
   const queue = new RecordingQueue(new PgImprovementQueue(database.db));
+  const appDbs = createAppDatabases();
   const app = createControlApi({
     db: database.db,
+    appDbs,
     auth: { issuer: signer.issuer, jwks: signer.verifier, callerSecret: CALLER_SECRET },
     llm,
     deploy,
@@ -93,9 +108,11 @@ export async function createHarness(opts: { deploy?: DeployDriver; dedupeThresho
     logger: createLogger('silent'),
     databaseUrlTemplate: 'postgres://kelay:kelay@localhost:54320/app_{app}_{env}',
     ...(opts.dedupeThreshold ? { dedupeThreshold: opts.dedupeThreshold } : {}),
+    ...(opts.qa ? { qa: opts.qa } : {}),
   });
+  const appDatabases: { name: string; client: pg.Client }[] = [];
 
-  return {
+  const h: Harness = {
     app,
     database,
     signer,
@@ -118,14 +135,38 @@ export async function createHarness(opts: { deploy?: DeployDriver; dedupeThresho
       const text = await res.text();
       return { status: res.status, body: text ? JSON.parse(text) : null };
     },
-    async close() {
-      await database.close();
+    async appDatabase(appSlug, builder, env = 'dev') {
+      const dbName = `${name}_app${appDatabases.length}`;
       const a = new pg.Client({ connectionString: ADMIN_URL });
       await a.connect();
+      await a.query(`create database ${dbName}`);
+      await a.end();
+      const url = ADMIN_URL.replace(/\/[^/]*$/, `/${dbName}`);
+      const client = new pg.Client({ connectionString: url });
+      await client.connect();
+      appDatabases.push({ name: dbName, client });
+      await client.query(migrationSql({ ...ticketBoardSchema, app: appSlug }, ticketBoardPolicy));
+      const put = await h.req('PUT', `/internal/v1/apps/${appSlug}/envs/${env}`, { caller: await h.service('provisioner'), body: { databaseUrl: url } });
+      if (put.status !== 200) throw new Error(`appDatabase ${appSlug}: ${put.status} ${JSON.stringify(put.body)}`);
+      const deployed = await h.req('POST', `/v1/apps/${appSlug}/envs/${env}/deploy`, {
+        token: builder,
+        body: { commit: 'a1', artifactUrl: `s3://kelay-builds/${appSlug}/a1.zip`, configVersion: 'cfg-a1', schema: { ...ticketBoardSchema, app: appSlug }, policy: ticketBoardPolicy },
+      });
+      if (deployed.status !== 201) throw new Error(`appDatabase ${appSlug}: deploy ${deployed.status} ${JSON.stringify(deployed.body)}`);
+      return { url, sql: client.query.bind(client) as pg.Client['query'] };
+    },
+    async close() {
+      await database.close();
+      await appDbs.close();
+      await Promise.all(appDatabases.map((d) => d.client.end()));
+      const a = new pg.Client({ connectionString: ADMIN_URL });
+      await a.connect();
+      for (const d of appDatabases) await a.query(`drop database if exists ${d.name} with (force)`);
       await a.query(`drop database if exists ${name} with (force)`);
       await a.end();
     },
   };
+  return h;
 }
 
 /** Creates an app owned by `sub` and returns the builder token. */

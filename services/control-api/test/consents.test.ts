@@ -76,4 +76,25 @@ describe('consents', () => {
     expect(res.body.consents.map((x: { userId: string; clientName: string }) => `${x.userId}:${x.clientName}`)).toEqual(['daniel:Cursor']);
     expect((await h.req('GET', '/v1/apps/ticket-board/consents', { token: await h.builder('stranger') })).status).toBe(403);
   });
+
+  it('lets the builder cut an assistant off from their app, and only from their app', async () => {
+    const [daniel] = (await h.req('GET', '/v1/apps/ticket-board/consents', { token: builder })).body.consents;
+    const check = `/internal/v1/consents/check?userId=daniel&app=ticket-board&clientId=${encodeURIComponent(CURSOR)}`;
+    expect((await h.req('GET', check, { caller: await h.service('mcp-gateway') })).body.active).toBe(true);
+
+    expect((await h.req('POST', `/v1/apps/ticket-board/consents/${daniel.id}/revoke`, { token: await h.builder('stranger') })).status).toBe(403);
+    // The consent belongs to ticket-board, so it cannot be revoked through another app the builder owns.
+    expect((await h.req('POST', `/v1/apps/team-wiki/consents/${daniel.id}/revoke`, { token: builder })).status).toBe(404);
+    expect((await h.req('POST', '/v1/apps/ticket-board/consents/nope/revoke', { token: builder })).status).toBe(404);
+
+    const revoked = await h.req('POST', `/v1/apps/ticket-board/consents/${daniel.id}/revoke`, { token: builder });
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.consent).toMatchObject({ id: daniel.id, userId: 'daniel', active: false });
+    expect(revoked.body.consent.revokedAt).toBeTruthy();
+    expect((await h.req('GET', check, { caller: await h.service('mcp-gateway') })).body).toEqual({ active: false, consent: null });
+    expect((await h.req('GET', '/v1/apps/ticket-board/consents', { token: builder })).body.consents).toEqual([]);
+
+    const again = await h.req('POST', `/v1/apps/ticket-board/consents/${daniel.id}/revoke`, { token: builder });
+    expect(again.body.consent.revokedAt).toBe(revoked.body.consent.revokedAt);
+  });
 });

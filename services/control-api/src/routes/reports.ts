@@ -149,8 +149,8 @@ export function reportRoutes(ctx: Ctx) {
     return c.json({ proposal: proposalView(proposal) });
   });
 
-  // Takes back an approve or a reject. An approval can be undone only while its improvement run is still
-  // queued: the run is removed and the tickets the approval moved to In progress go back to Triaged.
+  // Takes back an approve or a reject. An approval can be undone while its improvement run is still queued
+  // (the run is removed) or after the run failed; the tickets it moved to In progress go back to Triaged.
   r.post('/v1/proposals/:id/undo', builder, async (c) => {
     const principal = c.get('principal');
     const found = await loadProposal(c.req.param('id'));
@@ -164,7 +164,11 @@ export function reportRoutes(ctx: Ctx) {
           .delete(improvementRuns)
           .where(and(eq(improvementRuns.proposalId, found.id), eq(improvementRuns.status, 'queued')))
           .returning({ id: improvementRuns.id });
-        const [left] = await tx.select({ status: improvementRuns.status }).from(improvementRuns).where(eq(improvementRuns.proposalId, found.id)).limit(1);
+        const [left] = await tx
+          .select({ status: improvementRuns.status })
+          .from(improvementRuns)
+          .where(and(eq(improvementRuns.proposalId, found.id), inArray(improvementRuns.status, ['running', 'succeeded'])))
+          .limit(1);
         if (left) throw new ApiError('conflict', `the improvement run is already ${left.status}`);
         ctx.logger.info({ type: 'improvement_run_cancelled', proposal: found.id, runs: removed.map((x) => x.id) }, 'queued improvement run removed');
         const moved = await tx

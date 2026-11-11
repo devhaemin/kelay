@@ -19,13 +19,30 @@ async function reachable(): Promise<boolean> {
   }
 }
 
+/**
+ * Roles are shared by every database of the server. Test files migrate app databases in parallel, and
+ * two of them creating kelay_runtime at once would collide, so it is created here, once.
+ */
+async function createRuntimeRole(): Promise<void> {
+  const client = new pg.Client({ connectionString: ADMIN_URL });
+  await client.connect();
+  try {
+    await client.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kelay_runtime') THEN CREATE ROLE kelay_runtime NOLOGIN NOBYPASSRLS; END IF;
+    END $$`);
+  } finally {
+    await client.end();
+  }
+}
+
 export default async function setup() {
-  if (await reachable()) return;
+  if (await reachable()) return createRuntimeRole();
   execFileSync('docker', ['run', '-d', '--rm', '--name', CONTAINER, '-p', '54334:5432', '-e', 'POSTGRES_PASSWORD=kelay', 'postgres:17'], {
     stdio: 'ignore',
   });
   for (let i = 0; i < 60; i++) {
     if (await reachable()) {
+      await createRuntimeRole();
       return () => {
         execFileSync('docker', ['stop', CONTAINER], { stdio: 'ignore' });
       };

@@ -166,6 +166,13 @@ The control API owns the migrations. Other services read only:
 - `PUT /internal/v1/apps/:app/members/:userId { org, role?, plan?, status? }` (service caller). Kelay ID calls it when a person first opens an app. It creates the member or updates it; `role` defaults to `member` when the app declares it, and a banned member stays banned.
 - `PATCH /v1/apps/:app/members/:userId` and `DELETE /v1/apps/:app/members/:userId` (builder token) change a role or plan, ban, unban or remove a member.
 
+**Runs.** The control API also owns `runs`, the record of what was done in each app; Monitoring reads it. Services write to it through the control API (service caller), never directly:
+
+- `POST /internal/v1/runs { runs: [{ app, action, status: "ok" | "blocked" | "error", env?, userId?, args?, ms?, note?, costUsd?, at?, caller?: { kind: "user" | "agent" | "app", id?, name? } }] }`, 1 to 500 per request;
+- `POST /internal/v1/mcp-calls { calls: McpCallRecord[] }` from the MCP gateway (§7). Each call becomes a run whose caller is the member's assistant.
+
+Both answer `201 { recorded, skipped }`; records for apps that do not exist are skipped. The builder routes over this data are listed in [`services/control-api/README.md`](../services/control-api/README.md).
+
 ## 10. Agent graph (`GraphSpec`)
 
 - **Nodes.** A node lists `next` (one node, or several that run in parallel and share one join node), plus optional `retry`, `timeoutSeconds`, `model` and `review`. Edges through `next` may not form a cycle; the only way back is a review.

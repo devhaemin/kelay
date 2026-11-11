@@ -164,8 +164,8 @@ Newest first. This is the console's `ToolCall` plus `userId`, `clientId`, `clien
 
 **`POST /v1/proposals/:id/undo`** → `200 { "proposal": Proposal }` with `status: "pending"` and `run: null`.
 
-- Undoes a reject, or an approve whose improvement run is still queued. The queued run is removed and the tickets the approval moved to `progress` go back to `triaged`.
-- `409 conflict` when the run has started or finished, or the proposal is `built`. Undoing a pending proposal returns it unchanged.
+- Undoes a reject, or an approve whose improvement run is still queued or has failed. A queued run is removed, and the tickets the approval moved to `progress` go back to `triaged`.
+- `409 conflict` when the run is running or succeeded, or the proposal is `built`. Undoing a pending proposal returns it unchanged.
 
 ### Assistant connections
 
