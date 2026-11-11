@@ -1,0 +1,47 @@
+# Copy to terraform.tfvars (ignored by infra/terraform/.gitignore). No credentials belong here.
+# Credentials come from the environment: AWS (OIDC role or profile), CLOUDFLARE_API_TOKEN,
+# and CLICKHOUSE_* when enable_clickhouse = true.
+
+aws_account_id = "222222222222"
+
+cloudflare_account_id = "00000000000000000000000000000000"
+zone_name             = "kelay.example"
+app_hostname          = "kelay.example"
+certificate_arn       = "arn:aws:acm:ap-northeast-2:222222222222:certificate/00000000-0000-0000-0000-000000000000"
+
+image_tag = "0000000"
+
+vpc_cidr           = "10.41.0.0/16"
+single_nat_gateway = false
+enable_flow_log    = true
+
+aurora_min_capacity   = 0.5
+aurora_max_capacity   = 16
+aurora_instance_count = 2
+
+deletion_protection = true
+
+enable_execute_command = false
+log_retention_days     = 90
+
+enable_managed_waf = true
+
+service_overrides = {
+  console          = { desired_count = 2, autoscaling = { min = 2, max = 6 } }
+  "control-api"    = { desired_count = 2, autoscaling = { min = 2, max = 6 } }
+  identity         = { desired_count = 2, autoscaling = { min = 2, max = 6 } }
+  "data-api"       = { desired_count = 2, cpu = 1024, memory = 2048, autoscaling = { min = 2, max = 10 } }
+  "mcp-gateway"    = { desired_count = 2, autoscaling = { min = 2, max = 6 } }
+  "llm-gateway"    = { desired_count = 2, cpu = 2048, memory = 4096, autoscaling = { min = 2, max = 10 } }
+  "preview-proxy"  = { desired_count = 2 }
+  "otel-collector" = { desired_count = 2, cpu = 1024, memory = 2048 }
+}
+
+sandbox_cpu    = 2048
+sandbox_memory = 8192
+
+alarm_emails = ["oncall@kelay.example"]
+
+enable_clickhouse                = true
+clickhouse_min_replica_memory_gb = 16
+clickhouse_max_replica_memory_gb = 64

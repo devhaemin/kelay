@@ -1,0 +1,33 @@
+# Copy to terraform.tfvars (ignored by infra/terraform/.gitignore). No credentials belong here.
+# Credentials come from the environment: AWS (OIDC role or profile), CLOUDFLARE_API_TOKEN,
+# and CLICKHOUSE_* when enable_clickhouse = true.
+
+aws_account_id = "111111111111"
+
+cloudflare_account_id = "00000000000000000000000000000000"
+zone_name             = "kelay-staging.example"
+app_hostname          = "kelay-staging.example"
+certificate_arn       = "arn:aws:acm:ap-northeast-2:111111111111:certificate/00000000-0000-0000-0000-000000000000"
+
+image_tag = "0000000"
+
+vpc_cidr           = "10.40.0.0/16"
+single_nat_gateway = true
+
+aurora_min_capacity   = 0
+aurora_max_capacity   = 4
+aurora_instance_count = 1
+
+# Staging can be torn down; prod keeps this true.
+deletion_protection = false
+
+enable_execute_command = true
+log_retention_days     = 14
+
+service_overrides = {
+  console = { desired_count = 1 }
+}
+
+alarm_emails = []
+
+enable_clickhouse = false

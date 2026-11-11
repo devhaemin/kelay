@@ -1,0 +1,3 @@
+# terraform init -backend-config=backend.hcl
+# The state bucket lives in the same account as the env; see infra/terraform/README.md to create it.
+bucket = "kelay-tfstate-222222222222"
