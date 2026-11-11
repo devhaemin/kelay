@@ -104,14 +104,21 @@ export class AnthropicLlm implements Llm {
     p: { model: string; effort: Effort; maxTokens: number; system: string; content: string },
   ): Promise<z.infer<S>> {
     const fallbacks = this.opts.fallbacks ?? true;
-    const msg = await this.client.beta.messages.parse({
-      model: p.model,
-      max_tokens: p.maxTokens,
-      system: p.system,
-      messages: [{ role: 'user', content: p.content }],
-      output_config: { effort: p.effort, format: betaZodOutputFormat(schema) },
-      ...(fallbacks ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
-    });
+    let msg;
+    try {
+      msg = await this.client.beta.messages.parse({
+        model: p.model,
+        max_tokens: p.maxTokens,
+        system: p.system,
+        messages: [{ role: 'user', content: p.content }],
+        output_config: { effort: p.effort, format: betaZodOutputFormat(schema) },
+        ...(fallbacks ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
+      });
+    } catch (e) {
+      // APIError (HTTP, rate limit, connection) propagates; a bare AnthropicError here means the output did not parse.
+      if (e instanceof Anthropic.AnthropicError && !(e instanceof Anthropic.APIError)) throw new LlmError(e.message);
+      throw e;
+    }
     if (msg.stop_reason === 'refusal') {
       throw new LlmError(`model declined (${msg.stop_details?.category ?? 'unknown'})`);
     }
