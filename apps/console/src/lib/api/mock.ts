@@ -476,6 +476,11 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
       return clone(qa);
     },
 
+    async getBuilderSession(app) {
+      findApp(app);
+      return null;
+    },
+
     async getBuilderThread(app, tab) {
       findApp(app);
       return clone(thread(app, tab));

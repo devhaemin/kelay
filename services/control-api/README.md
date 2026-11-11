@@ -248,4 +248,6 @@ Records for apps that do not exist are skipped and counted in `skipped`.
 
 **`POST /internal/v1/mcp-calls`** with `{ "calls": McpCallRecord[] }` (1 to 500; contracts §7) → `201 { "recorded", "skipped" }`. Each call becomes a run with `caller.kind = "agent"`, linked to the member's consent for that client, and moves that consent's `lastUsedAt`. The MCP gateway posts here when `CONTROL_API_URL` is set.
 
+**`PUT /internal/v1/sandboxes`** with `{ "taskArn", "owner", "app", "kind": "workspace" | "improvement", "status": "running" | "stopped" }` → `200 { "sandbox" }`. The Builder ([`services/builder`](../builder/README.md)) calls it when it starts, uses and stops a workspace; there is one row per `taskArn` (an ECS task ARN, or `local:<dir>`), and each call moves `lastActive`.
+
 The other internal routes (`/internal/v1/apps/:app?env=`, members, consents, grants, feedback intake, improvement runs) are described in contracts §6 and §9 and in `src/routes/internal.ts`.

@@ -2,6 +2,7 @@
 // mapped from the Control API's views (slug, purpose, fromApp, ...) to the console's types. Reads
 // the Control API has no route for yet are marked PROVISIONAL: a 404 means "not available".
 import { AppSchema, PolicyMatrix } from '@kelay/contracts';
+import { threadFromEvents, type BuilderEvent, type BuilderSession } from '../builder';
 import { ApiError, isApiError } from './errors';
 import type {
   AccessPreview,
@@ -12,7 +13,6 @@ import type {
   AppSummary,
   AssistantKind,
   Builder,
-  ChatMessage,
   ConsoleApi,
   Consent,
   DeployResult,
@@ -38,6 +38,8 @@ export interface HttpApiOptions {
   appOrigin?: string;
   /** MCP_PUBLIC_BASE_URL of the MCP gateway (contracts §7). */
   mcpBaseUrl?: string;
+  /** BUILDER_URL of the Builder (services/builder). Without it, apps have no workspace, preview or chat. */
+  builderUrl?: string;
   fetch?: typeof fetch;
 }
 
@@ -73,9 +75,9 @@ const assistantKind = (name: string, clientId: string): AssistantKind => {
   return s.includes('claude') ? 'claude' : s.includes('cursor') ? 'cursor' : 'other';
 };
 
-export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app', mcpBaseUrl = appOrigin, fetch: fetchImpl = fetch }: HttpApiOptions): ConsoleApi {
-  async function request(method: string, path: string, body?: unknown): Promise<Json> {
-    const res = await fetchImpl(new URL(path, baseUrl), {
+export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app', mcpBaseUrl = appOrigin, builderUrl, fetch: fetchImpl = fetch }: HttpApiOptions): ConsoleApi {
+  async function request(method: string, path: string, body?: unknown, base = baseUrl): Promise<Json> {
+    const res = await fetchImpl(new URL(path, base), {
       method,
       headers: {
         authorization: `Bearer ${token}`,
@@ -104,6 +106,12 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
   }
 
   const seg = encodeURIComponent;
+
+  /** A call to the Builder with the same builder token. Null when no Builder is configured or the app has no workspace there. */
+  async function builder(method: string, path: string, body?: unknown): Promise<Json | null> {
+    if (!builderUrl) return null;
+    return optional(request(method, path, body, builderUrl));
+  }
 
   function toSummary(raw: Json): AppSummary {
     const id = str(raw.slug) || str(raw.id);
@@ -424,9 +432,10 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       return toSummary(obj(body.app));
     },
 
+    // The dev preview is the workspace's `next dev`. It runs while the workspace is in use.
     async getPreview(app) {
-      const a = await api.getApp(app);
-      return a.previewUrl ? { kind: 'url', url: a.previewUrl } : null;
+      const url = str(obj((await builder('GET', `/v1/workspaces/${seg(app)}`))?.workspace).previewUrl);
+      return url ? { kind: 'url', url } : null;
     },
 
     async listMembers(app) {
@@ -591,13 +600,36 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       return toQa(obj((await request('POST', `/v1/apps/${seg(app)}/qa/run`, {})).qa));
     },
 
-    async getBuilderThread(app, tab) {
-      const body = await optional(request('GET', `/v1/apps/${seg(app)}/builder/thread?tab=${seg(tab)}`)); // PROVISIONAL
-      return body ? (arr(body.messages) as unknown as ChatMessage[]) : [];
+    async getBuilderSession(app) {
+      const status = await builder('GET', `/v1/workspaces/${seg(app)}`);
+      if (!status) return null;
+      const events = await builder('GET', `/v1/workspaces/${seg(app)}/events?format=json`);
+      const w = obj(status.workspace);
+      const agent = obj(w.agent);
+      return {
+        workspace: {
+          app,
+          state: oneOf(w.state, ['working', 'idle', 'stopped'] as const, 'stopped'),
+          agent: { kind: agent.kind === 'claude' ? 'claude' : 'scripted', model: str(agent.model) || null },
+          previewUrl: str(w.previewUrl) || null,
+          version: str(w.version) || null,
+          lastEventId: num(w.lastEventId),
+        },
+        // The Builder's own records, in its order; the console only reads the fields it knows.
+        events: arr(events?.events) as unknown as BuilderEvent[],
+      } satisfies BuilderSession;
     },
 
-    async sendBuilderMessage() {
-      throw unavailable('The Builder workspace chat');
+    async getBuilderThread(app) {
+      const session = await api.getBuilderSession(app);
+      return session ? threadFromEvents(session.events) : [];
+    },
+
+    // Starts a turn and returns the thread as it stands; the chat panel follows the rest on the event stream.
+    async sendBuilderMessage(app, tab, text) {
+      if (!builderUrl) throw unavailable('The Builder workspace chat');
+      await request('POST', `/v1/workspaces/${seg(app)}/messages`, { text, context: tab }, builderUrl);
+      return api.getBuilderThread(app, tab);
     },
   };
   return api;

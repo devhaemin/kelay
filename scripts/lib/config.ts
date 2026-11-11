@@ -28,6 +28,9 @@ export interface StackConfig {
   appOrigin: string;
   llmGatewayUrl: string;
   llmGatewayKey: string;
+  builderUrl: string;
+  /** Where the Builder creates the database of an app it builds; `{app}` and `{env}` are filled in. */
+  appDatabaseUrlTemplate: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -46,6 +49,8 @@ const DEFAULTS = {
   KELAY_APP_ORIGIN: 'http://localhost:8787',
   LLM_GATEWAY_URL: 'http://localhost:4000',
   LLM_GATEWAY_KEY: 'sk-kelay-dev',
+  BUILDER_URL: 'http://localhost:4006',
+  APP_DATABASE_URL_TEMPLATE: 'postgres://kelay:kelay@localhost:54320/app_{app}_{env}',
 } as const;
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
@@ -73,6 +78,8 @@ export function configFromEnv(env: Env): StackConfig {
     appOrigin: trimSlash(get('KELAY_APP_ORIGIN')),
     llmGatewayUrl: get('LLM_GATEWAY_URL'),
     llmGatewayKey: get('LLM_GATEWAY_KEY'),
+    builderUrl: trimSlash(get('BUILDER_URL')),
+    appDatabaseUrlTemplate: get('APP_DATABASE_URL_TEMPLATE'),
   };
 }
 
@@ -104,5 +111,6 @@ export function serviceEnv(cfg: StackConfig): Record<string, string> {
     KELAY_APP_ORIGIN: cfg.appOrigin,
     LLM_GATEWAY_URL: cfg.llmGatewayUrl,
     LLM_GATEWAY_KEY: cfg.llmGatewayKey,
+    BUILDER_URL: cfg.builderUrl,
   };
 }
