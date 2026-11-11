@@ -4,7 +4,7 @@ import pg from 'pg';
 import { LOCAL_PORTS, databaseCredentialsFromEnv, databaseUrlWithCredentials } from '@kelay/contracts';
 import { registrySourceFromEnv } from '@kelay/contracts/registry';
 import { signCallerToken } from '@kelay/tokens';
-import { controlApiConsents, createReloadingIdentity, migrateIdentity, socialFromEnv, type IdentityDeps } from './index.ts';
+import { builderSignupFromEnv, controlApiBuilders, controlApiConsents, createReloadingIdentity, migrateIdentity, socialFromEnv, type IdentityDeps } from './index.ts';
 
 const env = process.env;
 const production = env.NODE_ENV === 'production';
@@ -31,6 +31,11 @@ const registry = registrySourceFromEnv(env, {
 });
 const refreshSeconds = Number(env.KELAY_APPS_TTL_SECONDS ?? 30);
 
+// The first-builder bootstrap: who becomes a builder by signing up. The membership is written by the control API.
+const signup = builderSignupFromEnv(env);
+const signupOn = signup.open || signup.allowlist.length > 0;
+if (signupOn && !(controlApiUrl && callerSecret)) throw new Error('identity: KELAY_BUILDER_ALLOWLIST and KELAY_OPEN_SIGNUP need CONTROL_API_URL and KELAY_CALLER_SECRET');
+
 const database = new pg.Pool({ connectionString: databaseUrlWithCredentials(required('CONTROL_DATABASE_URL'), databaseCredentialsFromEnv(env)) });
 const deps: Omit<IdentityDeps, 'registry'> = {
   database,
@@ -40,8 +45,12 @@ const deps: Omit<IdentityDeps, 'registry'> = {
   emailPassword: !production || env.KELAY_ID_EMAIL_PASSWORD === 'true',
   social: socialFromEnv(env),
   corsOrigins: list(env.KELAY_ID_CORS_ORIGINS),
+  returnLoopback: !production,
   ...(clientIpHeader ? { clientIpHeader } : {}),
+  ...(env.KELAY_ID_COOKIE_DOMAIN ? { cookieDomain: env.KELAY_ID_COOKIE_DOMAIN } : {}),
   ...(controlApiUrl && callerSecret ? { consents: controlApiConsents({ controlApiUrl, callerSecret }) } : {}),
+  // A production build has no email verification, so there only a provider-verified email matches the allowlist.
+  ...(signupOn && controlApiUrl && callerSecret ? { builders: { ...signup, requireVerifiedEmail: production, enroll: controlApiBuilders({ controlApiUrl, callerSecret }) } } : {}),
 };
 
 // The tables do not depend on which apps exist.

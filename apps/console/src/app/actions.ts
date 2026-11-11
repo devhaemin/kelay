@@ -2,12 +2,11 @@
 // Server actions are public endpoints: every argument is validated before it reaches the API.
 import { AppSlug, PolicyMatrix } from '@kelay/contracts';
 import { revalidatePath } from 'next/cache';
-import { cookies } from 'next/headers';
-import { redirect, unstable_rethrow } from 'next/navigation';
+import { unstable_rethrow } from 'next/navigation';
 import { z } from 'zod';
 import type { ActionResult } from '@/lib/action-result';
 import { isApiError } from '@/lib/api/errors';
-import { TOKEN_COOKIE, getConsoleApi } from '@/lib/api/server';
+import { getConsoleApi } from '@/lib/api/server';
 import type {
   AppMetrics,
   AppPolicy,
@@ -154,22 +153,4 @@ export async function savePolicyAction(app: string, matrix: unknown): Promise<Ac
 
 export async function sendBuilderMessageAction(app: string, tab: string, text: string): Promise<ActionResult<ChatMessage[]>> {
   return run((api) => api.sendBuilderMessage(AppSlug.parse(app), Tab.parse(tab), Text.parse(text)));
-}
-
-export async function signInAction(formData: FormData): Promise<void> {
-  const token = z.string().trim().min(16).max(8192).safeParse(formData.get('token'));
-  if (!token.success) redirect('/signin?error=token');
-  (await cookies()).set(TOKEN_COOKIE, token.data, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: 60 * 60 * 12,
-  });
-  redirect('/');
-}
-
-export async function signOutAction(): Promise<void> {
-  (await cookies()).delete(TOKEN_COOKIE);
-  redirect('/signin');
 }

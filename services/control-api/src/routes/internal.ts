@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { and, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AppRegistryEntry, AppSlug, Ident, type AppList } from '@kelay/contracts';
-import { requireService, type AppEnv } from '../auth.ts';
+import { BUILDER_ROLES, CONSOLE_APP, requireService, type AppEnv } from '../auth.ts';
 import { appMembers, apps, consents, envs, ENV_NAMES, GRANT_KINDS, grants, sandboxes, TICKET_SOURCES, versions } from '../db/schema.ts';
 import type { Ctx } from '../deps.ts';
 import { ApiError } from '../errors.ts';
@@ -114,17 +114,21 @@ export function internalRoutes(ctx: Ctx) {
     return c.json({ app: app.slug, env: env.data, hasDatabase: true });
   });
 
-  // Kelay ID calls this when a person first opens an app, so app_members has a single writer.
+  // Kelay ID and the Builder call this, so app_members has a single writer. The console is not an app
+  // row, yet its builders are members of `kelay-console`: that slug takes the builder roles only.
   r.put('/internal/v1/apps/:app/members/:userId', jsonBody(UpsertMember), async (c) => {
-    const app = await liveApp(c.req.param('app'));
     const body = c.req.valid('json');
+    const slug = c.req.param('app') === CONSOLE_APP ? CONSOLE_APP : (await liveApp(c.req.param('app'))).slug;
+    if (slug === CONSOLE_APP && body.role && !BUILDER_ROLES.includes(body.role)) {
+      throw new ApiError('invalid_request', `role must be one of ${BUILDER_ROLES.join(', ')}`);
+    }
     const [member] = await db
       .insert(appMembers)
       .values({
-        app: app.slug,
+        app: slug,
         userId: c.req.param('userId'),
         org: body.org,
-        role: body.role ?? defaultRole(await declaredRoles(db, app.slug)),
+        role: body.role ?? (slug === CONSOLE_APP ? 'builder' : defaultRole(await declaredRoles(db, slug))),
         plan: body.plan ?? 'free',
         status: body.status ?? 'active',
       })

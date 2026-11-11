@@ -108,6 +108,8 @@ COMMIT;
 - Use `@kelay/tokens`: `verifyKelayToken`, `signCallerToken`, `verifyCallerToken`. `createDevSigner` is for tests and local runs.
 - The control API mints an app's `app-runtime` caller token when it deploys a version (`POST /v1/apps/:app/envs/:env/deploy`). The version stores only a reference to it (`callerTokenRef`). The `local` deploy driver returns the token itself in the deploy response; the `aws` driver puts it in the functions' environment.
 
+**In a dev preview** there is no router. The starter template's `/api/kelay` route then reads the person from their Kelay ID session: the browser sends Kelay ID's session cookie to the preview as well, because the two share a site (locally both are `localhost`, and cookies ignore the port). The route forwards that cookie to `POST {KELAY_ID_ISSUER}/v1/token { app }` (§8), keeps the token until shortly before it expires, and calls the Data API with it and with the app-runtime caller token of the dev deploy. Without a session it answers `unauthenticated`, and `GET /api/kelay/signin` sends the browser to Kelay ID's login page and back. A person who is signed in but is not a member of the app gets Kelay ID's `denied`.
+
 **Behind the router.** The router signs requests to a Lambda function URL with SigV4, and the signature takes over `authorization`. On those requests the router moves the caller's own `authorization` (the user token) to **`x-kelay-authorization`** (`USER_AUTHORIZATION_HEADER`). It drops every inbound `x-kelay-*` header first, so an app can trust the ones it receives. App server code reads the user token with `userTokenFromHeaders` or `requireUserToken` from `@kelay/sdk/server`, which check `x-kelay-authorization` first and `authorization` second.
 
 ## 5. Data API — `POST /v1/apps/:app/query`
@@ -133,8 +135,10 @@ Kelay ID, the Data API and the MCP gateway look apps up through an `AppRegistryS
 
 | `KELAY_APPS_SOURCE` | Reads | Used |
 |---|---|---|
-| `file` (default) | `KELAY_APPS_FILE`, once at start. `fixtures/apps.local.json` maps an app slug to its handle, `databaseUrl`, schema and policy (inline or by file). The file has one entry per app, so it answers the same for `dev` and `prod`. | Local runs, tests, e2e. |
-| `control-api` | The control API at `CONTROL_API_URL`, as a `service` caller (§4). | Every deployed environment. |
+| `file` (default) | `KELAY_APPS_FILE`, once at start. `fixtures/apps.local.json` maps an app slug to its handle, `databaseUrl`, schema and policy (inline or by file). The file has one entry per app, so it answers the same for `dev` and `prod`. | A service run on its own, and unit tests. It knows no app that was built later. |
+| `control-api` | The control API at `CONTROL_API_URL`, as a `service` caller (§4). | Every deployed environment, `pnpm dev:up` and the e2e suite. |
+
+`pnpm dev:up` sets `KELAY_APPS_SOURCE=control-api` with `KELAY_APPS_TTL_SECONDS=5`, so an app the Builder deployed to Development is known to the Data API at once and a changed schema within five seconds. The migration and the seed still read Ticket Board's schema and database from `KELAY_APPS_FILE`.
 
 The control API serves the registry to service callers:
 
@@ -189,9 +193,12 @@ The Router Worker finds where `/<handle>/<app>` is served in Workers KV: the key
   - `mcp` and `cimd`, for MCP OAuth 2.1 and the Client ID Metadata Document flow (MCP 2026-07-28; DCR off).
   - Social sign-in: Google, Kakao, GitHub, and email/password in dev.
 - **OAuth endpoints.** better-auth is mounted at `/api/auth`, so the endpoints are `{KELAY_ID_ISSUER}/api/auth/oauth2/authorize` and `{KELAY_ID_ISSUER}/api/auth/oauth2/token`. The RFC 8414 metadata is at `{KELAY_ID_ISSUER}/.well-known/oauth-authorization-server`.
+- **Returning from sign-in.** `GET /login?return_to=<url>` sends the browser to `<url>` once the person is signed in, at once when they already are. The URL's origin must be Kelay ID's own or one of `KELAY_ID_CORS_ORIGINS`; outside a production build any loopback origin is accepted too, because dev previews listen on a free port. Any other value is dropped and the person stays on Kelay ID.
 - **App-scoped token.** `POST /v1/token { app }` with a session returns `{ token }`. Its claims come from `app_members` (contract §9 below) and it uses `aud = kelay:app:<app>`. Only an `active` member gets one. The route does not consult the registry, so it also serves apps that are not published, such as the console (`kelay-console`). Browser calls are accepted from Kelay ID's own origin and from the origins in `KELAY_ID_CORS_ORIGINS`.
 - **MCP tokens** are bound to the app's MCP resource URL and carry the same claims plus `azp`. Consent is per user × app × client. They exist only for apps in the registry (§6): better-auth takes its protected resources when an instance is created, so Kelay ID builds a new instance when the app list changes. Sessions, keys, clients and consents live in the control DB and carry over.
 - **Consents.** When a person allows an assistant, Kelay ID records it in the control API (`PUT /internal/v1/consents`) before it grants anything; a consent the control API did not store is not granted. A production build requires `CONTROL_API_URL` and `KELAY_CALLER_SECRET` for this. Kelay ID looks its own consent row up on every token grant, which is how a revoke in the control API (§9) ends access.
+- **The console's sign-in.** The console (`apps/console`) has no login form. It sends the browser to `/login?return_to={CONSOLE_URL}/auth/callback`. Back at the console, the browser's request carries Kelay ID's session cookie, and the console's server forwards it to `POST /v1/token { app: "kelay-console" }`. It keeps the token in the httpOnly cookie `kelay_token` and repeats the exchange when the token has less than three minutes left. Signing out calls better-auth's `POST /api/auth/sign-out` with the session cookie and `Origin: {CONSOLE_URL}`; the origins in `KELAY_ID_CORS_ORIGINS` are better-auth's trusted origins. All of this needs the browser to send the session cookie to both hosts: on `localhost` it does, and for two hosts under one domain set `KELAY_ID_COOKIE_DOMAIN` to that domain.
+- **Becoming a builder.** A builder is an `active` member of `kelay-console` with the role `builder` or `admin`. With `KELAY_BUILDER_ALLOWLIST` (comma-separated emails) or `KELAY_OPEN_SIGNUP=true`, Kelay ID makes a person a builder when they sign up: it calls `PUT /internal/v1/apps/kelay-console/members/:userId { org: <user id>, role: "builder" }` (§9) after the account is created, and at their first `kelay-console` token request if they have no membership by then. Both need `CONTROL_API_URL` and `KELAY_CALLER_SECRET`. In a production build an allowlisted email must be verified, which only a social provider does. A person who is already a member, banned ones included, is never changed by this.
 - **Sign-in methods.** A provider is on when both `<PROVIDER>_CLIENT_ID` and `<PROVIDER>_CLIENT_SECRET` are set. Email and password is on in dev, and in a production build only with `KELAY_ID_EMAIL_PASSWORD=true`.
 
 ## 9. Control DB tables shared across services
@@ -206,7 +213,7 @@ In the other direction, the control API reads Kelay ID's `user`, `account` and `
 
 **Member writes go through the control API**, so the table has one writer:
 
-- `PUT /internal/v1/apps/:app/members/:userId { org, role?, plan?, status? }` (service caller). Kelay ID calls it when a person first opens an app. It creates the member or updates it; `role` defaults to `member` when the app declares it, and a banned member stays banned.
+- `PUT /internal/v1/apps/:app/members/:userId { org, role?, plan?, status? }` (service caller). It creates the member or updates it; `role` defaults to `member` when the app declares it, and a banned member stays banned. The Builder calls it once per app, after the first deploy to Development, to make the builder a member with the role `admin` (the app's first role when it declares no `admin`) in the org of their console token. It adds nobody else. `:app` may also be `kelay-console`, which is not an app row: its members are the builders, and `role` must be `builder` (the default) or `admin`.
 - `PATCH /v1/apps/:app/members/:userId` and `DELETE /v1/apps/:app/members/:userId` (builder token) change a role or plan, ban, unban or remove a member.
 
 **Runs.** The control API also owns `runs`, the record of what was done in each app; Monitoring reads it. Services write to it through the control API (service caller), never directly:
@@ -236,12 +243,13 @@ Both answer `201 { recorded, skipped }`; records for apps that do not exist are 
 | Control API | 4003 |
 | MCP gateway | 4004 |
 | Run orchestrator | 4007 |
+| Console | 3000 |
 | Dev sign-in helper (`pnpm dev:up`) | 4005 |
 | Builder | 4006 |
 | Router (wrangler dev) | 8787 |
 | Postgres (compose) | 54320 |
 
-Postgres ports for parallel test containers: policy and SDK 54331, data-api 54332, identity 54333, control-api 54334, mcp-gateway 54335, e2e 54336.
+Postgres ports for parallel test containers: policy and SDK 54331, data-api 54332, identity 54333, control-api 54334, mcp-gateway 54335, e2e 54336. The e2e suite's services listen on 4410–4417.
 
 ## 12. Models
 

@@ -84,7 +84,7 @@ describe('the bundles of the scripted Ticket Board app', () => {
       urlEvent(BASE),
       urlEvent(`${BASE}${css}`),
       urlEvent(`${BASE}/_next/static/chunks/nope.js`),
-      urlEvent(`${BASE}/api/kelay/v1/apps/ticket-board/query`, 'GET'),
+      { ...urlEvent(`${BASE}/api/kelay/v1/apps/ticket-board/query`, 'POST'), body: '{"op":"list","collection":"tickets"}' },
       urlEvent('/'),
     ]);
 
@@ -99,8 +99,9 @@ describe('the bundles of the scripted Ticket Board app', () => {
     expect(style).toMatchObject({ statusCode: 200, isBase64Encoded: true, headers: { 'content-type': 'text/css', 'cache-control': 'public, max-age=31536000, immutable' } });
     expect(bodyOf(style)).toContain('.board');
     expect(missing.statusCode).toBe(404);
-    // The data route exists and only takes POST.
-    expect(api.statusCode).toBe(405);
+    // The data route runs in the function. This request carries no token of a signed-in person.
+    expect(api.statusCode).toBe(401);
+    expect(JSON.parse(bodyOf(api))).toMatchObject({ error: { code: 'unauthenticated' } });
     // Outside the app's path there is nothing: the Router never sends such a request.
     expect(outside.statusCode).toBe(404);
   }, BUILD_TIMEOUT);

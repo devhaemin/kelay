@@ -203,6 +203,11 @@ describe('the preview proxy', () => {
     expect(headers).toMatchObject({ host: `localhost:${devPort}`, origin: `http://localhost:${devPort}`, referer: `http://localhost:${devPort}/tickets?open=1`, cookie: 'app_theme=dark', 'content-type': 'application/json' });
     expect(headers.authorization).toBeUndefined();
     expect(headers['x-kelay-authorization']).toBeUndefined();
+    // The app learns the address the browser has for it, for its sign-in link; a browser cannot forge it.
+    expect(headers['x-kelay-preview-url']).toBe(`${base}/preview/${APP}/`);
+    board.seen.length = 0;
+    await call(`/preview/${APP}/`, { headers: { cookie, 'x-kelay-preview-url': 'https://evil.example/', 'x-forwarded-proto': 'https' } });
+    expect(board.seen[0]!.headers['x-kelay-preview-url']).toBe(`https://127.0.0.1:${port}/preview/${APP}/`);
     expect(JSON.stringify(headers)).not.toContain('kelay_p');
   });
 
@@ -271,6 +276,7 @@ describe('the preview proxy', () => {
 
     board.seen.length = 0;
     expect((await onHost(port, host, '/board?view=list', cookie)).body).toMatchObject({ server: 'team-board', url: '/board?view=list' });
+    expect(board.seen[0]!.headers['x-kelay-preview-url']).toBe(`http://${host}/`);
     // On an app's host every path is the app's, also one the Builder has itself.
     expect((await onHost(port, `${host}:443`, '/healthz', cookie)).body).toMatchObject({ server: 'team-board', url: '/healthz' });
     expect((await onHost(port, 'team-wiki.preview.kelay.test', '/', cookie)).status).toBe(401);

@@ -23,6 +23,7 @@ export class FakeControl implements ControlApi {
   apps = new Map<string, AppInfo>();
   deploys: { app: string; env: string; request: DeployRequest }[] = [];
   databases: { app: string; env: string; url: string }[] = [];
+  members: { app: string; userId: string; org: string; role: string }[] = [];
   sandboxes: SandboxRecord[] = [];
   queue: ImprovementJob[] = [];
   completed: { runId: string; outcome: RunOutcome }[] = [];
@@ -50,6 +51,10 @@ export class FakeControl implements ControlApi {
     this.deploys.push({ app, env, request });
     const n = this.deploys.filter((d) => d.app === app).length;
     return { id: `00000000-0000-4000-8000-00000000000${n}`, label: `v${n}`, callerToken: `caller-token-${n}` };
+  }
+
+  async addMember(app: string, userId: string, member: { org: string; role: string }) {
+    this.members.push({ app, userId, ...member });
   }
 
   async claimImprovement() {
@@ -100,7 +105,7 @@ export async function createHarness(opts: { agent?: CodingAgent; artifacts?: Art
     agent: agent.info,
     stateDir: join(root, 'state'),
     logger,
-    runtimeEnv: { DATA_API_URL: 'http://localhost:4002', CONTROL_API_URL: 'http://localhost:4003' },
+    runtimeEnv: { DATA_API_URL: 'http://localhost:4002', CONTROL_API_URL: 'http://localhost:4003', KELAY_ID_ISSUER: 'http://localhost:4001' },
     provisioner: { ensure: async (app, env) => `postgres://test/app_${app.replaceAll('-', '_')}_${env}` },
     ...(opts.artifacts ? { artifacts: opts.artifacts } : {}),
     ...(opts.previewUrlTemplate ? { previewUrlTemplate: opts.previewUrlTemplate } : {}),

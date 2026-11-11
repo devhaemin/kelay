@@ -15,7 +15,8 @@ Every request (the Home prompt, a chat message, an approved improvement) is one 
 4. With an artifact store configured, the app's bundles are built and stored (see [Bundles](#bundles)).
 5. When the check or the build fails, what it found goes back to the agent once; a second failure ends the turn and nothing is deployed.
 6. The result is deployed to Development through `POST /v1/apps/:app/envs/dev/deploy` of the Control API with the bundles' URLs, the schema, the policy and the compiled graphs, which migrates the app database.
-7. The dev preview is started if it is not running.
+7. After the first deploy the builder becomes a member of the app with the role `admin` (`PUT /internal/v1/apps/:app/members/:userId` of the Control API), in the org of their console token. An app that declares no `admin` role gives them its first role. Nobody else is added and no data is seeded.
+8. The dev preview is started if it is not running.
 
 An improvement run does the same on a branch `improve/<run id>`, which is merged into `main` once it deployed. A workspace nobody used for 15 minutes is stopped; its state is in git and in the Builder's state folder, so the next message resumes it.
 
@@ -94,7 +95,7 @@ The preview proxy of [infrastructure §4.1](../../docs/infrastructure.md) runs i
 
 A caller that is not a browser may send `authorization: Bearer <builder token>` instead; the proxy then asks the Control API for the app with it. Tickets and sessions are signed with a key derived from `KELAY_CALLER_SECRET`, so every Builder task accepts them.
 
-What the workspace's dev server receives is the request as a browser on its own machine would send it: `host` and `origin` are `localhost:<port>` (`next dev` serves its scripts and its HMR socket to no other origin), and the builder's token, the proxy's cookies and `x-kelay-*` headers are removed, because the app is agent-written code. With `/preview/<app>/…`, previews of one builder's apps share an origin; use a preview domain to separate them.
+What the workspace's dev server receives is the request as a browser on its own machine would send it: `host` and `origin` are `localhost:<port>` (`next dev` serves its scripts and its HMR socket to no other origin), and the builder's token, the proxy's cookies and `x-kelay-*` headers are removed, because the app is agent-written code. The proxy adds one header of its own, `x-kelay-preview-url`: the preview's address as the browser has it, which the app's sign-in link returns to. With `/preview/<app>/…`, previews of one builder's apps share an origin; use a preview domain to separate them.
 
 ## Coding agent
 
@@ -127,15 +128,20 @@ pnpm --filter @kelay/builder verify:image --image kelay/workspace
 |---|---|
 | `CONTROL_API_URL`, `KELAY_CALLER_SECRET` | The Control API, and the secret for the Builder's `service` caller token (deploy, improvement runs, sandbox records). Required. |
 | `KELAY_ID_ISSUER`, `KELAY_ID_JWKS_URL` | Verify builder tokens. Required. |
-| `DATA_API_URL` | Passed to dev previews with `CONTROL_API_URL` and the runtime's caller token. |
+| `DATA_API_URL` | Passed to dev previews with `CONTROL_API_URL`, `KELAY_ID_ISSUER` and the runtime's caller token. |
 | `APP_DATABASE_URL_TEMPLATE` | When set, the Builder creates the app's Development database from it before the first deploy and registers it at the Control API. `pnpm dev:up` sets it. |
 | `BUILDER_HOME` | Where workspaces, transcripts and the agent's config folder live (default `.kelay` in the repo). |
 | `BUILDER_IDLE_MINUTES` | Idle time before a workspace stops (default 15). |
 | `BUILDER_IMPROVEMENTS=off`, `BUILDER_IMPROVEMENT_POLL_MS` | Turn off the improvement worker, or change how often it asks the Control API for a queued run (default 5000). |
 
+## Data in the dev preview
+
+The preview works on the app's Development database as the person looking at it. Its `/api/kelay` route trades the browser's Kelay ID session for that person's token for the app and adds the caller token of the dev deploy (contracts §4). The builder is signed in at Kelay ID already when the console shows the preview, and is an `admin` member of the app, so the preview has data from the first build on. Only the app's builder reaches the preview at all ([Dev preview](#dev-preview)); whose data it shows is decided by the Kelay ID session the browser has. A browser without one is asked to sign in, and a person who is not a member of the app is refused.
+
+This needs Kelay ID and the Data API to know the app, which they do when they read the app registry from the Control API (`KELAY_APPS_SOURCE=control-api`, set by `pnpm dev:up`), and it needs the preview and Kelay ID on one site so that the session cookie reaches both. Locally both are on `localhost`. The preview proxy passes the browser's cookies on, except its own.
+
 ## Known limits
 
 - The Builder keeps its state on its own disk (`BUILDER_HOME`) and in its memory, so it runs as one process. A new process finds the workspaces again, but with an empty `BUILDER_HOME` it has lost the transcripts and what was deployed.
-
-- A dev preview renders the app, but locally its data calls answer "Sign in with Kelay ID": the Data API and Kelay ID read apps from `KELAY_APPS_FILE`, which does not know apps built here.
+- A workspace created before the preview read the Kelay ID session keeps its old `/api/kelay` route, which answers "Sign in with Kelay ID". It is a platform file: copy `templates/starter/app/api/kelay/[...path]/route.ts` over it.
 - Access rules saved as a draft in the console are replaced by the workspace's `kelay/policy.ts` on the next turn's deploy.

@@ -49,7 +49,11 @@ export default function Board() {
       </header>
 
       {notice && <p className="notice" role="status">{notice}</p>}
-      {tickets.error && <p className="notice">{tickets.denied ? 'Your role can’t see tickets.' : tickets.error.message}</p>}
+      {tickets.error?.code === 'unauthenticated' ? (
+        <p className="notice">The board shows once you are signed in. <a href="/api/kelay/signin">Sign in with Kelay ID</a></p>
+      ) : (
+        tickets.error && <p className="notice">{tickets.denied ? 'Your role can’t see tickets.' : tickets.error.message}</p>
+      )}
 
       <div className="board">
         {COLUMNS.map((column) => {

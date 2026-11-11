@@ -54,6 +54,10 @@ export interface AuthDeps {
   trustedOrigins?: string[];
   /** Header that carries the client IP for rate limiting; unset keeps better-auth's x-forwarded-for. */
   clientIpHeader?: string;
+  /** Parent domain the session cookie is set for, so the console on a sibling host receives it. */
+  cookieDomain?: string;
+  /** Hears about every new account, whichever way the person signed up. Its failure does not fail the sign-up. */
+  onUserCreated?: (user: { id: string; email: string; emailVerified: boolean }) => Promise<void>;
 }
 
 const invalidGrant = (description: string) =>
@@ -105,7 +109,19 @@ export function authOptions(deps: AuthDeps) {
     ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
     // Rate limits are per client IP. Behind Cloudflare and the ALB, x-forwarded-for is a chain whose first
     // entry the client chooses, so better-auth finds no IP it can trust there and limits nothing.
-    ...(deps.clientIpHeader ? { advanced: { ipAddress: { ipAddressHeaders: [deps.clientIpHeader] } } } : {}),
+    advanced: {
+      ...(deps.clientIpHeader ? { ipAddress: { ipAddressHeaders: [deps.clientIpHeader] } } : {}),
+      ...(deps.cookieDomain ? { crossSubDomainCookies: { enabled: true, domain: deps.cookieDomain } } : {}),
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          async after(user) {
+            await deps.onUserCreated?.(user).catch((e: Error) => console.error(JSON.stringify({ type: 'user_created_hook_failed', user: user.id, message: e.message })));
+          },
+        },
+      },
+    },
     disabledPaths: [
       // The jwt plugin's session-token route would mint JWTs a resource server could mistake for access tokens.
       '/token',

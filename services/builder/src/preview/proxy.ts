@@ -14,6 +14,8 @@ import type { Logger } from 'pino';
 import { CURRENT_APP_COOKIE, PreviewSessions, SESSION_TTL_SECONDS, TICKET_PARAM, parseCookies, sessionCookie, withoutPreviewCookies, type PreviewGrant } from './session.ts';
 
 const PATH_PREFIX = '/preview/';
+/** The preview's address as the browser sees it, for the app's sign-in link (templates/starter/app/api/kelay). */
+export const PREVIEW_URL_HEADER = 'x-kelay-preview-url';
 /** Paths of the Builder itself; a request for them is never sent to an app. */
 const OWN_PATHS = /^\/(v1|healthz|runtime)(\/|$|\?)/;
 const STATUS: Partial<Record<ErrorCode, number>> = { unauthenticated: 401, denied: 403, not_found: 404, conflict: 409, internal: 502 };
@@ -97,11 +99,13 @@ export class PreviewProxy {
   /**
    * What the dev server gets: the request as if a browser on its own machine had asked it directly.
    * `next dev` serves its scripts and its HMR socket to localhost only, and checks a form post's origin
-   * against the host. The builder's token, the proxy's cookies and x-kelay-* headers are not for
-   * agent-written code.
+   * against the host. The builder's token, the proxy's cookies and inbound x-kelay-* headers are not
+   * for agent-written code.
    */
   private rewrite(req: IncomingMessage, match: Match, target: string): void {
     const local = `localhost:${new URL(target).port || '80'}`;
+    const scheme = req.headers['x-forwarded-proto'] === 'https' || 'encrypted' in req.socket ? 'https' : 'http';
+    const address = `${scheme}://${req.headers.host ?? local}${match.prefix}/`;
     req.url = match.path;
     req.headers.host = local;
     if (req.headers.origin) req.headers.origin = `http://${local}`;
@@ -111,6 +115,8 @@ export class PreviewProxy {
     }
     delete req.headers.authorization;
     for (const name of Object.keys(req.headers)) if (name.startsWith('x-kelay-')) delete req.headers[name];
+    // The one thing the app cannot know behind the proxy: the address the browser has for it.
+    req.headers[PREVIEW_URL_HEADER] = address;
     const cookie = withoutPreviewCookies(req.headers.cookie);
     if (cookie) req.headers.cookie = cookie;
     else delete req.headers.cookie;

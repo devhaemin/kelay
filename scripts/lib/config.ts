@@ -14,8 +14,12 @@ export interface StackConfig {
   controlDatabaseUrl: string;
   /** Database of the ticket-board app, taken from the app registry file. */
   appDatabaseUrl: string;
-  /** Absolute path of KELAY_APPS_FILE. */
+  /** Absolute path of KELAY_APPS_FILE: where the migration and the seed read Ticket Board from. */
   appsFile: string;
+  /** KELAY_APPS_SOURCE for the services (contract §6). `control-api`, so an app the Builder just deployed is known. */
+  appsSource: string;
+  /** KELAY_APPS_TTL_SECONDS: how long the services reuse a registry answer. */
+  appsTtlSeconds: string;
   issuer: string;
   jwksUrl: string;
   callerSecret: string;
@@ -29,6 +33,11 @@ export interface StackConfig {
   runnerNodes: string;
   consoleUrl: string;
   devLoginUrl: string;
+  /** KELAY_ID_CORS_ORIGINS: the console's origin, plus whatever the environment lists. */
+  idCorsOrigins: string;
+  /** KELAY_BUILDER_ALLOWLIST and KELAY_OPEN_SIGNUP: who becomes a builder by signing up. Nobody, unless set. */
+  builderAllowlist: string;
+  openSignup: string;
   /** Origin public app links are built from; the router that serves it is not part of the local stack. */
   appOrigin: string;
   /** Unset when nothing serves model calls: triage, reports and agent nodes then fail with "LLM gateway not configured". */
@@ -49,6 +58,9 @@ const DEFAULTS = {
   KELAY_CALLER_SECRET: 'dev-caller-secret-change-me-32-bytes-min',
   BETTER_AUTH_SECRET: 'kelay-identity-dev-secret-not-for-production',
   KELAY_APPS_FILE: 'packages/contracts/fixtures/apps.local.json',
+  KELAY_APPS_SOURCE: 'control-api',
+  // Short, so a schema the Builder deployed a moment ago is what the Data API checks the next call against.
+  KELAY_APPS_TTL_SECONDS: '5',
   DATA_API_URL: 'http://localhost:4002',
   CONTROL_API_URL: 'http://localhost:4003',
   MCP_PUBLIC_BASE_URL: 'http://localhost:4004',
@@ -84,6 +96,8 @@ export function configFromEnv(env: Env): StackConfig {
     controlDatabaseUrl: get('CONTROL_DATABASE_URL'),
     appDatabaseUrl: board.databaseUrl,
     appsFile: absoluteAppsFile,
+    appsSource: get('KELAY_APPS_SOURCE'),
+    appsTtlSeconds: get('KELAY_APPS_TTL_SECONDS'),
     issuer,
     jwksUrl: env.KELAY_ID_JWKS_URL || `${issuer}/api/auth/jwks`,
     callerSecret: get('KELAY_CALLER_SECRET'),
@@ -95,6 +109,9 @@ export function configFromEnv(env: Env): StackConfig {
     runnerNodes: env.RUNNER_LOCAL_NODES || `${TICKET_BOARD}=${resolve(ROOT, TICKET_BOARD_NODES)}`,
     consoleUrl: trimSlash(get('CONSOLE_URL')),
     devLoginUrl: trimSlash(get('DEV_LOGIN_URL')),
+    idCorsOrigins: [...new Set([trimSlash(get('CONSOLE_URL')), ...(env.KELAY_ID_CORS_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean)])].join(','),
+    builderAllowlist: env.KELAY_BUILDER_ALLOWLIST ?? '',
+    openSignup: env.KELAY_OPEN_SIGNUP ?? '',
     appOrigin: trimSlash(get('KELAY_APP_ORIGIN')),
     llmGatewayUrl: namedGateway ?? (startLlmGateway ? LOCAL_LLM_GATEWAY_URL : undefined),
     llmGatewayKey: get('LLM_GATEWAY_KEY'),
@@ -123,6 +140,8 @@ export function serviceEnv(cfg: StackConfig): Record<string, string> {
     KELAY_ID_JWKS_URL: cfg.jwksUrl,
     KELAY_CALLER_SECRET: cfg.callerSecret,
     BETTER_AUTH_SECRET: cfg.authSecret,
+    KELAY_APPS_SOURCE: cfg.appsSource,
+    KELAY_APPS_TTL_SECONDS: cfg.appsTtlSeconds,
     KELAY_APPS_FILE: cfg.appsFile,
     DATA_API_URL: cfg.dataApiUrl,
     CONTROL_API_URL: cfg.controlApiUrl,
@@ -131,6 +150,9 @@ export function serviceEnv(cfg: StackConfig): Record<string, string> {
     RUNNER_LOCAL_NODES: cfg.runnerNodes,
     CONSOLE_URL: cfg.consoleUrl,
     DEV_LOGIN_URL: cfg.devLoginUrl,
+    KELAY_ID_CORS_ORIGINS: cfg.idCorsOrigins,
+    KELAY_BUILDER_ALLOWLIST: cfg.builderAllowlist,
+    KELAY_OPEN_SIGNUP: cfg.openSignup,
     KELAY_APP_ORIGIN: cfg.appOrigin,
     // An empty value overrides one inherited from the shell, so "no gateway" is the same in every service.
     LLM_GATEWAY_URL: cfg.llmGatewayUrl ?? '',

@@ -40,7 +40,7 @@ const builderAgent =
 console.log(`
 Kelay is running on local data.
 
-  Console        ${cfg.devLoginUrl}/   signs you in as the builder, then opens ${cfg.consoleUrl}
+  Console        ${cfg.consoleUrl}   sign in with Kelay ID; ${cfg.devLoginUrl}/ signs you in as the seeded builder
   Kelay ID       ${cfg.issuer}
   Data API       ${cfg.dataApiUrl}
   Control API    ${cfg.controlApiUrl}
@@ -57,7 +57,6 @@ Kelay is running on local data.
   Team           ${TEAM.map((p) => `${p.email} (${p.role})`).join(', ')}
   Password       ${PASSWORD}
 
-The builder token lasts 15 minutes; open ${cfg.devLoginUrl}/ again for a fresh one.
 Ctrl-C stops the services; \`pnpm dev:down\` also stops Postgres.
 `);
 

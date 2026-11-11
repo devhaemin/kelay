@@ -53,6 +53,8 @@ interface SavedState {
   versionId: string | null;
   /** The app-runtime caller token of the dev deploy, for the preview. It lives outside the workspace folder, where the agent cannot read it. */
   callerToken: string | null;
+  /** Whether the builder was made a member of the app, which happens once: later role changes are theirs to make. */
+  ownerIsMember: boolean;
   lastCommit: WorkspaceStatus['lastCommit'];
 }
 
@@ -68,12 +70,20 @@ interface Entry {
   lastActive: number;
 }
 
+/** The builder a turn runs for: their Kelay ID user id and the org of their console token. */
+export interface TurnOwner {
+  id: string;
+  org: string;
+}
+
 interface TurnSpec {
   id: string;
   kind: TurnKind;
   prompt: string;
   context: string | null;
   owner: string;
+  /** Unset for improvement runs, which no builder is present for. */
+  org?: string;
   /** Improvement runs work on a branch that is merged into main once it deployed. */
   branch?: string;
 }
@@ -97,7 +107,7 @@ export interface WorkspaceManagerDeps {
    * with the slug. Without it the workspace's own address is reported, which only works on this machine.
    */
   previewUrlTemplate?: string;
-  /** Platform URLs the dev preview needs: DATA_API_URL and CONTROL_API_URL. */
+  /** Platform URLs the dev preview needs: DATA_API_URL, CONTROL_API_URL and KELAY_ID_ISSUER. */
   runtimeEnv?: Record<string, string>;
   logger: Logger;
   /** A workspace nobody used for this long is stopped (docs/infrastructure.md §4.1: 15 minutes). */
@@ -108,7 +118,7 @@ class TurnFailure extends Error {}
 
 type Built = { ok: true; artifactUrl: string; nodesArtifactUrl?: string } | { ok: false; error: string };
 
-const EMPTY_STATE: SavedState = { owner: null, handle: null, sessionId: null, deployedCommit: null, version: null, versionId: null, callerToken: null, lastCommit: null };
+const EMPTY_STATE: SavedState = { owner: null, handle: null, sessionId: null, deployedCommit: null, version: null, versionId: null, callerToken: null, ownerIsMember: false, lastCommit: null };
 
 const firstLine = (text: string, max: number) => {
   const line = text.trim().split('\n')[0] ?? '';
@@ -191,7 +201,7 @@ export class WorkspaceManager {
   }
 
   /** The Home prompt: creates the workspace when the app has none and builds from the prompt. */
-  async start(app: AppInfo, owner: string, prompt: string): Promise<{ turn: string; done: Promise<TurnResult> }> {
+  async start(app: AppInfo, owner: TurnOwner, prompt: string): Promise<{ turn: string; done: Promise<TurnResult> }> {
     const entry = this.entry(app.slug);
     if (entry.running) throw new ApiError('conflict', 'The Builder is still working on this app.');
     // Starting from the template would deploy the starter schema over an app that already has one.
@@ -199,16 +209,16 @@ export class WorkspaceManager {
       throw new ApiError('conflict', `${app.name} was not built in this Builder, so its code is not here to continue from.`);
     }
     entry.state.handle = app.handle;
-    return this.launch(entry, { id: randomUUID(), kind: entry.state.deployedCommit ? 'message' : 'build', prompt, context: null, owner });
+    return this.launch(entry, { id: randomUUID(), kind: entry.state.deployedCommit ? 'message' : 'build', prompt, context: null, owner: owner.id, org: owner.org });
   }
 
   /** Builder chat: one agent turn on an existing workspace. */
-  async message(app: Pick<AppInfo, 'slug' | 'handle'>, owner: string, text: string, context: string | null): Promise<{ turn: string; done: Promise<TurnResult> }> {
+  async message(app: Pick<AppInfo, 'slug' | 'handle'>, owner: TurnOwner, text: string, context: string | null): Promise<{ turn: string; done: Promise<TurnResult> }> {
     const entry = this.entry(app.slug);
     if (entry.running) throw new ApiError('conflict', 'The Builder is still working on the last request.');
     if (!(await this.deps.driver.exists(app.slug))) throw new ApiError('not_found', 'This app has no Builder workspace yet.');
     entry.state.handle = app.handle;
-    return this.launch(entry, { id: randomUUID(), kind: entry.state.deployedCommit ? 'message' : 'build', prompt: text, context, owner });
+    return this.launch(entry, { id: randomUUID(), kind: entry.state.deployedCommit ? 'message' : 'build', prompt: text, context, owner: owner.id, org: owner.org });
   }
 
   /** An approved proposal, implemented on a branch. Waits its turn behind whatever the workspace is doing. */
@@ -369,6 +379,12 @@ export class WorkspaceManager {
           });
           versionId = version.id;
           entry.state = { ...entry.state, deployedCommit: deployed, version: version.label, versionId: version.id, callerToken: version.callerToken ?? entry.state.callerToken };
+          // The builder opens the preview as a person of the app, and a new app has no members. Nothing else is seeded.
+          if (spec.org && !entry.state.ownerIsMember) {
+            const roles = check.app.schema.roles;
+            await this.deps.control.addMember(app, spec.owner, { org: spec.org, role: roles.includes('admin') ? 'admin' : roles[0]! });
+            entry.state.ownerIsMember = true;
+          }
           emit({ type: 'deploy', ok: true, env: 'dev', version: version.label, versionId: version.id, error: null });
         } catch (e) {
           emit({ type: 'deploy', ok: false, env: 'dev', version: null, versionId: null, error: (e as Error).message });

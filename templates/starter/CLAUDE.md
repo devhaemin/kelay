@@ -95,6 +95,8 @@ const move = useMutation((kelay, id: string, status: string) => kelay.collection
 const result = await move.mutate(id, 'done'); // { status: 'ok' | 'denied' | 'error' }, never throws
 ```
 
+When a collection's `error.code` is `'unauthenticated'`, the person is not signed in: show a link to `/api/kelay/signin`, which is Kelay ID's sign-in and comes back to the app. Never build a sign-in form yourself.
+
 Use plain React with the classes in `app/globals.css`; add classes there when you need more. Keep the interface in the language the builder writes in.
 
 ## How to work

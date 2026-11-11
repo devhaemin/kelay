@@ -9,10 +9,10 @@ import { ROOT, portOf, serviceEnv, type StackConfig } from './config.ts';
 export interface StartOptions {
   /** Restart services when their source changes (`tsx watch`), as each service's `dev` script does. */
   watch: boolean;
-  /** Also start the console (CONSOLE_DATA=http) and the dev sign-in helper. */
-  console: boolean;
-  /** Also start the Builder (services/builder) with local workspaces. */
-  builder?: boolean;
+  /** Also start the console (CONSOLE_DATA=http) and the dev sign-in helper. `env` is added to the console's environment. */
+  console: boolean | { env: Record<string, string> };
+  /** Also start the Builder (services/builder) with local workspaces. `env` is added to its environment. */
+  builder?: boolean | { env: Record<string, string> };
   /** Kelay ID entry file, relative to the repo root. The e2e suite swaps in one that can resolve its test assistant. */
   identityEntry?: string;
   /** Where the services' log lines go. Defaults to this process's stdout. */
@@ -56,13 +56,13 @@ function services(cfg: StackConfig, opts: StartOptions): Service[] {
       port: portOf(cfg.builderUrl),
       health: `${cfg.builderUrl}/healthz`,
       color: 'red',
-      env: { ...agentEnv, APP_DATABASE_URL_TEMPLATE: cfg.appDatabaseUrlTemplate },
+      env: { ...agentEnv, APP_DATABASE_URL_TEMPLATE: cfg.appDatabaseUrlTemplate, ...(opts.builder === true ? {} : opts.builder.env) },
       noWatch: true,
     });
   }
   if (opts.console) {
     list.push(
-      { name: 'console', dir: 'apps/console', entry: '', port: portOf(cfg.consoleUrl), health: `${cfg.consoleUrl}/signin`, color: 'cyan', env: { CONSOLE_DATA: 'http' } },
+      { name: 'console', dir: 'apps/console', entry: '', port: portOf(cfg.consoleUrl), health: `${cfg.consoleUrl}/signin`, color: 'cyan', env: { CONSOLE_DATA: 'http', ...(opts.console === true ? {} : opts.console.env) } },
       { name: 'dev-login', dir: '.', entry: 'scripts/dev-login.ts --serve', port: portOf(cfg.devLoginUrl), health: `${cfg.devLoginUrl}/healthz`, color: 'gray' },
     );
   }

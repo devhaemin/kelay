@@ -409,8 +409,8 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
         const me = obj(body.me);
         const handle = str(me.handle);
         const email = str(me.email);
-        // The builder's org is the team their apps are for.
-        return { name: str(me.name) || handle || email || 'Builder', handle, email, team: str(me.org) } satisfies Builder;
+        // The builder's org is the team their apps are for. A builder who signed up on their own has an org of one, named after their id.
+        return { name: str(me.name) || handle || email || 'Builder', handle, email, team: me.org === me.userId ? '' : str(me.org) } satisfies Builder;
       }
       const apps = await api.listApps();
       const handle = apps[0]?.handle ?? 'me';
@@ -428,8 +428,20 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
     async createApp({ prompt }) {
       const name = nameFromPrompt(prompt);
       const slug = `${slugify(name)}-${Math.random().toString(36).slice(2, 6)}`;
-      const body = await request('POST', '/v1/apps', { slug, name, description: prompt.slice(0, 2000) });
-      return toSummary(obj(body.app));
+      const app = { slug, name, description: prompt.slice(0, 2000) };
+      const me = obj((await request('GET', '/v1/me')).me);
+      if (str(me.handle)) return toSummary(obj((await request('POST', '/v1/apps', app)).app));
+      // A builder's first app also picks the handle all their apps live under: from their email, with a
+      // suffix when someone else has it.
+      const base = slugify((str(me.email).split('@')[0] || str(me.name) || 'builder').slice(0, 40)).padEnd(2, 'x');
+      for (let attempt = 0; ; attempt++) {
+        const handle = attempt === 0 ? base : `${base}-${Math.random().toString(36).slice(2, 6)}`;
+        try {
+          return toSummary(obj((await request('POST', '/v1/apps', { ...app, handle })).app));
+        } catch (e) {
+          if (!(isApiError(e) && e.status === 409 && e.message.includes('is taken')) || attempt >= 4) throw e;
+        }
+      }
     },
 
     // The dev preview is the workspace's `next dev`, behind the Builder's preview proxy. It runs while the

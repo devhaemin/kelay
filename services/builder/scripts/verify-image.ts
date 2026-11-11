@@ -81,6 +81,7 @@ async function waitFor(url: string, name: string): Promise<void> {
 async function startStub() {
   const signer = await createDevSigner('http://kelay-id.verify');
   const deploys: { app: string; request: DeployRequest; caller: string }[] = [];
+  const members: { app: string; userId: string; org: string; role: string }[] = [];
   const stub = new Hono();
   stub.get('/jwks', (c) => c.json(signer.jwks));
   stub.get('/v1/apps/:app', (c) => c.json({ app: { slug: c.req.param('app'), handle: HANDLE, name: 'Team Board', owner: OWNER }, envs: [{ name: 'dev', activeVersion: null }] }));
@@ -90,11 +91,15 @@ async function startStub() {
     return c.json({ version: { id: `00000000-0000-4000-8000-00000000000${deploys.length}`, label: `v${deploys.length}` }, callerToken: 'app-runtime-token' }, 201);
   });
   stub.put('/internal/v1/sandboxes', (c) => c.body(null, 204));
+  stub.put('/internal/v1/apps/:app/members/:userId', async (c) => {
+    members.push({ app: c.req.param('app'), userId: c.req.param('userId'), ...(await c.req.json<{ org: string; role: string }>()) });
+    return c.json({ member: {} });
+  });
   stub.post('/internal/v1/improvement-runs/claim', (c) => c.json({ run: null }));
   const port = await getPort();
   // On every interface: the Builder in the second run reaches it from inside a container.
   const server = serve({ fetch: stub.fetch, port, hostname: '0.0.0.0' });
-  return { signer, deploys, port, close: () => server.close() };
+  return { signer, deploys, members, port, close: () => server.close() };
 }
 
 function checkDeploy(deploy: { app: string; request: DeployRequest; caller: string } | undefined, urls: RegExp) {
@@ -130,7 +135,7 @@ async function task(stub: Awaited<ReturnType<typeof startStub>>) {
     idleMs: 0,
   });
   const started = Date.now();
-  const { done } = await workspaces.start({ slug: APP, handle: HANDLE, name: 'Team Board', owner: OWNER, deployedToDev: false }, OWNER, 'A ticket board for my team');
+  const { done } = await workspaces.start({ slug: APP, handle: HANDLE, name: 'Team Board', owner: OWNER, deployedToDev: false }, { id: OWNER, org: 'orum' }, 'A ticket board for my team');
   const result = await done;
   const events = workspaces.events(APP).since(0);
   check(result.status === 'succeeded', `the turn succeeded in ${Math.round((Date.now() - started) / 1000)}s (${result.error ?? 'no error'})`);
@@ -204,6 +209,7 @@ async function service(stub: Awaited<ReturnType<typeof startStub>>) {
   }
   check(finished?.status === 'succeeded', `the turn succeeded (${finished?.error ?? 'no error'})`);
   check(stub.deploys.length === before + 1, 'the build was deployed once');
+  check(stub.members.some((m) => m.app === APP && m.userId === OWNER && m.role === 'admin'), 'the builder became an admin member of the app');
   checkDeploy(stub.deploys.at(-1), /^file:\/\/\/var\/lib\/kelay-builder\/artifacts\/builds\/team-board\//);
 
   // The preview, as the console's frame loads it. The browser's own origin is not the dev server's.

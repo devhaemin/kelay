@@ -1,8 +1,8 @@
 // Brings up the whole platform for the e2e run: a disposable postgres:17 on port 54336 (contract
-// §11), migrations, the dev seed, and the five services as real processes on their own ports, so a
-// `pnpm dev:up` in another terminal is left alone. Everything is stopped afterwards.
+// §11), migrations, the dev seed, and the services, the Builder and the console as real processes on their own
+// ports, so a `pnpm dev:up` in another terminal is left alone. Everything is stopped afterwards.
 import { execFileSync } from 'node:child_process';
-import { createWriteStream, mkdirSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -28,7 +28,9 @@ declare module 'vitest' {
 
 const CONTAINER = 'kelay-pg-e2e';
 const PG_PORT = 54336;
-const PORTS = { identity: 4411, dataApi: 4412, controlApi: 4413, mcpGateway: 4414, runner: 4417 };
+const PORTS = { console: 4410, identity: 4411, dataApi: 4412, controlApi: 4413, mcpGateway: 4414, devLogin: 4415, builder: 4416, runner: 4417 };
+/** The person the console suite signs up; being on the allowlist is what makes them a builder. */
+export const NEW_BUILDER_EMAIL = 'new.builder@e2e.test';
 const WORK_DIR = resolve(ROOT, 'node_modules/.cache/kelay/e2e');
 
 const docker = (...args: string[]) => execFileSync('docker', args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -93,6 +95,13 @@ export default async function setup(project: TestProject): Promise<() => Promise
       CONTROL_API_URL: `http://localhost:${PORTS.controlApi}`,
       MCP_PUBLIC_BASE_URL: `http://localhost:${PORTS.mcpGateway}`,
       RUNNER_URL: `http://localhost:${PORTS.runner}`,
+      BUILDER_URL: `http://localhost:${PORTS.builder}`,
+      CONSOLE_URL: `http://localhost:${PORTS.console}`,
+      DEV_LOGIN_URL: `http://localhost:${PORTS.devLogin}`,
+      KELAY_BUILDER_ALLOWLIST: NEW_BUILDER_EMAIL,
+      APP_DATABASE_URL_TEMPLATE: `${server}/app_{app}_{env}`,
+      // The suite changes apps and reads them back at once.
+      KELAY_APPS_TTL_SECONDS: '1',
       // Ticket Board's real nodes with the model test double: the suite runs without a provider key.
       RUNNER_LOCAL_NODES: `ticket-board=${resolve(ROOT, 'e2e/ticket-board-nodes.ts')}`,
       KELAY_CALLER_SECRET: 'e2e-caller-secret-0123456789abcdef-0123',
@@ -101,9 +110,16 @@ export default async function setup(project: TestProject): Promise<() => Promise
 
     await migrate(config);
     const seeded = await seed(config);
+    // The Builder's workspaces of this run: the repos and dev previews of the apps the suite builds. Not under
+    // node_modules, where the preview's bundler would take an app's own code for a dependency.
+    const builderHome = resolve(ROOT, '.kelay/e2e');
+    rmSync(builderHome, { recursive: true, force: true });
     stack = await startStack(config, {
       watch: false,
-      console: false,
+      // Its own build folder, so a console that `pnpm dev:up` runs from the same directory is left alone.
+      console: { env: { CONSOLE_DIST_DIR: '.next-e2e' } },
+      // The scripted agent, whatever key the shell holds: the suite calls no model.
+      builder: { env: { BUILDER_HOME: builderHome, BUILDER_AGENT: 'scripted' } },
       identityEntry: 'e2e/identity-server.ts',
       output: createWriteStream(resolve(WORK_DIR, 'services.log')),
     });

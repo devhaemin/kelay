@@ -23,6 +23,10 @@ export interface PageDeps {
   consents?: ConsentRecorder;
   /** The header better-auth reads the client IP from, when it is not x-forwarded-for. */
   clientIpHeader?: string;
+  /** Origins a sign-in may send the browser back to (`/login?return_to=`), besides Kelay ID's own. */
+  returnOrigins: string[];
+  /** Also lets a sign-in return to any loopback origin: local dev previews listen on a free port. */
+  returnLoopback: boolean;
 }
 
 type Markup = HtmlEscapedString | Promise<HtmlEscapedString>;
@@ -110,8 +114,28 @@ async function continueTo(res: Response, fallback: string): Promise<Response> {
   return new Response(null, { status: 303, headers });
 }
 
-function loginBody(deps: PageDeps, oauthQuery: string, error?: string) {
-  const hidden = html`<input type="hidden" name="oauth_query" value="${oauthQuery}" />`;
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Where a sign-in started outside an OAuth flow goes back to, or '' when `value` is not a URL of an
+ * allowed origin. Anything else would make the login page an open redirect.
+ */
+function returnTarget(deps: PageDeps, value: string | undefined): string {
+  if (!value || !URL.canParse(value)) return '';
+  const url = new URL(value);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+  const allowed = url.origin === new URL(deps.issuer).origin || deps.returnOrigins.includes(url.origin) || (deps.returnLoopback && LOOPBACK_HOSTS.has(url.hostname));
+  return allowed ? url.toString() : '';
+}
+
+/** What a login form carries through the sign-in: the OAuth request an assistant started, or the page to return to. */
+interface LoginState {
+  oauthQuery: string;
+  returnTo: string;
+}
+
+function loginBody(deps: PageDeps, state: LoginState, error?: string) {
+  const hidden = html`<input type="hidden" name="oauth_query" value="${state.oauthQuery}" /><input type="hidden" name="return_to" value="${state.returnTo}" />`;
   const email = deps.emailPassword
     ? html`<section aria-labelledby="sign-in-heading">
           <h2 id="sign-in-heading">Sign in</h2>
@@ -240,11 +264,17 @@ export function pageRoutes(deps: PageDeps): Hono {
     );
   });
 
-  r.get('/login', (c) => page(c, 200, 'Sign in to Kelay', loginBody(deps, signedQueryOf(c.req.url))));
+  r.get('/login', async (c) => {
+    const state: LoginState = { oauthQuery: signedQueryOf(c.req.url), returnTo: returnTarget(deps, c.req.query('return_to')) };
+    // Someone who is already signed in has nothing to fill in. A social sign-in also comes back through here.
+    if (state.returnTo && (await deps.auth.api.getSession({ headers: c.req.raw.headers }))) return c.redirect(state.returnTo, 303);
+    return page(c, 200, 'Sign in to Kelay', loginBody(deps, state));
+  });
 
   r.post('/login', async (c) => {
     const form = await c.req.parseBody();
     const oauthQuery = field(form, 'oauth_query');
+    const returnTo = returnTarget(deps, field(form, 'return_to'));
     if (!deps.emailPassword) return messagePage(c, 404, 'Not available', 'Email sign-in is turned off.');
     const signUp = field(form, 'intent') === 'sign-up';
     const credentials = { email: field(form, 'email'), password: field(form, 'password') };
@@ -258,8 +288,8 @@ export function pageRoutes(deps: PageDeps): Hono {
       },
       c.req.raw,
     );
-    if (!res.ok) return page(c, res.status, 'Sign in to Kelay', loginBody(deps, oauthQuery, await errorMessage(res)));
-    return continueTo(res, '/');
+    if (!res.ok) return page(c, res.status, 'Sign in to Kelay', loginBody(deps, { oauthQuery, returnTo }, await errorMessage(res)));
+    return continueTo(res, returnTo || '/');
   });
 
   r.post('/login/social', async (c) => {
@@ -269,10 +299,13 @@ export function pageRoutes(deps: PageDeps): Hono {
       return messagePage(c, 400, 'Unknown provider', 'That sign-in provider is not enabled.');
     }
     const oauthQuery = field(form, 'oauth_query');
+    const returnTo = returnTarget(deps, field(form, 'return_to'));
+    // The provider sends the browser back to Kelay ID, and the login page passes it on.
+    const callbackURL = returnTo ? `${deps.issuer}/login?${new URLSearchParams({ return_to: returnTo })}` : `${deps.issuer}/`;
     const res = await callAuth(
       deps,
       '/sign-in/social',
-      { provider, callbackURL: `${deps.issuer}/`, ...(oauthQuery ? { oauth_query: oauthQuery } : {}) },
+      { provider, callbackURL, ...(oauthQuery ? { oauth_query: oauthQuery } : {}) },
       c.req.raw,
     );
     if (!res.ok) return messagePage(c, res.status, 'Sign-in failed', await errorMessage(res));
