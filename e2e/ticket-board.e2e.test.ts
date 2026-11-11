@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, inject, it } from 'vitest';
 import { audienceForApp } from '@kelay/contracts';
 import { KelayError, createKelayClient, sendFeedback } from '@kelay/sdk';
 import { remoteJwks, signCallerToken, verifyKelayToken } from '@kelay/tokens';
-import { BOARD, BUILDER, CONSOLE_APP, FEEDBACK, FOREIGN_TICKET, HANDLE, ORG, PASSWORD, TEAM } from '../scripts/lib/data.ts';
+import { BOARD, BUILDER, CONSENTS, CONSOLE_APP, FEEDBACK, FOREIGN_TICKET, HANDLE, ORG, PASSWORD, TEAM } from '../scripts/lib/data.ts';
 import { KelayIdSession, redirectTarget } from '../scripts/lib/session.ts';
 import { ASSISTANT_CLIENT_ID, ASSISTANT_REDIRECT_URI } from './assistant.ts';
 
@@ -28,10 +28,16 @@ const auth = {
   getCallerToken: () => signCallerToken({ kind: 'app-runtime', app: APP, env: 'prod' }, config.callerSecret),
 };
 
+let builderToken: Promise<string> | undefined;
+
 async function builderCall(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
-  const session = new KelayIdSession(config.issuer);
-  await session.signIn(BUILDER.email, PASSWORD);
-  const token = await session.appToken(CONSOLE_APP);
+  // One console token for the run; it outlives the suite (15 minutes).
+  builderToken ??= (async () => {
+    const session = new KelayIdSession(config.issuer);
+    await session.signIn(BUILDER.email, PASSWORD);
+    return session.appToken(CONSOLE_APP);
+  })();
+  const token = await builderToken;
   const res = await fetch(`${config.controlApiUrl}${path}`, {
     method,
     headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
@@ -275,5 +281,40 @@ describe('MCP gateway with a token from the OAuth authorization-code flow', () =
     } finally {
       await mcp.close();
     }
+  });
+
+  it('shows the builder those tool calls next to the seeded assistants’ calls', async () => {
+    type Call = { clientId: string; clientName: string | null; tool: string; result: string; userId: string; args: string };
+    // The gateway posts call records to the Control API in the background, a couple of seconds after the call.
+    let mine: Call[] = [];
+    let all: Call[] = [];
+    await expect
+      .poll(
+        async () => {
+          all = (await builderGet(`/v1/apps/${APP}/tool-calls?limit=500`)).body.toolCalls;
+          mine = all.filter((c) => c.clientId === ASSISTANT_CLIENT_ID);
+          return mine.length;
+        },
+        { timeout: 15_000, interval: 500 },
+      )
+      .toBe(2);
+    // Newest first.
+    expect(mine.map((c) => [c.tool, c.result, c.userId])).toEqual([
+      ['tickets_update', 'denied', users.junho],
+      ['tickets_list', 'ok', users.junho],
+    ]);
+    expect(mine[0]!.args).toContain(BOARD.find((t) => t.shared && t.assignee === 'seoyeon')!.id);
+
+    // Seeded history from the two assistants members connected, each tied to its consent.
+    const seeded = all.filter((c) => c.clientId !== ASSISTANT_CLIENT_ID);
+    expect(seeded.length).toBeGreaterThan(50);
+    expect(new Set(seeded.map((c) => c.clientName))).toEqual(new Set(CONSENTS.map((c) => c.clientName)));
+    expect(seeded.every((c) => (c as Call & { consentId: string | null }).consentId)).toBe(true);
+
+    const { metrics } = (await builderGet(`/v1/apps/${APP}/metrics?range=14d`)).body;
+    expect(metrics.series.actions).toHaveLength(14);
+    expect(metrics.series.actions.filter((n: number) => n > 0).length).toBeGreaterThanOrEqual(13);
+    expect(metrics.activeMembers).toMatchObject({ value: TEAM.length, total: TEAM.length });
+    expect(metrics.recent[0]).toMatchObject({ action: 'tickets_update', status: 'blocked', by: users.junho, caller: { kind: 'agent', id: ASSISTANT_CLIENT_ID } });
   });
 });
