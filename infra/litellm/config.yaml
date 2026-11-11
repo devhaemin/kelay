@@ -1,0 +1,62 @@
+# Kelay LLM gateway (LiteLLM proxy). Every model call in Kelay goes through here (docs/contracts.md §12).
+# Services use the official Anthropic SDK against the Anthropic-native /v1/messages endpoint, with
+# baseURL = LLM_GATEWAY_URL (no /v1 suffix) and a LiteLLM virtual key as the API key.
+# Secrets come from the environment; nothing secret lives in this file.
+
+model_list:
+  # Anthropic. claude-opus-5-5 is the platform default (see router_settings.model_group_alias).
+  - model_name: claude-opus-5-5
+    litellm_params:
+      model: anthropic/claude-opus-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-sonnet-5-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku-5-5
+    litellm_params:
+      model: anthropic/claude-haiku-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # OpenAI
+  - model_name: gpt-6-astra
+    litellm_params:
+      model: openai/gpt-6-astra
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Google Gemini (AI Studio API)
+  - model_name: gemini-4-carbon
+    litellm_params:
+      model: gemini/gemini-4-carbon
+      api_key: os.environ/GEMINI_API_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  allowed_fails: 3
+  cooldown_time: 30
+  # "default" lets SDK callers ask for the platform default without hard-coding a model id.
+  model_group_alias:
+    default: claude-opus-5-5
+  # The alias is its own model group, so it needs its own fallback entry.
+  fallbacks:
+    - default: [claude-sonnet-5-5]
+    - claude-opus-5-5: [claude-sonnet-5-5]
+    - claude-sonnet-5-5: [claude-haiku-5-5]
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 600
+  # Spans go to the OTel collector; OTEL_EXPORTER / OTEL_ENDPOINT come from the environment.
+  callbacks: ["otel"]
+  # Default budget tier for end users who have no customer record yet (create it with /budget/new).
+  # max_end_user_budget_id: plan-free
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  # Models are defined here, in git, not in the database.
+  store_model_in_db: false
+  disable_spend_logs: false
