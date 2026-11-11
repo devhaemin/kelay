@@ -77,6 +77,7 @@ locals {
         CONSOLE_DATA     = "http"
         KELAY_APP_ORIGIN = "https://${var.app_hostname}"
         BUILDER_URL      = local.internal_url["builder"]
+        CONSOLE_URL      = "https://${local.hosts.console}"
       }
     }
 
@@ -120,8 +121,12 @@ locals {
       host_headers = [local.hosts.id]
       priority     = 30
       env = {
-        CONTROL_DATABASE_URL    = local.control_db_url
-        KELAY_ID_CORS_ORIGINS   = "https://${local.hosts.console}"
+        CONTROL_DATABASE_URL  = local.control_db_url
+        KELAY_ID_CORS_ORIGINS = "https://${local.hosts.console}"
+        # The session cookie of the id host must also reach the console and preview hosts.
+        KELAY_ID_COOKIE_DOMAIN  = var.zone_name
+        KELAY_BUILDER_ALLOWLIST = join(",", var.builder_allowlist)
+        KELAY_OPEN_SIGNUP       = tostring(var.open_signup)
         KELAY_ID_EMAIL_PASSWORD = tostring(var.identity_email_password)
       }
       # A sign-in provider is on when both its client id and its client secret are set.

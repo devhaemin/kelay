@@ -231,3 +231,15 @@ variable "clickhouse_max_replica_memory_gb" {
   type    = number
   default = 16
 }
+
+variable "builder_allowlist" {
+  description = "Emails that become builders when they sign up at Kelay ID with a provider-verified address."
+  type        = list(string)
+  default     = []
+}
+
+variable "open_signup" {
+  description = "Let anyone who signs up at Kelay ID become a builder. Keep false outside demos."
+  type        = bool
+  default     = false
+}
