@@ -170,7 +170,7 @@ In the other direction, the control API reads Kelay ID's `user`, `account` and `
 
 **Runs.** The control API also owns `runs`, the record of what was done in each app; Monitoring reads it. Services write to it through the control API (service caller), never directly:
 
-- `POST /internal/v1/runs { runs: [{ app, action, status: "ok" | "blocked" | "error", env?, userId?, args?, ms?, note?, costUsd?, at?, caller?: { kind: "user" | "agent" | "app", id?, name? } }] }`, 1 to 500 per request;
+- `POST /internal/v1/runs { runs: [{ app, action, status: "ok" | "blocked" | "error", env?, userId?, args?, ms?, note?, costUsd?, nodes?, at?, caller?: { kind: "user" | "agent" | "app", id?, name? } }] }`, 1 to 500 per request. `nodes` is the per-node record of an agent-graph run: `[{ node, status: "ok" | "error" | "timeout" | "aborted", ms, attempt?, loop?, costUsd? }]`. A run whose caller is an assistant (`kind: "agent"`, `id` = its client id) is tied to the member's consent, which also gives it the assistant's name;
 - `POST /internal/v1/mcp-calls { calls: McpCallRecord[] }` from the MCP gateway (§7). Each call becomes a run whose caller is the member's assistant.
 
 Both answer `201 { recorded, skipped }`; records for apps that do not exist are skipped. The builder routes over this data are listed in [`services/control-api/README.md`](../services/control-api/README.md).
@@ -194,6 +194,7 @@ Both answer `201 { recorded, skipped }`; records for apps that do not exist are 
 | Data API | 4002 |
 | Control API | 4003 |
 | MCP gateway | 4004 |
+| Run orchestrator | 4007 |
 | Router (wrangler dev) | 8787 |
 | Postgres (compose) | 54320 |
 
@@ -204,3 +205,23 @@ Postgres ports for parallel test containers: policy and SDK 54331, data-api 5433
 - All model calls go through the LLM gateway. They use the official Anthropic SDK (`@anthropic-ai/sdk`) with `baseURL = LLM_GATEWAY_URL` and the gateway key.
 - The default model is `claude-opus-5-5`; override it with env vars.
 - No consumer subscription logins anywhere.
+
+## 13. Run orchestrator
+
+`services/runner` starts an app's agent graph as the calling user, follows it to the end and records it.
+
+- **Start.** `POST /v1/apps/:app/runs { graph, input?, action? }` → `202 { runId }`.
+  - Headers: `authorization: Bearer <user token>` (the `app` claim must equal `:app`; the audience is not checked, as in the Data API, so a screen token and an assistant's MCP token both work) and `x-kelay-caller`.
+  - An `app-runtime` caller may start runs of its own app only; the run is a `user` run in that runtime's env.
+  - A `service` caller (the MCP · A2A gateway) may also send `env` and `caller: { kind: "agent" | "app", id?, name? }`, naming on whose behalf it starts the run.
+  - `action` is the name Monitoring lists the run under; it defaults to the graph name.
+  - An app without that graph answers `not_found`.
+- **Concurrency.** One user may have `RUNNER_MAX_CONCURRENT_RUNS_PER_USER` runs in progress (default 2), counted across apps. One more answers `rate_limited` with `Retry-After`.
+- **Read.** `GET /v1/runs/:id` → `{ run: { id, app, env, graph, action, status: "running" | "succeeded" | "failed", caller, output, error: { name, message, node? } | null, trace, costUsd, startedAt, finishedAt, ms } }`. `?wait=<seconds>` (at most 60) holds the request until the run finishes. Same two headers; only the user who started the run can read it, and anyone else gets `not_found`.
+  - `trace` has one entry per node invocation: `{ node, status: "ok" | "error" | "timeout" | "aborted", ms, startedAt, attempt?, loop?, error?, message?, llmCalls?, costUsd? }`.
+- **Events.** `GET /v1/runs/:id/events` is a server-sent event stream: `run_started`, `node_started`, `node_finished`, then `run_finished` (with `status`, `ms`, `output` or `error`), after which the stream closes. Events carry increasing ids, and `Last-Event-ID` resumes after one.
+- **Drivers** (`RUNNER_DRIVER`):
+  - `local` runs the graph in the runner's process with `runLocal` from `@kelay/graph`. `RUNNER_LOCAL_NODES` lists the node code as `<app>=<module>` pairs; each module exports `nodes`, built with `createLocalNodes` from `@kelay/runtime`. The runner mints the app-runtime caller token the nodes call the Data API with.
+  - `sfn` runs the state machine `kelay-app-<app>-<env>-<graph>` under `KELAY_STATE_MACHINE_ARN_PREFIX`, with the execution input of §10 and the run id as the execution name. An Express machine is run with `StartSyncExecution`; a Standard one is started, polled, and its history gives the trace. Express executions keep no history, so their trace is empty.
+- **Record.** Every finished run goes to `POST /internal/v1/runs` (§9) with its status, duration, caller, per-node metrics and, when the LLM gateway priced the model calls, its cost.
+- **State.** Runs in progress and the last hour of finished ones live in the runner's memory, so one runner process serves them. The lasting record is the control API's.
