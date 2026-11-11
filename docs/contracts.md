@@ -225,3 +225,18 @@ Postgres ports for parallel test containers: policy and SDK 54331, data-api 5433
   - `sfn` runs the state machine `kelay-app-<app>-<env>-<graph>` under `KELAY_STATE_MACHINE_ARN_PREFIX`, with the execution input of §10 and the run id as the execution name. An Express machine is run with `StartSyncExecution`; a Standard one is started, polled, and its history gives the trace. Express executions keep no history, so their trace is empty.
 - **Record.** Every finished run goes to `POST /internal/v1/runs` (§9) with its status, duration, caller, per-node metrics and, when the LLM gateway priced the model calls, its cost.
 - **State.** Runs in progress and the last hour of finished ones live in the runner's memory, so one runner process serves them. The lasting record is the control API's.
+
+## 14. Node runtime (`@kelay/runtime`)
+
+An app's agent-node function is written against `packages/runtime`. `examples/ticket-board-nodes` implements Ticket Board's `overdue-summary` graph with it.
+
+- **Nodes.** `defineNode(async (ctx) => output)`. The output must be JSON; it becomes the next node's input. `defineNodes(spec, { <node>: … })` pairs a `GraphSpec` with the code of exactly its nodes.
+- **Context:**
+  - `ctx.input`: the previous node's output; for a join, the branch outputs in `next` order; for the start node, the run input.
+  - `ctx.data`: a `@kelay/sdk` client that sends the run's `userToken` and the function's caller token, so every read and write goes through that user's RLS.
+  - `ctx.llm`: the official Anthropic SDK client (§12) with `baseURL = LLM_GATEWAY_URL` and the app's gateway key `LLM_GATEWAY_KEY`. Reading it without both throws `Kelay.LlmGatewayNotConfigured` ("LLM gateway not configured: …"), so only nodes that call a model need a gateway.
+  - `ctx.model`: the graph node's `model`, else `LLM_MODEL`, else `claude-opus-5-5`.
+  - `ctx.run`: `{ runId, app, env, graph, node, attempt, loop }`.
+- **Function environment.** `DATA_API_URL` and `KELAY_CALLER_TOKEN` are required; `LLM_GATEWAY_URL`, `LLM_GATEWAY_KEY` and `LLM_MODEL` are optional.
+- **Hosts.** `createLambdaHandler(graphs)` is the node function's handler: it takes a `NodeInvocation` (§10) and returns the node's output. A thrown error fails the invocation under the error's name. `createLocalNodes(graphs)` is the same code for the run orchestrator's local driver (§13), which supplies the caller token.
+- **Usage.** The runtime counts each node's model calls and adds up the cost the gateway reports for them (LiteLLM's `x-litellm-response-cost` response header). The local driver puts both on the run's trace.
