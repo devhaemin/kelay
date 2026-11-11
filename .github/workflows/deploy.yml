@@ -1,0 +1,343 @@
+# Manual deploys only: nothing here runs on a push, a pull request or a schedule.
+# docs/deploy.md lists the GitHub Environments, variables and secrets this needs, and the order to use it in.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        type: choice
+        options: [staging, prod]
+        required: true
+      image_tag:
+        description: Image tag to build and deploy. Empty uses the first 12 characters of this commit.
+        type: string
+        default: ''
+      build_images:
+        description: Build the service images and push them to ECR
+        type: boolean
+        default: true
+      terraform_plan:
+        description: Run terraform plan for the image tag
+        type: boolean
+        default: true
+      terraform_apply:
+        description: Apply that plan (waits for approval in the <environment>-apply environment)
+        type: boolean
+        default: false
+      deploy_router:
+        description: Deploy the Router Worker with wrangler (waits for the same approval)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: '0'
+  TF_ROOT: infra/terraform/envs/${{ inputs.environment }}
+  OUT_DIR: infra/deploy/out/${{ inputs.environment }}
+
+jobs:
+  preflight:
+    name: Check configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: ${{ inputs.environment }}
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      images: ${{ steps.images.outputs.images }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require the environment's variables and secrets
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TERRAFORM_TFVARS: ${{ vars.TERRAFORM_TFVARS }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NEEDS_TERRAFORM: ${{ inputs.terraform_plan || inputs.terraform_apply }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          missing=()
+          for name in AWS_ROLE_ARN AWS_ACCOUNT_ID; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ "$NEEDS_TERRAFORM" = true ]; then
+            for name in TF_STATE_BUCKET TERRAFORM_TFVARS CLOUDFLARE_API_TOKEN; do
+              [ -n "${!name}" ] || missing+=("$name")
+            done
+          fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::The $ENVIRONMENT environment is missing: ${missing[*]}. See docs/deploy.md, \"GitHub setup\"."
+            exit 1
+          fi
+      - name: Refuse an apply without its plan
+        if: ${{ inputs.terraform_apply && !inputs.terraform_plan }}
+        run: |
+          echo "::error::terraform_apply applies the plan of the same run, so terraform_plan must be on too."
+          exit 1
+      - id: tag
+        name: Choose the image tag
+        env:
+          REQUESTED: ${{ inputs.image_tag }}
+        run: |
+          tag="${REQUESTED:-${GITHUB_SHA::12}}"
+          if ! [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::'$tag' is not a valid image tag."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Image tag: \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
+      - id: images
+        run: echo "images=$(jq -c . infra/deploy/images.json)" >> "$GITHUB_OUTPUT"
+
+  images:
+    name: Push ${{ matrix.image.service }} image
+    needs: preflight
+    if: ${{ inputs.build_images }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.preflight.outputs.images) }}
+    env:
+      REPOSITORY: kelay-${{ inputs.environment }}/${{ matrix.image.service }}
+      TAG: ${{ needs.preflight.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      # The repositories are tag-immutable: a tag that is there already cannot be pushed again, and a
+      # re-run of this workflow should not fail on it.
+      - id: existing
+        name: Look for the tag in ECR
+        run: |
+          if aws ecr describe-images --repository-name "$REPOSITORY" --image-ids "imageTag=$TAG" > /dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "$REPOSITORY:$TAG is in ECR already; not rebuilt." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: ${{ steps.existing.outputs.found == 'false' }}
+        uses: docker/setup-buildx-action@v3
+      - if: ${{ steps.existing.outputs.found == 'false' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}:${{ env.TAG }}
+          cache-from: type=gha,scope=${{ matrix.image.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.service }}
+
+  plan:
+    name: Terraform plan
+    needs: [preflight, images]
+    # Runs after the images when they were built, and on its own when they were not.
+    if: ${{ !cancelled() && inputs.terraform_plan && needs.preflight.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLICKHOUSE_ORG_ID: ${{ vars.CLICKHOUSE_ORG_ID }}
+      CLICKHOUSE_CLOUD_API_KEY: ${{ secrets.CLICKHOUSE_CLOUD_API_KEY }}
+      CLICKHOUSE_CLOUD_API_SECRET: ${{ secrets.CLICKHOUSE_CLOUD_API_SECRET }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Terraform uploads this file as the Router Worker (router_bundle_path).
+      - name: Build the Router Worker bundle
+        run: pnpm --filter @kelay/router build
+      - name: Write the var files
+        env:
+          TERRAFORM_TFVARS: ${{ vars.TERRAFORM_TFVARS }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          printf '%s\n' "$TERRAFORM_TFVARS" > "$TF_ROOT/terraform.tfvars"
+          node infra/deploy/render-services.mjs --env "$ENVIRONMENT" --tag "$TAG" --out "$OUT_DIR/services.tfvars.json"
+          cat "$OUT_DIR/services.tfvars.json"
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      - name: terraform init
+        working-directory: ${{ env.TF_ROOT }}
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: terraform init -backend-config="bucket=$TF_STATE_BUCKET"
+      - name: terraform plan
+        working-directory: ${{ env.TF_ROOT }}
+        run: |
+          terraform plan -var-file="$GITHUB_WORKSPACE/$OUT_DIR/services.tfvars.json" -out=tfplan
+          terraform show -no-color tfplan > tfplan.txt
+          {
+            echo '### Terraform plan'
+            echo '```'
+            grep -E '^  # |^Plan:|^No changes' tfplan.txt || true
+            echo '```'
+            echo 'The full plan is tfplan.txt in the terraform-plan artifact.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # The apply job applies exactly this plan, and needs the bundle the plan refers to.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: |
+            ${{ env.TF_ROOT }}/tfplan
+            ${{ env.TF_ROOT }}/tfplan.txt
+            services/router/dist/index.js
+          if-no-files-found: error
+          retention-days: 1
+
+  apply:
+    name: Terraform apply
+    needs: [preflight, plan]
+    if: ${{ !cancelled() && inputs.terraform_apply && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Required reviewers on this environment are the approval gate.
+    environment: ${{ format('{0}-apply', inputs.environment) }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLICKHOUSE_ORG_ID: ${{ vars.CLICKHOUSE_ORG_ID }}
+      CLICKHOUSE_CLOUD_API_KEY: ${{ secrets.CLICKHOUSE_CLOUD_API_KEY }}
+      CLICKHOUSE_CLOUD_API_SECRET: ${{ secrets.CLICKHOUSE_CLOUD_API_SECRET }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require the environment's variables and secrets
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          missing=()
+          for name in AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET CLOUDFLARE_API_TOKEN; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::The $ENVIRONMENT-apply environment is missing: ${missing[*]}. See docs/deploy.md, \"GitHub setup\"."
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      - name: terraform init
+        working-directory: ${{ env.TF_ROOT }}
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: terraform init -backend-config="bucket=$TF_STATE_BUCKET"
+      # A saved plan is refused if the state changed after it was made, so this applies what was reviewed or nothing.
+      - name: terraform apply
+        working-directory: ${{ env.TF_ROOT }}
+        run: terraform apply tfplan
+
+  router:
+    name: Deploy the Router Worker
+    needs: [preflight, apply]
+    if: ${{ !cancelled() && inputs.deploy_router && needs.preflight.result == 'success' && (needs.apply.result == 'success' || needs.apply.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ format('{0}-apply', inputs.environment) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require the environment's variables and secrets
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          missing=()
+          for name in AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::The $ENVIRONMENT-apply environment is missing: ${missing[*]}. See docs/deploy.md, \"GitHub setup\"."
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      # The Worker's name, KV namespace and hostnames come from the applied state, so they cannot drift from it.
+      - name: Read the Terraform outputs
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          mkdir -p "$OUT_DIR"
+          terraform -chdir="$TF_ROOT" init -backend-config="bucket=$TF_STATE_BUCKET"
+          terraform -chdir="$TF_ROOT" output -json > "$OUT_DIR/tf-outputs.json"
+      - name: Render the wrangler config
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          node infra/deploy/render-router-config.mjs --env "$ENVIRONMENT" --outputs "$OUT_DIR/tf-outputs.json" --out "$OUT_DIR/wrangler.json"
+          cat "$OUT_DIR/wrangler.json"
+      - name: wrangler deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm --filter @kelay/router exec wrangler deploy --config "$GITHUB_WORKSPACE/$OUT_DIR/wrangler.json"
