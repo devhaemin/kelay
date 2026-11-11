@@ -2,6 +2,7 @@
 // and maps tool arguments to Data API queries (contract §5) and Data API results back to tool results.
 import type { ActionDef, AppSchema, CollectionDef, FieldDef, QueryRequest, Where } from '@kelay/contracts';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/server';
+import pluralize from 'pluralize';
 import type { DataResult } from './data-api.ts';
 
 export type JsonSchema = Record<string, unknown>;
@@ -23,18 +24,14 @@ export interface ToolDef {
 export const DEFAULT_LIST_LIMIT = 50;
 export const MAX_LIST_LIMIT = 500;
 
-/** "tickets" → "ticket", "categories" → "category", "statuses" → "status". */
-export function singular(word: string): string {
-  if (/ies$/i.test(word)) return word.slice(0, -3) + 'y';
-  if (/(ss|x|z|ch|sh)es$/i.test(word)) return word.slice(0, -2);
-  if (/[^s]s$/i.test(word)) return word.slice(0, -1);
-  return word;
-}
-
 const prose = (name: string): string => name.replaceAll('_', ' ');
+
+/** "tickets" → "ticket", "line_items" → "line item". */
+export const singular = (name: string): string => pluralize.singular(prose(name));
+
 const labelOf = (c: CollectionDef): string => c.label ?? prose(c.name).replace(/^\w/, (ch) => ch.toUpperCase());
 export const nounOf = (c: CollectionDef): { one: string; many: string } => ({
-  one: singular(prose(c.name)),
+  one: singular(c.name),
   many: prose(c.name),
 });
 
@@ -62,7 +59,7 @@ function typeHint(f: FieldDef): string | undefined {
     case 'timestamp':
       return 'ISO 8601 date-time, e.g. 2026-11-11T09:00:00Z.';
     case 'ref':
-      return f.ref ? `Id of a ${singular(prose(f.ref))}.` : 'Id of a related record.';
+      return f.ref ? `Id of a ${singular(f.ref)}.` : 'Id of a related record.';
     case 'json':
       return 'Any JSON value.';
     default:
@@ -106,7 +103,7 @@ function writableFields(c: CollectionDef): Record<string, FieldDef> {
 
 /** "text, required: todo | doing | review | done" — a field's type, requiredness and description in one phrase. */
 export function fieldAbout(f: FieldDef): string {
-  const facts = [f.type === 'ref' && f.ref ? `id of a ${singular(prose(f.ref))}` : f.type, f.required ? 'required' : undefined];
+  const facts = [f.type === 'ref' && f.ref ? `id of a ${singular(f.ref)}` : f.type, f.required ? 'required' : undefined];
   return [facts.filter(Boolean).join(', '), f.description].filter(Boolean).join(': ');
 }
 
