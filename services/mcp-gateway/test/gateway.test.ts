@@ -1,4 +1,7 @@
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
+import { serve } from '@hono/node-server';
 import { audienceForApp } from '@kelay/contracts';
 import { createDevSigner } from '@kelay/tokens';
 import type { ActionRunner, buildAgentCard } from '../src/index.ts';
@@ -224,6 +227,24 @@ describe('generated tools', () => {
     expect(ran.structuredContent).toEqual({ overdue: 2 });
     expect(seen).toEqual([{ action: 'summarize_overdue', sub: 'u_1', token: userToken }]);
     await other.close();
+  });
+});
+
+describe('over real HTTP', () => {
+  it('serves tool calls through @hono/node-server', async () => {
+    const { gateway, token, data, connect } = await setup();
+    data.reply(() => Response.json({ rows: [ticket], count: 1 }));
+    const server = serve({ fetch: gateway.fetch, port: 0, hostname: '127.0.0.1' });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    try {
+      const client = await connect(await token(), `http://127.0.0.1:${port}/orum/ticket-board/mcp`);
+      const result = await client.callTool({ name: 'tickets_get', arguments: { id: TICKET_ID } });
+      expect(result.structuredContent).toEqual(ticket);
+      await client.close();
+    } finally {
+      await new Promise((done) => server.close(done));
+    }
   });
 });
 

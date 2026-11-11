@@ -83,9 +83,10 @@ export async function setup(opts: { ratePerMin?: number; actions?: ActionRunner 
   const token = (claims: Partial<KelayClaims> = {}) =>
     signer.sign({ sub: 'u_1', app: 'ticket-board', org: 'orum', role: 'member', plan: 'free', aud: RESOURCE, azp: CLIENT_ID, ...claims });
 
-  async function connect(bearer: string): Promise<Client> {
-    const transport = new StreamableHTTPClientTransport(new URL(RESOURCE), {
-      fetch: async (url, init) => gateway.fetch(new Request(url, init)),
+  /** Connects in-process, or over the network when `url` points at a listening server. */
+  async function connect(bearer: string, url?: string): Promise<Client> {
+    const transport = new StreamableHTTPClientTransport(new URL(url ?? RESOURCE), {
+      ...(url ? {} : { fetch: async (input: string | URL, init?: RequestInit) => gateway.fetch(new Request(input, init)) }),
       authProvider: { token: async () => bearer },
     });
     const client = new Client({ name: 'test-assistant', version: '1.0.0' }, { versionNegotiation: { mode: { pin: PROTOCOL_VERSION } } });
