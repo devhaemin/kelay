@@ -14,8 +14,12 @@ export interface StackConfig {
   controlDatabaseUrl: string;
   /** Database of the ticket-board app, taken from the app registry file. */
   appDatabaseUrl: string;
-  /** Absolute path of KELAY_APPS_FILE. */
+  /** Absolute path of KELAY_APPS_FILE: where the migration and the seed read Ticket Board from. */
   appsFile: string;
+  /** KELAY_APPS_SOURCE for the services (contract §6). `control-api`, so an app the Builder just deployed is known. */
+  appsSource: string;
+  /** KELAY_APPS_TTL_SECONDS: how long the services reuse a registry answer. */
+  appsTtlSeconds: string;
   issuer: string;
   jwksUrl: string;
   callerSecret: string;
@@ -49,6 +53,9 @@ const DEFAULTS = {
   KELAY_CALLER_SECRET: 'dev-caller-secret-change-me-32-bytes-min',
   BETTER_AUTH_SECRET: 'kelay-identity-dev-secret-not-for-production',
   KELAY_APPS_FILE: 'packages/contracts/fixtures/apps.local.json',
+  KELAY_APPS_SOURCE: 'control-api',
+  // Short, so a schema the Builder deployed a moment ago is what the Data API checks the next call against.
+  KELAY_APPS_TTL_SECONDS: '5',
   DATA_API_URL: 'http://localhost:4002',
   CONTROL_API_URL: 'http://localhost:4003',
   MCP_PUBLIC_BASE_URL: 'http://localhost:4004',
@@ -84,6 +91,8 @@ export function configFromEnv(env: Env): StackConfig {
     controlDatabaseUrl: get('CONTROL_DATABASE_URL'),
     appDatabaseUrl: board.databaseUrl,
     appsFile: absoluteAppsFile,
+    appsSource: get('KELAY_APPS_SOURCE'),
+    appsTtlSeconds: get('KELAY_APPS_TTL_SECONDS'),
     issuer,
     jwksUrl: env.KELAY_ID_JWKS_URL || `${issuer}/api/auth/jwks`,
     callerSecret: get('KELAY_CALLER_SECRET'),
@@ -123,6 +132,8 @@ export function serviceEnv(cfg: StackConfig): Record<string, string> {
     KELAY_ID_JWKS_URL: cfg.jwksUrl,
     KELAY_CALLER_SECRET: cfg.callerSecret,
     BETTER_AUTH_SECRET: cfg.authSecret,
+    KELAY_APPS_SOURCE: cfg.appsSource,
+    KELAY_APPS_TTL_SECONDS: cfg.appsTtlSeconds,
     KELAY_APPS_FILE: cfg.appsFile,
     DATA_API_URL: cfg.dataApiUrl,
     CONTROL_API_URL: cfg.controlApiUrl,

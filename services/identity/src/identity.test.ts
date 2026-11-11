@@ -106,6 +106,30 @@ describe('email and password', () => {
     expect(await (await browser.get('/')).text()).toContain('Signed in as cy@example.com');
   });
 
+  it('returns to the page that sent the person to sign in, when its origin is allowed', async () => {
+    const back = `${CONSOLE_ORIGIN}/auth/callback`;
+    await new Browser(t.identity.app).signUp('dee@example.com');
+    const browser = new Browser(t.identity.app);
+    const form = await (await browser.get(`/login?return_to=${encodeURIComponent(back)}`)).text();
+    expect(form).toContain(`name="return_to" value="${back}"`);
+    const res = await browser.postForm('/login', { intent: 'sign-in', email: 'dee@example.com', password: PASSWORD, return_to: back });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(back);
+    // With a session there is nothing to fill in.
+    const again = await browser.get(`/login?return_to=${encodeURIComponent(back)}`);
+    expect(again.status).toBe(303);
+    expect(again.headers.get('location')).toBe(back);
+
+    // Any other origin is dropped, and so is a loopback one unless the instance allows it.
+    for (const other of ['https://evil.example.com/', 'http://localhost:55123/', 'javascript:alert(1)', '//evil.example.com']) {
+      const refused = await browser.get(`/login?return_to=${encodeURIComponent(other)}`);
+      expect(refused.status, other).toBe(200);
+      expect(await refused.text()).toContain('name="return_to" value=""');
+      const posted = await new Browser(t.identity.app).postForm('/login', { intent: 'sign-in', email: 'dee@example.com', password: PASSWORD, return_to: other });
+      expect(posted.headers.get('location'), other).toBe('/');
+    }
+  });
+
   it('shows the error on the login form for bad credentials', async () => {
     const res = await new Browser(t.identity.app).postForm('/login', {
       intent: 'sign-in',
@@ -133,6 +157,9 @@ describe('social providers', () => {
     expect(google.status).toBe(303);
     expect(new URL(google.headers.get('location')!).host).toBe('accounts.google.com');
     expect((await browser.postForm('/login/social', { provider: 'kakao' })).status).toBe(400);
+    // A sign-in that has somewhere to return to still comes back through Kelay ID's own login page.
+    const withReturn = await browser.postForm('/login/social', { provider: 'google', return_to: `${CONSOLE_ORIGIN}/auth/callback` });
+    expect(withReturn.status).toBe(303);
   });
 });
 

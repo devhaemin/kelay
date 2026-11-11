@@ -44,7 +44,9 @@ export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
   app.use(async (c, next) => {
     const start = performance.now();
     await next();
-    log.info(
+    // Platform services read the app registry every few seconds (contract §6); those reads would bury everything else.
+    const registryRead = c.req.method === 'GET' && c.req.path.startsWith('/internal/v1/apps') && c.res.status < 500;
+    log[registryRead ? 'debug' : 'info'](
       { type: 'http', method: c.req.method, path: c.req.path, status: c.res.status, ms: Math.round(performance.now() - start), reqId: c.get('requestId') },
       'request',
     );

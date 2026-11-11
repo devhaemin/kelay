@@ -40,6 +40,7 @@ const deps: Omit<IdentityDeps, 'registry'> = {
   emailPassword: !production || env.KELAY_ID_EMAIL_PASSWORD === 'true',
   social: socialFromEnv(env),
   corsOrigins: list(env.KELAY_ID_CORS_ORIGINS),
+  returnLoopback: !production,
   ...(clientIpHeader ? { clientIpHeader } : {}),
   ...(controlApiUrl && callerSecret ? { consents: controlApiConsents({ controlApiUrl, callerSecret }) } : {}),
 };

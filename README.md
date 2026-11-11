@@ -193,7 +193,7 @@ So that Monitoring and the Agent tab are not empty, the seed records 14 days of 
 
 To change a port or a secret, copy [`.env.example`](.env.example) to `.env` and edit it.
 
-**Building an app from the Home prompt.** The prompt on the console's Home page creates an app and a Builder workspace under `.kelay/workspaces/`, builds it, deploys it to Development (which creates its database `app_<slug>_dev`) and starts its dev preview. Without `ANTHROPIC_API_KEY` in `.env` the Builder runs its scripted demo agent, which makes the Ticket Board app whatever the prompt says, and the console says so. With the key, Claude builds from the prompt. See [`services/builder`](services/builder/README.md).
+**Building an app from the Home prompt.** The prompt on the console's Home page creates an app and a Builder workspace under `.kelay/workspaces/`, builds it, deploys it to Development (which creates its database `app_<slug>_dev`) and starts its dev preview. The preview works on real data: the Builder makes you an `admin` member of the new app and seeds nothing else, and the preview signs you in with your Kelay ID session. Kelay ID and the Data API learn about the new app from the Control API (`KELAY_APPS_SOURCE=control-api`). Without `ANTHROPIC_API_KEY` in `.env` the Builder runs its scripted demo agent, which makes the Ticket Board app whatever the prompt says, and the console says so. With the key, Claude builds from the prompt. See [`services/builder`](services/builder/README.md).
 
 **Agent runs.** The run orchestrator executes Ticket Board's `overdue-summary` graph with the nodes in [`examples/ticket-board-nodes`](examples/ticket-board-nodes). An assistant starts it with the `action_summarize_overdue` tool, another app with an A2A message, and each run shows on the Monitoring tab with its caller.
 
@@ -203,7 +203,16 @@ To change a port or a secret, copy [`.env.example`](.env.example) to `.env` and 
 
 ### End-to-end test
 
-`pnpm e2e` starts its own Postgres container (port 54336) and its own copies of the five services (ports 4411–4414 and 4417), seeds them with the same data, and removes everything afterwards. A running `pnpm dev:up` is not touched. The suite in [`e2e/`](e2e) checks the Ticket Board path:
+`pnpm e2e` starts its own Postgres container (port 54336) and its own copies of the five services and the Builder (ports 4411–4414, 4416 and 4417), seeds them with the same data, and removes everything afterwards. A running `pnpm dev:up` is not touched. The Builder's workspaces of the run are in `.kelay/e2e`.
+
+[`e2e/builder.e2e.test.ts`](e2e/builder.e2e.test.ts) checks an app built by the Builder:
+
+- the builder creates an app, and the Builder's scripted agent builds it, deploys it to Development and starts its dev preview;
+- the builder is the app's only member, an `admin`;
+- with the builder's Kelay ID session, the preview's own `/api/kelay` route creates a ticket and lists it back;
+- a visitor without a session is asked to sign in, and a signed-in person who is not a member is denied.
+
+[`e2e/ticket-board.e2e.test.ts`](e2e/ticket-board.e2e.test.ts) checks the Ticket Board path:
 
 - Junho signs in at Kelay ID and gets a Ticket Board token with his role;
 - the Data API returns only his own tickets and the shared ones, lets him move his own ticket, and denies a change to someone else's;

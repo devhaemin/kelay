@@ -101,9 +101,13 @@ describe('a workspace built by the scripted agent on the local driver', () => {
     expect(h.control.sandboxes[0]).toMatchObject({ app: APP, owner: 'jeongyun', kind: 'workspace', status: 'running', taskArn: `local:${h.dir(APP)}` });
   });
 
+  it('makes the builder an admin member of the new app, and nobody else', () => {
+    expect(h.control.members).toEqual([{ app: APP, userId: 'jeongyun', org: 'orum', role: 'admin' }]);
+  });
+
   it('starts the preview with the runtime environment and reports the workspace', async () => {
     expect(h.previews).toHaveLength(1);
-    expect(h.previews[0]).toMatchObject({ dir: h.dir(APP), env: { DATA_API_URL: 'http://localhost:4002', CONTROL_API_URL: 'http://localhost:4003', KELAY_CALLER_TOKEN: 'caller-token-1' } });
+    expect(h.previews[0]).toMatchObject({ dir: h.dir(APP), env: { DATA_API_URL: 'http://localhost:4002', CONTROL_API_URL: 'http://localhost:4003', KELAY_ID_ISSUER: 'http://localhost:4001', KELAY_CALLER_TOKEN: 'caller-token-1' } });
     const res = await h.req('GET', `/v1/workspaces/${APP}`, { token });
     expect(res.body.workspace).toMatchObject({ state: 'idle', previewUrl: 'http://localhost:39001', version: 'v1', turn: null, lastEventId: first.length });
     expect(res.body.workspace.lastCommit).toMatchObject({ branch: 'main', message: expect.stringContaining('Build the first version') });
@@ -143,8 +147,9 @@ describe('a workspace built by the scripted agent on the local driver', () => {
     expect(turn.find((e) => e.type === 'deploy')).toMatchObject({ ok: true, version: 'v2' });
     expect(h.control.deploys).toHaveLength(2);
     expect(h.control.deploys[1]!.request.schema.collections.find((c) => c.name === 'tickets')!.fields.priority).toEqual({ type: 'text', description: 'low | medium | high' });
-    // The preview keeps running; it is not started twice.
+    // The preview keeps running; it is not started twice. The builder is not added as a member again.
     expect(h.previews).toHaveLength(1);
+    expect(h.control.members).toHaveLength(1);
   });
 
   it('says so and deploys nothing when the scripted agent cannot do what was asked', async () => {

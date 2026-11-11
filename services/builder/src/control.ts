@@ -54,6 +54,8 @@ export interface ControlApi {
   appFor(builderToken: string, app: string): Promise<AppInfo>;
   setDatabase(app: string, env: 'dev' | 'prod', databaseUrl: string): Promise<void>;
   deploy(app: string, env: 'dev', request: DeployRequest): Promise<DeployedVersion>;
+  /** Makes a person a member of the app with this role (contracts §9), so Kelay ID issues them a token for it. */
+  addMember(app: string, userId: string, member: { org: string; role: string }): Promise<void>;
   claimImprovement(worker: string): Promise<ImprovementJob | null>;
   completeImprovement(runId: string, outcome: RunOutcome): Promise<void>;
   recordSandbox(record: SandboxRecord): Promise<void>;
@@ -107,6 +109,10 @@ export class ControlClient implements ControlApi {
   async deploy(app: string, env: 'dev', request: DeployRequest): Promise<DeployedVersion> {
     const body = (await this.request('POST', `/v1/apps/${encodeURIComponent(app)}/envs/${env}/deploy`, 'service', request))!;
     return { id: body.version.id, label: body.version.label, callerToken: body.callerToken ?? null };
+  }
+
+  async addMember(app: string, userId: string, member: { org: string; role: string }): Promise<void> {
+    await this.request('PUT', `/internal/v1/apps/${encodeURIComponent(app)}/members/${encodeURIComponent(userId)}`, 'service', member);
   }
 
   async claimImprovement(worker: string): Promise<ImprovementJob | null> {

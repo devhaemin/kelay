@@ -49,6 +49,11 @@ export interface IdentityDeps {
    */
   corsOrigins?: string[];
   /**
+   * Lets `/login?return_to=` send the browser back to any loopback origin, besides Kelay ID's own
+   * origin and `corsOrigins`. For local development, where dev previews listen on a free port. @default false
+   */
+  returnLoopback?: boolean;
+  /**
    * Request header that holds the client IP, for better-auth's rate limits. Set it to the single-value
    * header the edge writes (`cf-connecting-ip` behind Cloudflare). Trust it only when clients cannot
    * reach the service except through that edge. Unset reads x-forwarded-for.
@@ -155,6 +160,8 @@ export function createIdentity(deps: IdentityDeps) {
       members,
       emailPassword,
       social: Object.keys(social) as SocialProvider[],
+      returnOrigins: [...tokenOrigins],
+      returnLoopback: deps.returnLoopback ?? false,
       ...(deps.consents ? { consents: deps.consents } : {}),
       ...(resolved.clientIpHeader ? { clientIpHeader: resolved.clientIpHeader } : {}),
     }),

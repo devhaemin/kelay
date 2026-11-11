@@ -13,7 +13,8 @@ Every request (the Home prompt, a chat message, an approved improvement) is one 
 2. The workspace commits.
 3. `kelay/schema.ts`, `kelay/policy.ts` and `kelay/graphs.ts` are evaluated in the workspace and checked with `@kelay/policy` and `@kelay/graph`. When the check fails, the problems go back to the agent once; a second failure ends the turn and nothing is deployed.
 4. The result is deployed to Development through `POST /v1/apps/:app/envs/dev/deploy` of the Control API with the schema, the policy and the compiled graphs, which migrates the app database.
-5. The dev preview is started if it is not running.
+5. After the first deploy the builder becomes a member of the app with the role `admin` (`PUT /internal/v1/apps/:app/members/:userId` of the Control API), in the org of their console token. An app that declares no `admin` role gives them its first role. Nobody else is added and no data is seeded.
+6. The dev preview is started if it is not running.
 
 An improvement run does the same on a branch `improve/<run id>`, which is merged into `main` once it deployed. A workspace nobody used for 15 minutes is stopped; its state is in git and in the Builder's state folder, so the next message resumes it.
 
@@ -72,13 +73,19 @@ Events share `{ id, at, app, turn }`; the SSE event name is `type`:
 |---|---|
 | `CONTROL_API_URL`, `KELAY_CALLER_SECRET` | The Control API, and the secret for the Builder's `service` caller token (deploy, improvement runs, sandbox records). Required. |
 | `KELAY_ID_ISSUER`, `KELAY_ID_JWKS_URL` | Verify builder tokens. Required. |
-| `DATA_API_URL` | Passed to dev previews with `CONTROL_API_URL` and the runtime's caller token. |
+| `DATA_API_URL` | Passed to dev previews with `CONTROL_API_URL`, `KELAY_ID_ISSUER` and the runtime's caller token. |
 | `APP_DATABASE_URL_TEMPLATE` | When set, the Builder creates the app's Development database from it before the first deploy and registers it at the Control API. `pnpm dev:up` sets it. |
 | `BUILDER_HOME` | Where workspaces, transcripts and the agent's config folder live (default `.kelay` in the repo). |
 | `BUILDER_IDLE_MINUTES` | Idle time before a workspace stops (default 15). |
 | `BUILDER_IMPROVEMENTS=off`, `BUILDER_IMPROVEMENT_POLL_MS` | Turn off the improvement worker, or change how often it asks the Control API for a queued run (default 5000). |
 
+## Data in the dev preview
+
+The preview works on the app's Development database as the person looking at it. Its `/api/kelay` route trades the browser's Kelay ID session for that person's token for the app and adds the caller token of the dev deploy (contracts §4). The builder is signed in at Kelay ID already when the console shows the preview, and is an `admin` member of the app, so the preview has data from the first build on. Anyone else who opens the preview URL is asked to sign in, and is refused unless the builder adds them as a member.
+
+This needs Kelay ID and the Data API to know the app, which they do when they read the app registry from the Control API (`KELAY_APPS_SOURCE=control-api`, set by `pnpm dev:up`), and it needs the preview and Kelay ID on one site so that the session cookie reaches both. Locally both are on `localhost`.
+
 ## Known limits
 
-- A dev preview renders the app, but locally its data calls answer "Sign in with Kelay ID": the Data API and Kelay ID read apps from `KELAY_APPS_FILE`, which does not know apps built here.
+- A workspace created before the preview read the Kelay ID session keeps its old `/api/kelay` route, which answers "Sign in with Kelay ID". It is a platform file: copy `templates/starter/app/api/kelay/[...path]/route.ts` over it.
 - Access rules saved as a draft in the console are replaced by the workspace's `kelay/policy.ts` on the next turn's deploy.

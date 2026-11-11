@@ -28,6 +28,8 @@ export default function Home() {
 
       {notes.loading ? (
         <p className="muted">Loading…</p>
+      ) : notes.error?.code === 'unauthenticated' ? (
+        <p className="notice">Your notes show once you are signed in. <a href="/api/kelay/signin">Sign in with Kelay ID</a></p>
       ) : notes.error ? (
         <p className="notice">{notes.denied ? 'Your role can’t see notes.' : notes.error.message}</p>
       ) : notes.rows.length === 0 ? (

@@ -77,7 +77,7 @@ const workspaces = new WorkspaceManager({
   agent,
   stateDir: resolve(home, 'state'),
   logger: log,
-  runtimeEnv: Object.fromEntries(['DATA_API_URL', 'CONTROL_API_URL'].filter((k) => env[k]).map((k) => [k, env[k]!])),
+  runtimeEnv: Object.fromEntries(['DATA_API_URL', 'CONTROL_API_URL', 'KELAY_ID_ISSUER'].filter((k) => env[k]).map((k) => [k, env[k]!])),
   ...(env.APP_DATABASE_URL_TEMPLATE ? { provisioner: new PgDatabaseProvisioner(env.APP_DATABASE_URL_TEMPLATE) } : {}),
   ...(env.BUILDER_IDLE_MINUTES ? { idleMs: Number(env.BUILDER_IDLE_MINUTES) * 60_000 } : {}),
 });

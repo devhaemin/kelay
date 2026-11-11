@@ -12,7 +12,7 @@ import { verifyKelayToken, type VerifyOptions } from '@kelay/tokens';
 import type { AppInfo, ControlApi } from './control.ts';
 import { ApiError, errorBody } from './errors.ts';
 import type { WorkspaceEvent } from './events.ts';
-import type { WorkspaceManager } from './workspaces.ts';
+import type { TurnOwner, WorkspaceManager } from './workspaces.ts';
 
 export const CONSOLE_APP = 'kelay-console';
 const BUILDER_ROLES = ['builder', 'admin'];
@@ -30,6 +30,8 @@ type Env = { Variables: { builder: KelayClaims; token: string; app: AppInfo } };
 const hook = (result: { success: boolean; error?: unknown }) => {
   if (!result.success) throw new ApiError('invalid_request', z.prettifyError(result.error as z.ZodError));
 };
+
+const builderOf = (claims: KelayClaims): TurnOwner => ({ id: claims.sub, org: claims.org });
 
 const StartBody = z.object({ app: AppSlug, prompt: z.string().trim().min(1).max(4000) });
 const MessageBody = z.object({ text: z.string().trim().min(1).max(4000), context: z.string().trim().max(200).optional() });
@@ -81,7 +83,7 @@ export function createBuilderApi(deps: BuilderApiDeps): Hono<Env> {
   app.post('/v1/workspaces', builder, zValidator('json', StartBody, hook), async (c) => {
     const body = c.req.valid('json');
     const info = await control.appFor(c.get('token'), body.app);
-    const { turn } = await workspaces.start(info, c.get('builder').sub, body.prompt);
+    const { turn } = await workspaces.start(info, builderOf(c.get('builder')), body.prompt);
     logger.info({ type: 'workspace_started', app: info.slug, turn }, 'first build started');
     return c.json({ workspace: await statusOf(info.slug), turn }, 202);
   });
@@ -90,7 +92,7 @@ export function createBuilderApi(deps: BuilderApiDeps): Hono<Env> {
 
   app.post('/v1/workspaces/:app/messages', builder, owned, zValidator('json', MessageBody, hook), async (c) => {
     const body = c.req.valid('json');
-    const { turn } = await workspaces.message(c.get('app').slug, c.get('builder').sub, body.text, body.context ?? null);
+    const { turn } = await workspaces.message(c.get('app').slug, builderOf(c.get('builder')), body.text, body.context ?? null);
     return c.json({ workspace: await statusOf(c.get('app').slug), turn }, 202);
   });
 

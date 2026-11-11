@@ -95,6 +95,15 @@ describe('members', () => {
     expect((await h.req('DELETE', '/v1/apps/ticket-board/members/u5', { token: jy })).status).toBe(404);
   });
 
+  it('takes builders of the console, which is not an app row', async () => {
+    const svc = await h.service('identity');
+    const first = await h.req('PUT', '/internal/v1/apps/kelay-console/members/new-builder', { caller: svc, body: { org: 'new-builder' } });
+    expect(first.status).toBe(200);
+    expect(first.body.member).toMatchObject({ app: 'kelay-console', userId: 'new-builder', org: 'new-builder', role: 'builder', plan: 'free', status: 'active' });
+    expect((await h.req('PUT', '/internal/v1/apps/kelay-console/members/new-builder', { caller: svc, body: { org: 'new-builder', role: 'member' } })).status).toBe(400);
+    expect((await h.req('PUT', '/internal/v1/apps/no-such-app/members/new-builder', { caller: svc, body: { org: 'x' } })).status).toBe(404);
+  });
+
   it('checks roles against the deployed schema', async () => {
     await h.req('POST', '/v1/apps/ticket-board/envs/dev/deploy', {
       token: jy,
