@@ -1,0 +1,26 @@
+{
+  "name": "@kelay/mcp-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/server.ts",
+    "build": "tsup",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.7",
+    "@kelay/contracts": "workspace:*",
+    "@kelay/tokens": "workspace:*",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "hono": "^4.13.18",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "tsup": "^9.0.0"
+  }
+}
