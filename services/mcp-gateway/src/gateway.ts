@@ -58,9 +58,13 @@ export interface GatewayDeps {
 
 type Caller = Extract<AuthResult, { ok: true }>;
 
+type Args = Record<string, unknown>;
+
 interface PreparedTool {
   def: ToolDef;
-  input: StandardSchemaWithJSON<Record<string, unknown>, Record<string, unknown>>;
+  strict: StandardSchemaWithJSON<Args, Args>;
+  /** Same JSON Schema in `tools/list`, but accepts anything; `strict` runs inside callTool. */
+  advertised: StandardSchemaWithJSON<Args, Args>;
 }
 
 interface PreparedApp {
@@ -68,7 +72,6 @@ interface PreparedApp {
   entry: AppRegistryEntry;
   urls: AppUrls;
   version: string;
-  tools: PreparedTool[];
   card: ReturnType<typeof buildAgentCard>;
   mcp: McpHttpHandler;
 }
@@ -99,11 +102,15 @@ export function createGateway(deps: GatewayDeps): Hono {
 
   const rateKeys = (app: string, caller: Caller): string[] => [`user:${app}:${caller.claims.sub}`, `client:${caller.claims.azp}`];
 
-  async function execute(app: PreparedApp, def: ToolDef, args: Record<string, unknown>, caller: Caller): Promise<CallToolResult> {
+  async function execute(app: PreparedApp, tool: PreparedTool, raw: Args, caller: Caller): Promise<CallToolResult> {
+    const { def } = tool;
     const verdict = limiter.take(rateKeys(app.slug, caller));
     if (!verdict.ok) {
       return toolError(`Rate limit reached (${ratePerMin} calls per minute). Try again in ${verdict.retryAfterSeconds} seconds.`);
     }
+    const checked = await tool.strict['~standard'].validate(raw);
+    if (checked.issues) return toolError(`Invalid arguments for ${def.name}: ${checked.issues.map((i) => i.message).join('; ')}`);
+    const args = checked.value;
     const { target } = def;
     if (target.kind === 'action') {
       const outcome = await actions.run({ app: app.slug, action: target.action, input: args, claims: caller.claims, userToken: caller.token });
@@ -122,11 +129,11 @@ export function createGateway(deps: GatewayDeps): Hono {
     return present(target.op, target.collection, args, result);
   }
 
-  async function callTool(app: PreparedApp, def: ToolDef, args: Record<string, unknown>, caller: Caller): Promise<CallToolResult> {
+  async function callTool(app: PreparedApp, tool: PreparedTool, args: Args, caller: Caller): Promise<CallToolResult> {
     const started = now();
     let result: CallToolResult;
     try {
-      result = await execute(app, def, args, caller);
+      result = await execute(app, tool, args, caller);
     } catch (e) {
       onError(e as Error);
       result = toolError(INTERNAL_FAILURE);
@@ -136,7 +143,7 @@ export function createGateway(deps: GatewayDeps): Hono {
       app: app.slug,
       sub: caller.claims.sub,
       client: caller.claims.azp,
-      tool: def.name,
+      tool: tool.def.name,
       ms: Math.round(now() - started),
       ok: !result.isError,
     });
@@ -146,7 +153,12 @@ export function createGateway(deps: GatewayDeps): Hono {
   function prepare(slug: string, entry: AppRegistryEntry): PreparedApp {
     const urls = appUrls(config.publicBaseUrl, entry.handle, slug);
     const version = createHash('sha256').update(JSON.stringify(entry.schema)).digest('hex').slice(0, 12);
-    const tools = buildTools(entry.schema).map((def) => ({ def, input: fromJsonSchema<Record<string, unknown>>(def.inputSchema) }));
+    // The SDK would reject invalid arguments before callTool runs, so such calls would escape the
+    // rate limit and metering. It gets a pass-through validator and callTool validates instead.
+    const tools: PreparedTool[] = buildTools(entry.schema).map((def) => {
+      const strict = fromJsonSchema<Args>(def.inputSchema);
+      return { def, strict, advertised: { '~standard': { ...strict['~standard'], validate: (value) => ({ value: value as Args }) } } };
+    });
     const instructions =
       `Tools for the ${slug} app on Kelay. Every call runs as the signed-in user, with that user's permissions in this app. ` +
       `A call the user isn't allowed to make returns a short explanation instead of data.`;
@@ -155,18 +167,18 @@ export function createGateway(deps: GatewayDeps): Hono {
       entry,
       urls,
       version,
-      tools,
       card: buildAgentCard({ schema: entry.schema, urls, version, oauth: config.oauth }),
       mcp: createMcpHandler(
         (ctx) => {
           const caller = ctx.authInfo?.extra?.caller as Caller | undefined;
           if (!caller) throw new Error('MCP request reached the server without a verified caller');
           const server = new McpServer({ name: slug, version }, { instructions });
-          for (const { def, input } of tools) {
+          for (const tool of tools) {
+            const { def } = tool;
             server.registerTool(
               def.name,
-              { title: def.title, description: def.description, inputSchema: input, annotations: def.annotations },
-              (args) => callTool(prepared, def, args, caller),
+              { title: def.title, description: def.description, inputSchema: tool.advertised, annotations: def.annotations },
+              (args) => callTool(prepared, tool, args, caller),
             );
           }
           return server;

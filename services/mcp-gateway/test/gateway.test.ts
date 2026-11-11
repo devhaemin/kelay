@@ -179,16 +179,25 @@ describe('generated tools', () => {
     await client.close();
   });
 
-  it('rejects invalid arguments as a tool error without calling the Data API', async () => {
-    const { connect, token, data } = await setup();
+  it('rejects invalid arguments as a metered, rate-limited tool error without calling the Data API', async () => {
+    const { connect, token, data, calls } = await setup({ ratePerMin: 5 });
     const client = await connect(await token());
     for (const args of [{ title: 'No status' }, { title: 'x', status: 'todo', owner_id: 'u_2' }, { title: 'x', status: 'todo', due_on: 'tomorrow' }]) {
       const result = await client.callTool({ name: 'tickets_create', arguments: args });
       expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect(textOf(result)).toMatch(/^Invalid arguments for tickets_create: /);
     }
     const badId = await client.callTool({ name: 'tickets_get', arguments: { id: 'not-a-uuid' } });
     expect(badId.isError).toBe(true);
     expect(data.queries).toHaveLength(0);
+    expect(calls.map((c) => [c.tool, c.ok])).toEqual([
+      ['tickets_create', false],
+      ['tickets_create', false],
+      ['tickets_create', false],
+      ['tickets_get', false],
+    ]);
+    const limited = await client.callTool({ name: 'tickets_get', arguments: { id: 'still-not-a-uuid' } });
+    expect(textOf(limited)).toMatch(/^Rate limit reached/);
     await client.close();
   });
 
