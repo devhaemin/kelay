@@ -194,6 +194,8 @@ Both answer `201 { recorded, skipped }`; records for apps that do not exist are 
 | Data API | 4002 |
 | Control API | 4003 |
 | MCP gateway | 4004 |
+| Dev sign-in helper (`pnpm dev:up`) | 4005 |
+| Builder | 4006 |
 | Router (wrangler dev) | 8787 |
 | Postgres (compose) | 54320 |
 
