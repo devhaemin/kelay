@@ -97,6 +97,21 @@ describe('Control API client', () => {
     expect(await fakeControlApi({}).api.getGraphOverview()).toBeNull();
   });
 
+  it('asks the Builder for the address of the preview frame, which carries its ticket', async () => {
+    const calls: string[] = [];
+    const preview = { url: 'http://localhost:4006/preview/ticket-board/?kelay_preview_token=t1', expiresAt: '2026-11-12T00:02:00Z' };
+    const fetch = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(input)} ${new Headers(init?.headers).get('authorization')}`);
+      return Response.json(String(input).includes('ticket-board') ? { preview } : { preview: null });
+    });
+    const api = createHttpApi({ baseUrl: 'http://control.test', builderUrl: 'http://builder.test', token: 'builder-token', appOrigin: 'https://kelay.app', mcpBaseUrl: 'https://mcp.kelay.app', fetch });
+    expect(await api.getPreview('ticket-board')).toEqual({ kind: 'url', url: preview.url });
+    expect(calls).toEqual(['POST http://builder.test/v1/workspaces/ticket-board/preview Bearer builder-token']);
+    // A workspace whose preview is not running, and a console without a Builder, have no frame to show.
+    expect(await api.getPreview('team-wiki')).toBeNull();
+    expect(await createHttpApi({ baseUrl: 'http://control.test', token: 't', appOrigin: 'https://kelay.app', mcpBaseUrl: 'https://mcp.kelay.app', fetch }).getPreview('ticket-board')).toBeNull();
+  });
+
   it('names the builder after their handle when the Control API has no /v1/me', async () => {
     const { api } = fakeControlApi({ 'GET /v1/apps': () => ({ json: { apps: [appView] } }) });
     expect(await api.getMe()).toEqual({ name: 'orum', handle: 'orum', email: '', team: '' });

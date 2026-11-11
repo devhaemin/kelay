@@ -40,8 +40,6 @@ export interface FargateDriverOptions {
    * (ANTHROPIC_BASE_URL and the gateway's key for builder workspaces). Never a provider key or the caller secret.
    */
   environment?: Record<string, string>;
-  /** Public URL of an app's dev preview behind the preview proxy; `{app}` is replaced with the slug. */
-  previewUrlTemplate: string;
   cpu?: string;
   memory?: string;
   runtimePort?: number;
@@ -225,7 +223,7 @@ export class FargateWorkspaceDriver implements WorkspaceDriver {
       ref: taskArn,
       endpoint: `http://${ip}:${this.runtimePort}`,
       token,
-      publicPreviewUrl: this.opts.previewUrlTemplate.replaceAll('{app}', app),
+      previewTarget: `http://${ip}:${this.previewPort}`,
       stop: async () => {
         await this.ecs.send(new StopTaskCommand({ cluster: this.opts.cluster, task: taskArn, reason: 'Builder workspace idle' }));
       },

@@ -9,7 +9,9 @@
 //            from here over the runtime protocol. A turn builds the bundles in the container, they are
 //            fetched and stored here, and the stub receives the deploy. The web bundle then answers a
 //            request in the Lambda runtime emulator, and the dev preview answers in the container.
-//   service  the image as the Builder service: a build started over its HTTP API, deployed to the stub.
+//   service  the image as the Builder service: a build started over its HTTP API, deployed to the stub,
+//            and the app's `next dev` reached through the preview proxy the way a browser frame does:
+//            the page, one of its scripts, and the HMR WebSocket.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +24,7 @@ import { createDevSigner, verifyCallerToken } from '@kelay/tokens';
 import { execa } from 'execa';
 import getPort from 'get-port';
 import { Hono } from 'hono';
+import { WebSocket } from 'ws';
 import { CONSOLE_APP } from '../src/app.ts';
 import { LocalArtifactStore } from '../src/artifacts/store.ts';
 import { ControlClient, type DeployRequest } from '../src/control.ts';
@@ -115,7 +118,7 @@ async function task(stub: Awaited<ReturnType<typeof startStub>>) {
     name: 'fargate',
     exists: async () => false,
     open: (app) =>
-      new RemoteWorkspace({ app, ref: `docker:${name}`, endpoint: `http://127.0.0.1:${runtimePort}`, token: RUNTIME_TOKEN, publicPreviewUrl: `http://127.0.0.1:${previewPort}`, stop: async () => {} }).connect(),
+      new RemoteWorkspace({ app, ref: `docker:${name}`, endpoint: `http://127.0.0.1:${runtimePort}`, token: RUNTIME_TOKEN, previewTarget: `http://127.0.0.1:${previewPort}`, stop: async () => {} }).connect(),
   };
   const workspaces = new WorkspaceManager({
     driver,
@@ -177,6 +180,8 @@ async function service(stub: Awaited<ReturnType<typeof startStub>>) {
       '-e', 'BUILDER_AGENT=scripted',
       '-e', 'BUILDER_ARTIFACT_STORE=local',
       '-e', 'BUILDER_IMPROVEMENTS=off',
+      // The address a browser on this machine reaches the container's proxy at.
+      '-e', `BUILDER_PREVIEW_URL_TEMPLATE=http://127.0.0.1:${port}/preview/{app}/`,
     ],
     ['node', '--import', 'tsx', 'src/server.ts'],
   );
@@ -200,6 +205,43 @@ async function service(stub: Awaited<ReturnType<typeof startStub>>) {
   check(finished?.status === 'succeeded', `the turn succeeded (${finished?.error ?? 'no error'})`);
   check(stub.deploys.length === before + 1, 'the build was deployed once');
   checkDeploy(stub.deploys.at(-1), /^file:\/\/\/var\/lib\/kelay-builder\/artifacts\/builds\/team-board\//);
+
+  // The preview, as the console's frame loads it. The browser's own origin is not the dev server's.
+  const origin = 'https://preview.kelay.example';
+  const { preview } = (await (await fetch(`${base}/v1/workspaces/${APP}/preview`, { method: 'POST', headers })).json()) as { preview: { url: string } | null };
+  check(preview?.url.startsWith(`${base}/preview/${APP}/?`), 'the Builder answers the preview address with a ticket');
+  check((await fetch(`${base}/preview/${APP}/`, { redirect: 'manual' })).status === 401, 'the preview refuses a request without a session');
+  const landing = await fetch(preview!.url, { redirect: 'manual' });
+  const cookie = landing.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  check(landing.status === 302 && landing.headers.get('location') === `/preview/${APP}/` && cookie.includes('kelay_ps_'), 'the ticket becomes a session cookie');
+  const page = await fetch(`${base}/preview/${APP}/`, { headers: { cookie }, signal: AbortSignal.timeout(120_000) });
+  const html = await page.text();
+  check(page.status === 200 && html.includes('Ticket Board'), 'the proxy serves the board page from `next dev`');
+  const script = /src="(\/_next\/[^"]+\.js[^"]*)"/.exec(html)?.[1];
+  check(script, `the page loads its scripts from the root (${script ?? 'none found'})`);
+  const asset = await fetch(`${base}${script!}`, { headers: { cookie, referer: `${origin}/preview/${APP}/`, 'sec-fetch-dest': 'script', 'sec-fetch-mode': 'no-cors', 'sec-fetch-site': 'same-origin' } });
+  check(asset.status === 200 && (asset.headers.get('content-type') ?? '').includes('javascript'), 'a script of the page comes through the proxy');
+  await asset.body?.cancel();
+
+  const hmr = await new Promise<string>((ok, fail) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/_next/hmr?id=verify`, { headers: { cookie, origin } });
+    const timer = setTimeout(() => fail(new Error('the HMR socket opened but sent nothing in 30 s')), 30_000);
+    socket.on('message', (data) => {
+      clearTimeout(timer);
+      socket.close();
+      ok(data.toString());
+    });
+    socket.on('unexpected-response', (_req, res) => fail(new Error(`the HMR socket was refused with ${res.statusCode}`)));
+    socket.on('error', fail);
+  });
+  check(hmr.length > 0, `the HMR WebSocket of \`next dev\` connects through the proxy (first message: ${hmr.slice(0, 60)})`);
+  const refused = await new Promise<number>((ok) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/preview/${APP}/_next/hmr`);
+    socket.on('unexpected-response', (_req, res) => ok(res.statusCode ?? 0));
+    socket.on('open', () => ok(101));
+    socket.on('error', () => ok(0));
+  });
+  check(refused === 401, 'the HMR WebSocket refuses a browser without a session');
 }
 
 const stub = await startStub();

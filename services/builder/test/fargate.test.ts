@@ -21,9 +21,11 @@ const TASK_DEF = 'arn:aws:ecs:ap-northeast-2:123456789012:task-definition/kelay-
 const IMAGE = '123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/kelay-workspace:1';
 
 const runtimeCalls: { url: string; token: string | null }[] = [];
+const RUNTIME_INFO = { app: 'team-board', created: true, agent: { kind: 'claude', model: 'claude-opus-5-5' }, previewing: false };
+let runtimeResponse: unknown = RUNTIME_INFO;
 const runtimeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
   runtimeCalls.push({ url: String(input), token: new Headers(init?.headers).get(RUNTIME_TOKEN_HEADER) });
-  return Response.json({ app: 'team-board', created: true, agent: { kind: 'claude', model: 'claude-opus-5-5' }, previewUrl: null });
+  return Response.json(runtimeResponse);
 }) as typeof fetch;
 
 const driver = () =>
@@ -36,7 +38,6 @@ const driver = () =>
     executionRoleArn: 'arn:aws:iam::123456789012:role/kelay-workspace-exec',
     taskRoleArn: 'arn:aws:iam::123456789012:role/kelay-workspace-task',
     environment: { ANTHROPIC_BASE_URL: 'https://llm.kelay.internal', ANTHROPIC_API_KEY: 'gateway-key-for-builder-workspaces' },
-    previewUrlTemplate: 'https://{app}.preview.kelay.dev',
     pollMs: 1,
     ecs: new ECSClient({ region: 'ap-northeast-2' }),
     efs: new EFSClient({ region: 'ap-northeast-2' }),
@@ -54,6 +55,7 @@ beforeEach(() => {
   ecs.reset();
   efs.reset();
   runtimeCalls.length = 0;
+  runtimeResponse = RUNTIME_INFO;
 });
 
 describe('Fargate workspace driver', () => {
@@ -103,7 +105,12 @@ describe('Fargate workspace driver', () => {
     expect(polls).toBe(3);
     expect(ws).toMatchObject({ app: 'team-board', ref: TASK, created: true, agent: { kind: 'claude', model: 'claude-opus-5-5' } });
     expect(runtimeCalls).toEqual([{ url: 'http://10.0.3.17:4007/runtime/info', token: environment.KELAY_RUNTIME_TOKEN }]);
-    expect(ws.previewUrl()).toBeNull();
+    runtimeCalls.length = 0;
+    expect(ws.previewTarget()).toBeNull();
+    // Once the preview runs, the proxy reaches it at the task's address; a browser never does.
+    runtimeResponse = { url: 'http://localhost:3000' };
+    expect(await ws.startPreview({})).toBe('http://10.0.3.17:3000');
+    expect(ws.previewTarget()).toBe('http://10.0.3.17:3000');
 
     ecs.on(StopTaskCommand).resolves({});
     await ws.stop();

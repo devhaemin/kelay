@@ -2,20 +2,22 @@
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { serve } from '@hono/node-server';
 import { LOCAL_PORTS } from '@kelay/contracts';
 import { remoteJwks } from '@kelay/tokens';
 import { DEFAULT_BUILDER_MODEL } from './agents/claude.ts';
 import { selectAgent } from './agents/select.ts';
 import { artifactStoreFromEnv } from './artifacts/store.ts';
-import { createBuilderApi } from './app.ts';
+import { createBuilderApi, previewBearer } from './app.ts';
 import { ControlClient } from './control.ts';
 import { FargateWorkspaceDriver } from './drivers/fargate.ts';
 import { LocalWorkspaceDriver } from './drivers/local.ts';
 import type { WorkspaceDriver } from './drivers/types.ts';
 import type { AgentInfo } from './events.ts';
+import { createBuilderServer } from './http.ts';
 import { ImprovementWorker } from './improvements.ts';
 import { createLogger } from './log.ts';
+import { PreviewProxy } from './preview/proxy.ts';
+import { PreviewSessions } from './preview/session.ts';
 import { PgDatabaseProvisioner } from './provision.ts';
 import { WorkspaceManager } from './workspaces.ts';
 
@@ -34,6 +36,7 @@ function need(name: string): string {
 
 const list = (name: string) => need(name).split(',').map((s) => s.trim()).filter(Boolean);
 const home = resolve(env.BUILDER_HOME ?? resolve(REPO, '.kelay'));
+const port = Number(env.PORT ?? LOCAL_PORTS.builder);
 
 let driver: WorkspaceDriver;
 let agent: AgentInfo;
@@ -50,7 +53,6 @@ try {
       image: need('BUILDER_WORKSPACE_IMAGE'),
       executionRoleArn: need('BUILDER_EXECUTION_ROLE_ARN'),
       taskRoleArn: need('BUILDER_TASK_ROLE_ARN'),
-      previewUrlTemplate: need('BUILDER_PREVIEW_URL_TEMPLATE'),
       environment: {
         BUILDER_AGENT: agent.kind,
         ...(agent.model ? { BUILDER_MODEL: agent.model } : {}),
@@ -79,7 +81,8 @@ try {
   process.exit(1);
 }
 
-const control = new ControlClient({ baseUrl: need('CONTROL_API_URL'), callerSecret: need('KELAY_CALLER_SECRET') });
+const callerSecret = need('KELAY_CALLER_SECRET');
+const control = new ControlClient({ baseUrl: need('CONTROL_API_URL'), callerSecret });
 const workspaces = new WorkspaceManager({
   driver,
   control,
@@ -87,15 +90,27 @@ const workspaces = new WorkspaceManager({
   stateDir: resolve(home, 'state'),
   logger: log,
   ...(artifacts ? { artifacts } : {}),
+  // A browser reaches a preview through this service's own proxy, whatever the workspace driver.
+  previewUrlTemplate: env.BUILDER_PREVIEW_URL_TEMPLATE ?? `http://localhost:${port}/preview/{app}/`,
   runtimeEnv: Object.fromEntries(['DATA_API_URL', 'CONTROL_API_URL'].filter((k) => env[k]).map((k) => [k, env[k]!])),
   ...(env.APP_DATABASE_URL_TEMPLATE ? { provisioner: new PgDatabaseProvisioner(env.APP_DATABASE_URL_TEMPLATE) } : {}),
   ...(env.BUILDER_IDLE_MINUTES ? { idleMs: Number(env.BUILDER_IDLE_MINUTES) * 60_000 } : {}),
 });
 
-const app = createBuilderApi({
-  auth: { issuer: need('KELAY_ID_ISSUER'), jwks: remoteJwks(need('KELAY_ID_JWKS_URL')) },
-  control,
-  workspaces,
+const auth = { issuer: need('KELAY_ID_ISSUER'), jwks: remoteJwks(need('KELAY_ID_JWKS_URL')) };
+let sessions: PreviewSessions;
+try {
+  sessions = new PreviewSessions(callerSecret);
+} catch (e) {
+  log.fatal({ type: 'config', err: (e as Error).message }, (e as Error).message);
+  process.exit(1);
+}
+const app = createBuilderApi({ auth, control, workspaces, preview: sessions, logger: log });
+const preview = new PreviewProxy({
+  sessions,
+  target: (slug) => workspaces.previewTarget(slug),
+  bearer: previewBearer({ auth, control }),
+  ...(env.BUILDER_PREVIEW_DOMAIN ? { domain: env.BUILDER_PREVIEW_DOMAIN } : {}),
   logger: log,
 });
 
@@ -108,9 +123,8 @@ const worker = new ImprovementWorker({
 });
 if (env.BUILDER_IMPROVEMENTS !== 'off') worker.start();
 
-const port = Number(env.PORT ?? LOCAL_PORTS.builder);
-const server = serve({ fetch: app.fetch, port }, (info) => {
-  log.info({ type: 'listen', port: info.port, driver: driver.name, agent, artifacts: artifacts?.name ?? 'off' }, `builder listening; coding agent: ${agent.kind}${agent.model ? ` (${agent.model})` : ''}`);
+const server = createBuilderServer(app, preview).listen(port, () => {
+  log.info({ type: 'listen', port, driver: driver.name, agent, artifacts: artifacts?.name ?? 'off' }, `builder listening; coding agent: ${agent.kind}${agent.model ? ` (${agent.model})` : ''}`);
 });
 
 let closing = false;
@@ -119,8 +133,10 @@ const shutdown = (signal: string) => {
   closing = true;
   log.info({ type: 'shutdown', signal }, 'shutting down');
   void worker.stop();
-  // Open event streams would keep the server from closing.
+  // Open event streams and HMR sockets would keep the server from closing.
   server.close();
+  server.closeAllConnections();
+  preview.close();
   void workspaces.shutdown().finally(() => process.exit(0));
 };
 process.on('SIGTERM', () => shutdown('SIGTERM'));

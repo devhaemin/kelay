@@ -432,9 +432,11 @@ export function createHttpApi({ baseUrl, token, appOrigin = 'https://kelay.app',
       return toSummary(obj(body.app));
     },
 
-    // The dev preview is the workspace's `next dev`. It runs while the workspace is in use.
+    // The dev preview is the workspace's `next dev`, behind the Builder's preview proxy. It runs while the
+    // workspace is in use. A frame cannot send the builder's token, so the Builder answers an address
+    // with a short-lived ticket in it, which the proxy trades for a cookie on its own origin.
     async getPreview(app) {
-      const url = str(obj((await builder('GET', `/v1/workspaces/${seg(app)}`))?.workspace).previewUrl);
+      const url = str(obj((await builder('POST', `/v1/workspaces/${seg(app)}/preview`))?.preview).url);
       return url ? { kind: 'url', url } : null;
     },
 

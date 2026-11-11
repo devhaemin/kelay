@@ -3,7 +3,7 @@
 The Builder workspace of [infrastructure §4.1](../../docs/infrastructure.md): one paragraph becomes an app, and Builder chat changes it. Each app gets a workspace: a git repo started from [`templates/starter`](../../templates/starter), a coding agent, and `next dev` as the dev preview.
 
 - **Run:** `pnpm --filter @kelay/builder dev` (port 4006), or `pnpm dev:up`, which starts it with local workspaces.
-- **Test:** `pnpm --filter @kelay/builder test`. No database and no model: the Control API and the Agent SDK are replaced, the Fargate driver and the S3 store run against `aws-sdk-client-mock`. The suite really builds the scripted Ticket Board app (`next build` through OpenNext, a few seconds each) and calls the handlers of the two zips in a process of their own.
+- **Test:** `pnpm --filter @kelay/builder test`. No database and no model: the Control API and the Agent SDK are replaced, the Fargate driver and the S3 store run against `aws-sdk-client-mock`, and the preview proxy against a fake dev server with a WebSocket echo. The suite really builds the scripted Ticket Board app (`next build` through OpenNext, a few seconds each) and calls the handlers of the two zips in a process of their own.
 
 ## A turn
 
@@ -29,13 +29,14 @@ All take `authorization: Bearer <Kelay ID token for kelay-console>` with role `b
 | `POST /v1/workspaces/:app/messages` `{ text, context? }` | `202 { workspace, turn }`. Starts a chat turn. `409 conflict` while a turn runs. |
 | `GET /v1/workspaces/:app` | `200 { workspace }`, or `404 not_found` when the app has no workspace. |
 | `GET /v1/workspaces/:app/events` | The transcript, then live events, as SSE. `Last-Event-ID` or `?after=<id>` resumes; `?format=json` answers `{ events }` and ends. |
+| `POST /v1/workspaces/:app/preview` | `200 { preview: { url, expiresAt } }`: the address to load in the preview frame, with a ticket in it (see [Dev preview](#dev-preview)). `{ preview: null }` while the preview is not running. |
 | `GET /healthz` | `{ ok, service, driver, agent }`, no token. |
 
 ```jsonc
 // workspace
 { "app": "team-board", "state": "working" | "idle" | "stopped", "driver": "local" | "fargate",
   "agent": { "kind": "claude" | "scripted", "model": "claude-opus-5-5" | null },
-  "previewUrl": "http://localhost:55264" | null,
+  "previewUrl": "http://localhost:4006/preview/team-board/" | null,
   "lastCommit": { "commit", "message", "branch" } | null, "version": "v2" | null,
   "turn": { "id", "kind": "build" | "message" | "improvement" } | null, "lastEventId": 41 }
 ```
@@ -52,7 +53,7 @@ Events share `{ id, at, app, turn }`; the SSE event name is `type`:
 | `validation` | `ok`, `attempt` (1 or 2), `problems: { path, message }[]` |
 | `build` | `ok`, `attempt` (1 or 2), `error` (the end of the build's output) |
 | `deploy` | `ok`, `env: "dev"`, `version`, `versionId`, `error` |
-| `preview` | `url` |
+| `preview` | `url` (behind the preview proxy) |
 | `turn.finished` | `status: "succeeded" \| "failed"`, `error` |
 
 ## Bundles
@@ -74,6 +75,27 @@ The Router forwards the whole path to the function, so the web bundle is built w
 
 With the `fargate` driver the build runs in the workspace task, which may not write to the bucket: the Builder fetches the two files from the task (`POST /runtime/build`, `GET /runtime/artifacts/<name>.zip`) and uploads them itself.
 
+## Dev preview
+
+The preview proxy of [infrastructure §4.1](../../docs/infrastructure.md) runs in this service, on the same port as the API ([`src/preview/proxy.ts`](src/preview/proxy.ts)). It forwards a preview address to the `next dev` of the app's workspace, over HTTP and over WebSocket for HMR, and a browser never gets the workspace's own address.
+
+| Address | When |
+|---|---|
+| `/preview/<app>/…` on the Builder's host | Always. `next dev` loads its scripts and opens its HMR socket from the root (`/_next/…`), so a request that names no app goes to the app whose preview the browser opened last (a cookie). The Builder's own paths (`/v1/…`, `/healthz`) are never forwarded. |
+| `<app>.<BUILDER_PREVIEW_DOMAIN>` | When `BUILDER_PREVIEW_DOMAIN` is set. One host per app, and every path on it is the app's. It needs DNS and a certificate for `*.<domain>`. |
+
+`BUILDER_PREVIEW_URL_TEMPLATE` is the address reported for an app's preview, with `{app}` replaced by the slug (default `http://localhost:<PORT>/preview/{app}/`).
+
+**Only the builder who owns the app gets in.** A frame cannot send the builder's Kelay ID token, so:
+
+1. The console calls `POST /v1/workspaces/:app/preview` with the builder's token. The Control API confirms ownership, as for every route, and the answer is the preview address with a ticket (`?kelay_preview_token=…`, valid for two minutes, for this app only).
+2. The proxy answers that address with a redirect to the same address without the ticket, and an `HttpOnly`, `SameSite=Lax` session cookie for this app (12 hours). A reloaded frame sends its old ticket again; the session it already has then counts.
+3. Every later request and the HMR socket carry the cookie. Without it the proxy answers `401 unauthenticated`, and `409 conflict` while the preview is not running.
+
+A caller that is not a browser may send `authorization: Bearer <builder token>` instead; the proxy then asks the Control API for the app with it. Tickets and sessions are signed with a key derived from `KELAY_CALLER_SECRET`, so every Builder task accepts them.
+
+What the workspace's dev server receives is the request as a browser on its own machine would send it: `host` and `origin` are `localhost:<port>` (`next dev` serves its scripts and its HMR socket to no other origin), and the builder's token, the proxy's cookies and `x-kelay-*` headers are removed, because the app is agent-written code. With `/preview/<app>/…`, previews of one builder's apps share an origin; use a preview domain to separate them.
+
 ## Coding agent
 
 `BUILDER_AGENT=claude|scripted`. Unset, it is `claude` when `ANTHROPIC_API_KEY` is set and `scripted` otherwise. `agent` in `/healthz`, in every workspace and in every `turn.started` says which one is active.
@@ -85,8 +107,8 @@ With the `fargate` driver the build runs in the workspace task, which may not wr
 
 `BUILDER_WORKSPACE_DRIVER=local|fargate` (default `local`).
 
-- **`local`**: a folder per app under `KELAY_WORKSPACES_ROOT` (default `.kelay/workspaces` in the repo), sharing the dependencies installed in `templates/starter`. The preview is `next dev` on a free port.
-- **`fargate`**: one ECS task per app with the app's own EFS access point, so a task sees only that app's repo. The task runs `src/runtime-server.ts` from the [workspace image](#image), and the Builder drives it over the VPC with a token only the two of them know. The task holds the gateway key for the agent and no platform secret; checks and deploys stay in the Builder. Settings: `BUILDER_ECS_CLUSTER`, `BUILDER_EFS_FILE_SYSTEM_ID`, `BUILDER_SUBNETS`, `BUILDER_SECURITY_GROUPS`, `BUILDER_WORKSPACE_IMAGE`, `BUILDER_EXECUTION_ROLE_ARN`, `BUILDER_TASK_ROLE_ARN`, `BUILDER_PREVIEW_URL_TEMPLATE`, and `BUILDER_WORKSPACE_API_KEY` with `ANTHROPIC_BASE_URL` for the agent. This driver has unit tests only and has not run against AWS; what the task runs is checked with the image (below).
+- **`local`**: a folder per app under `KELAY_WORKSPACES_ROOT` (default `.kelay/workspaces` in the repo), sharing the dependencies installed in `templates/starter`. The preview is `next dev` on a free port, reached through the preview proxy.
+- **`fargate`**: one ECS task per app with the app's own EFS access point, so a task sees only that app's repo. The task runs `src/runtime-server.ts` from the [workspace image](#image), and the Builder drives it over the VPC with a token only the two of them know. The task holds the gateway key for the agent and no platform secret; checks and deploys stay in the Builder. Settings: `BUILDER_ECS_CLUSTER`, `BUILDER_EFS_FILE_SYSTEM_ID`, `BUILDER_SUBNETS`, `BUILDER_SECURITY_GROUPS`, `BUILDER_WORKSPACE_IMAGE`, `BUILDER_EXECUTION_ROLE_ARN`, `BUILDER_TASK_ROLE_ARN`, and `BUILDER_WORKSPACE_API_KEY` with `ANTHROPIC_BASE_URL` for the agent. This driver has unit tests only and has not run against AWS; what the task runs is checked with the image (below).
 
 ## Image
 
@@ -97,7 +119,7 @@ docker build -f services/builder/Dockerfile -t kelay/workspace .
 pnpm --filter @kelay/builder verify:image --image kelay/workspace
 ```
 
-[`scripts/verify-image.ts`](scripts/verify-image.ts) needs Docker only. With a Control API stub and the scripted agent it runs the image both ways: as the workspace task, driven over the runtime protocol the way the `fargate` driver drives it (the bundles are built in the container, fetched, stored, and deployed to the stub; the web bundle then answers in the Lambda runtime emulator image, and the dev preview answers in the container), and as the Builder service, with a build started over its HTTP API.
+[`scripts/verify-image.ts`](scripts/verify-image.ts) needs Docker only. With a Control API stub and the scripted agent it runs the image both ways: as the workspace task, driven over the runtime protocol the way the `fargate` driver drives it (the bundles are built in the container, fetched, stored, and deployed to the stub; the web bundle then answers in the Lambda runtime emulator image, and the dev preview answers in the container), and as the Builder service, with a build started over its HTTP API and the app's real `next dev` reached through the preview proxy: the page, one of its scripts, and the HMR WebSocket, with a browser origin that is not the dev server's.
 
 ## Other settings
 

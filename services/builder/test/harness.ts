@@ -81,7 +81,7 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function createHarness(opts: { agent?: CodingAgent; artifacts?: ArtifactStore } = {}): Promise<Harness> {
+export async function createHarness(opts: { agent?: CodingAgent; artifacts?: ArtifactStore; previewUrlTemplate?: string } = {}): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), 'kelay-builder-'));
   const control = new FakeControl();
   const signer = await createDevSigner();
@@ -103,6 +103,7 @@ export async function createHarness(opts: { agent?: CodingAgent; artifacts?: Art
     runtimeEnv: { DATA_API_URL: 'http://localhost:4002', CONTROL_API_URL: 'http://localhost:4003' },
     provisioner: { ensure: async (app, env) => `postgres://test/app_${app.replaceAll('-', '_')}_${env}` },
     ...(opts.artifacts ? { artifacts: opts.artifacts } : {}),
+    ...(opts.previewUrlTemplate ? { previewUrlTemplate: opts.previewUrlTemplate } : {}),
     idleMs: 0,
   });
   const api = createBuilderApi({ auth: { issuer: signer.issuer, jwks: signer.verifier }, control, workspaces, logger });

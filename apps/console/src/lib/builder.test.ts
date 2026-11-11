@@ -91,8 +91,9 @@ describe('ConsoleApi over the Control API and the Builder', () => {
     const { api, calls } = apis({
       'GET /v1/workspaces/team-board': () => ({ json: { workspace } }),
       'GET /v1/workspaces/team-board/events': () => ({ json: { events: build } }),
+      'POST /v1/workspaces/team-board/preview': () => ({ json: { preview: { url: 'http://localhost:4006/preview/team-board/?kelay_preview_token=t1', expiresAt: '2026-11-12T00:02:00Z' } } }),
     });
-    expect(await api.getPreview('team-board')).toEqual({ kind: 'url', url: 'http://localhost:4321' });
+    expect(await api.getPreview('team-board')).toEqual({ kind: 'url', url: 'http://localhost:4006/preview/team-board/?kelay_preview_token=t1' });
     const session = await api.getBuilderSession('team-board');
     expect(session).toMatchObject({ workspace: { state: 'idle', agent: scripted, version: 'v1' }, events: build });
     expect(await api.getBuilderThread('team-board', 'screen')).toHaveLength(2);

@@ -34,9 +34,16 @@ export interface Workspace {
    * `web.zip` and `nodes.zip` in `outDir` on the caller's side. Throws `BuildError` when the app does not build.
    */
   build(opts: { outDir: string; basePath: string }): Promise<AppArtifacts>;
-  /** Starts the dev preview when it is not running and returns its URL. `env` is the runtime's platform environment. */
+  /**
+   * Starts the dev preview when it is not running and returns where it listens. `env` is the runtime's
+   * platform environment.
+   */
   startPreview(env: Record<string, string>): Promise<string>;
-  previewUrl(): string | null;
+  /**
+   * Where the running dev preview listens, as the Builder reaches it (http://localhost:<port>, or the
+   * task's address in the VPC). The preview proxy forwards to it; a browser never gets this address.
+   */
+  previewTarget(): string | null;
   stop(): Promise<void>;
 }
 

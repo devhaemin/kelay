@@ -92,6 +92,11 @@ export interface WorkspaceManagerDeps {
    * workspace commit, which only the Control API's `local` deploy driver takes.
    */
   artifacts?: ArtifactStore;
+  /**
+   * The address a browser opens an app's dev preview at, behind the preview proxy; `{app}` is replaced
+   * with the slug. Without it the workspace's own address is reported, which only works on this machine.
+   */
+  previewUrlTemplate?: string;
   /** Platform URLs the dev preview needs: DATA_API_URL and CONTROL_API_URL. */
   runtimeEnv?: Record<string, string>;
   logger: Logger;
@@ -144,6 +149,18 @@ export class WorkspaceManager {
     return entry;
   }
 
+  private publicPreviewUrl(app: string, target: string): string {
+    return this.deps.previewUrlTemplate?.replaceAll('{app}', app) ?? target;
+  }
+
+  /** Where the preview proxy forwards requests for this app, or null while its preview is not running. Counts as use of the workspace. */
+  previewTarget(app: string): string | null {
+    const entry = this.entries.get(app);
+    const target = entry?.workspace?.previewTarget() ?? null;
+    if (entry && target) entry.lastActive = Date.now();
+    return target;
+  }
+
   private save(entry: Entry): void {
     writeFileSync(entry.stateFile, JSON.stringify(entry.state, null, 2), { mode: 0o600 });
   }
@@ -153,12 +170,13 @@ export class WorkspaceManager {
     const entry = this.entry(app);
     if (!entry.running && !entry.log.last && !(await this.deps.driver.exists(app))) return null;
     entry.lastActive = Date.now();
+    const target = entry.workspace?.previewTarget() ?? null;
     return {
       app,
       state: entry.running ? 'working' : entry.workspace ? 'idle' : 'stopped',
       driver: this.deps.driver.name,
       agent: entry.workspace?.agent ?? this.deps.agent,
-      previewUrl: entry.workspace?.previewUrl() ?? null,
+      previewUrl: target ? this.publicPreviewUrl(app, target) : null,
       lastCommit: entry.state.lastCommit,
       version: entry.state.version,
       turn: entry.running,
@@ -358,9 +376,9 @@ export class WorkspaceManager {
         }
       }
 
-      if (!workspace.previewUrl()) beginStep('preview', 'Starting the dev preview');
-      const url = await workspace.startPreview({ ...this.deps.runtimeEnv, ...(entry.state.callerToken ? { KELAY_CALLER_TOKEN: entry.state.callerToken } : {}) });
-      emit({ type: 'preview', url });
+      if (!workspace.previewTarget()) beginStep('preview', 'Starting the dev preview');
+      const target = await workspace.startPreview({ ...this.deps.runtimeEnv, ...(entry.state.callerToken ? { KELAY_CALLER_TOKEN: entry.state.callerToken } : {}) });
+      emit({ type: 'preview', url: this.publicPreviewUrl(app, target) });
       endStep('done');
 
       if (spec.branch && changed) await workspace.merge(spec.branch, MAIN);

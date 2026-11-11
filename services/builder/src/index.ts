@@ -1,4 +1,7 @@
-export { createBuilderApi, CONSOLE_APP, type BuilderApiDeps } from './app.ts';
+export { createBuilderApi, previewBearer, CONSOLE_APP, type BuilderApiDeps } from './app.ts';
+export { createBuilderServer } from './http.ts';
+export { PreviewProxy, type PreviewProxyOptions } from './preview/proxy.ts';
+export { PreviewSessions, SESSION_TTL_SECONDS, TICKET_PARAM, TICKET_TTL_SECONDS, type PreviewGrant } from './preview/session.ts';
 export { ClaudeCodingAgent, DEFAULT_BUILDER_MODEL, AGENT_TOOLS, PROTECTED_PATHS, workspaceGuard, type ClaudeAgentOptions } from './agents/claude.ts';
 export { ScriptedAgent } from './agents/scripted.ts';
 export { selectAgent, type AgentEnv } from './agents/select.ts';

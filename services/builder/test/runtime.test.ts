@@ -32,9 +32,9 @@ describe('a workspace behind the runtime protocol', () => {
     };
     const runtime = createRuntimeApp(local, 'runtime-token');
     const fetchRuntime = ((input: string | URL | Request, init?: RequestInit) => runtime.request(String(input).replace('http://task', ''), init)) as typeof fetch;
-    remote = new RemoteWorkspace({ app: 'team-board', ref: 'arn:task', endpoint: 'http://task', token: 'runtime-token', publicPreviewUrl: 'https://team-board.preview.kelay.dev', stop: async () => void (stopped = true), fetch: fetchRuntime });
+    remote = new RemoteWorkspace({ app: 'team-board', ref: 'arn:task', endpoint: 'http://task', token: 'runtime-token', previewTarget: 'http://10.0.3.17:3000', stop: async () => void (stopped = true), fetch: fetchRuntime });
 
-    const wrong = new RemoteWorkspace({ app: 'team-board', ref: 'arn:task', endpoint: 'http://task', token: 'guess', publicPreviewUrl: '', stop: async () => {}, fetch: fetchRuntime });
+    const wrong = new RemoteWorkspace({ app: 'team-board', ref: 'arn:task', endpoint: 'http://task', token: 'guess', previewTarget: '', stop: async () => {}, fetch: fetchRuntime });
     await expect(wrong.connect()).rejects.toThrow('wrong runtime token');
     await remote.connect();
   });
@@ -42,7 +42,7 @@ describe('a workspace behind the runtime protocol', () => {
 
   it('reports what the task holds', () => {
     expect(remote).toMatchObject({ created: true, agent: { kind: 'scripted', model: null } });
-    expect(remote.previewUrl()).toBeNull();
+    expect(remote.previewTarget()).toBeNull();
   });
 
   it('runs an agent turn, streaming its events, then commits and reads the manifest', async () => {
@@ -62,17 +62,17 @@ describe('a workspace behind the runtime protocol', () => {
     expect(check.ok && check.app.graphs.map((g) => g.name)).toEqual(['overdue-summary']);
   });
 
-  it('branches, merges, previews through the proxy URL and stops', async () => {
+  it('branches, merges, starts the preview at the task’s address and stops', async () => {
     await remote.checkout('improve/abc');
     expect((await remote.head()).branch).toBe('improve/abc');
     await remote.merge('improve/abc', 'main');
     expect((await remote.head()).branch).toBe('main');
 
-    expect(await remote.startPreview({ KELAY_CALLER_TOKEN: 't' })).toBe('https://team-board.preview.kelay.dev');
-    expect(remote.previewUrl()).toBe('https://team-board.preview.kelay.dev');
+    expect(await remote.startPreview({ KELAY_CALLER_TOKEN: 't' })).toBe('http://10.0.3.17:3000');
+    expect(remote.previewTarget()).toBe('http://10.0.3.17:3000');
     await remote.stop();
     expect(stopped).toBe(true);
-    expect(remote.previewUrl()).toBeNull();
+    expect(remote.previewTarget()).toBeNull();
   });
 
   it('builds in the task and brings the bundles over, since the task may not write to the artifact store', async () => {

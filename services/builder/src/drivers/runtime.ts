@@ -32,7 +32,7 @@ export function createRuntimeApp(workspace: Workspace, token: string): Hono {
   });
   app.onError((e, c) => c.json({ error: e.message, manifest: e instanceof ManifestError, build: e instanceof BuildError }, 500));
 
-  app.get('/runtime/info', async (c) => c.json({ app: workspace.app, created: workspace.created, agent: workspace.agent, previewUrl: workspace.previewUrl() }));
+  app.get('/runtime/info', async (c) => c.json({ app: workspace.app, created: workspace.created, agent: workspace.agent, previewing: workspace.previewTarget() !== null }));
   app.get('/runtime/head', async (c) => c.json(await workspace.head()));
   app.get('/runtime/manifest', async (c) => c.json({ manifest: await workspace.manifest() }));
   app.post('/runtime/commit', async (c) => c.json({ commit: await workspace.commit((await c.req.json<{ message: string }>()).message) }));
@@ -94,8 +94,8 @@ export interface RemoteWorkspaceOptions {
   /** Base URL of the runtime in the task, e.g. http://10.0.3.17:4007. */
   endpoint: string;
   token: string;
-  /** Where a browser reaches the task's `next dev`: the preview proxy's URL for this app. */
-  publicPreviewUrl: string;
+  /** Where the task's `next dev` listens, as the Builder reaches it, e.g. http://10.0.3.17:3000. */
+  previewTarget: string;
   stop: () => Promise<void>;
   fetch?: typeof fetch;
 }
@@ -116,10 +116,10 @@ export class RemoteWorkspace implements Workspace {
 
   /** Reads what the task reports about itself; call once after the task is up. */
   async connect(): Promise<this> {
-    const info = await this.call<{ created: boolean; agent: AgentInfo; previewUrl: string | null }>('GET', '/runtime/info');
+    const info = await this.call<{ created: boolean; agent: AgentInfo; previewing: boolean }>('GET', '/runtime/info');
     this.created = info.created;
     this.agent = info.agent;
-    this.previewing = info.previewUrl !== null;
+    this.previewing = info.previewing;
     return this;
   }
 
@@ -207,11 +207,11 @@ export class RemoteWorkspace implements Workspace {
   async startPreview(env: Record<string, string>) {
     await this.call('POST', '/runtime/preview', { env });
     this.previewing = true;
-    return this.opts.publicPreviewUrl;
+    return this.opts.previewTarget;
   }
 
-  previewUrl() {
-    return this.previewing ? this.opts.publicPreviewUrl : null;
+  previewTarget() {
+    return this.previewing ? this.opts.previewTarget : null;
   }
 
   async stop() {

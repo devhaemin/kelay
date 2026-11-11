@@ -12,6 +12,7 @@ import { verifyKelayToken, type VerifyOptions } from '@kelay/tokens';
 import type { AppInfo, ControlApi } from './control.ts';
 import { ApiError, errorBody } from './errors.ts';
 import type { WorkspaceEvent } from './events.ts';
+import { TICKET_PARAM, TICKET_TTL_SECONDS, type PreviewGrant, type PreviewSessions } from './preview/session.ts';
 import type { WorkspaceManager } from './workspaces.ts';
 
 export const CONSOLE_APP = 'kelay-console';
@@ -22,8 +23,27 @@ export interface BuilderApiDeps {
   auth: { issuer: string; jwks: VerifyOptions['jwks'] };
   control: ControlApi;
   workspaces: WorkspaceManager;
+  /** Signs the tickets that open a dev preview in a browser frame. Without it previews are reported by address only. */
+  preview?: PreviewSessions;
   logger: Logger;
 }
+
+/**
+ * For the preview proxy: the grant of a caller that sends the builder's own token instead of a ticket.
+ * The same two checks as the API: a builder token for the console, and the Control API's word on ownership.
+ */
+export const previewBearer =
+  (deps: Pick<BuilderApiDeps, 'auth' | 'control'>) =>
+  async (token: string, app: string): Promise<PreviewGrant | null> => {
+    try {
+      const claims = await verifyKelayToken(token, { jwks: deps.auth.jwks, issuer: deps.auth.issuer, app: CONSOLE_APP, audience: audienceForApp(CONSOLE_APP) });
+      if (!BUILDER_ROLES.includes(claims.role)) return null;
+      await deps.control.appFor(token, app);
+      return { app, sub: claims.sub };
+    } catch {
+      return null;
+    }
+  };
 
 type Env = { Variables: { builder: KelayClaims; token: string; app: AppInfo } };
 
@@ -92,6 +112,18 @@ export function createBuilderApi(deps: BuilderApiDeps): Hono<Env> {
     const body = c.req.valid('json');
     const { turn } = await workspaces.message(c.get('app'), c.get('builder').sub, body.text, body.context ?? null);
     return c.json({ workspace: await statusOf(c.get('app').slug), turn }, 202);
+  });
+
+  // The address the console loads in the preview frame. A frame cannot send the builder's token, so the
+  // address carries a short-lived ticket, which the preview proxy trades for a cookie on its own origin.
+  app.post('/v1/workspaces/:app/preview', builder, owned, async (c) => {
+    const slug = c.get('app').slug;
+    const { previewUrl } = await statusOf(slug);
+    if (!previewUrl) return c.json({ preview: null });
+    if (!deps.preview) return c.json({ preview: { url: previewUrl, expiresAt: null } });
+    const url = new URL(previewUrl);
+    url.searchParams.set(TICKET_PARAM, await deps.preview.ticket({ app: slug, sub: c.get('builder').sub }));
+    return c.json({ preview: { url: url.toString(), expiresAt: new Date(Date.now() + TICKET_TTL_SECONDS * 1000).toISOString() } });
   });
 
   // The transcript so far, then live events. `Last-Event-ID` (or `?after=`) resumes after a reconnect.

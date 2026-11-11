@@ -247,6 +247,28 @@ describe('who may use a workspace', () => {
   });
 });
 
+describe('the address of a dev preview', () => {
+  it('is the preview proxy’s for a browser, and the workspace’s own for the proxy', async () => {
+    const h = await createHarness({ previewUrlTemplate: 'https://preview.kelay.test/preview/{app}/' });
+    try {
+      h.control.addApp('team-board', 'jeongyun');
+      expect(h.workspaces.previewTarget('team-board')).toBeNull();
+      await h.req('POST', '/v1/workspaces', { token: await h.token('jeongyun'), body: { app: 'team-board', prompt: 'A ticket board' } });
+      const events = await h.settled('team-board');
+      expect(events.find((e) => e.type === 'preview')).toMatchObject({ url: 'https://preview.kelay.test/preview/team-board/' });
+      expect((await h.workspaces.status('team-board'))?.previewUrl).toBe('https://preview.kelay.test/preview/team-board/');
+      expect(h.workspaces.previewTarget('team-board')).toBe('http://localhost:39001');
+      expect(h.workspaces.previewTarget('never-opened')).toBeNull();
+
+      // Without a signer the route answers the plain address; with one it carries a ticket (preview.test.ts).
+      const res = await h.req('POST', '/v1/workspaces/team-board/preview', { token: await h.token('jeongyun') });
+      expect(res.body).toEqual({ preview: { url: 'https://preview.kelay.test/preview/team-board/', expiresAt: null } });
+    } finally {
+      await h.close();
+    }
+  });
+});
+
 /** Writes a policy for a role the schema does not have, and repairs it when told what the check found. */
 class ClumsyAgent implements CodingAgent {
   readonly info = { kind: 'claude' as const, model: 'test-model' };

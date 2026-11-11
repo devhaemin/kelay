@@ -178,7 +178,7 @@ class LocalWorkspace implements Workspace {
     return this.preview.url;
   }
 
-  previewUrl() {
+  previewTarget() {
     return this.preview?.url ?? null;
   }
 
