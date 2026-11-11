@@ -7,7 +7,7 @@ import type { AppDetail, WorkspaceTab } from '@/lib/api/types';
 import { useUiPrefs } from '../providers';
 import { ShareAppModal } from '../share-modals';
 import { AppIcon, Icon, StatusPill } from '../ui';
-import { TABS } from './tab-registry';
+import { TABS } from './tab-meta';
 
 export interface ShellApp extends Pick<AppDetail, 'id' | 'name' | 'emoji' | 'color' | 'status'> {
   /** Present once the app exists; the Share button needs it. */
