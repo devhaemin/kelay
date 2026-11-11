@@ -104,6 +104,12 @@ function writableFields(c: CollectionDef): Record<string, FieldDef> {
   return fields;
 }
 
+/** "text, required: todo | doing | review | done" — a field's type, requiredness and description in one phrase. */
+export function fieldAbout(f: FieldDef): string {
+  const facts = [f.type === 'ref' && f.ref ? `id of a ${singular(prose(f.ref))}` : f.type, f.required ? 'required' : undefined];
+  return [facts.filter(Boolean).join(', '), f.description].filter(Boolean).join(': ');
+}
+
 /** Every column `where` may filter on: the declared fields plus the implicit columns (contract §2). */
 function filterColumns(c: CollectionDef): Record<string, string> {
   const columns: Record<string, string> = {
@@ -114,10 +120,7 @@ function filterColumns(c: CollectionDef): Record<string, string> {
     updated_at: 'timestamp',
   };
   if (c.shared) columns.shared = 'boolean';
-  for (const [name, f] of Object.entries(c.fields)) {
-    const facts = [f.type === 'ref' && f.ref ? `id of a ${singular(prose(f.ref))}` : f.type, f.required ? 'required' : undefined];
-    columns[name] = [facts.filter(Boolean).join(', '), f.description].filter(Boolean).join(': ');
-  }
+  for (const [name, f] of Object.entries(c.fields)) columns[name] = fieldAbout(f);
   return columns;
 }
 
