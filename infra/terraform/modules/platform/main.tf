@@ -1,8 +1,6 @@
 locals {
   lb_services = { for k, s in var.services : k => s if length(s.host_headers) + length(s.path_patterns) > 0 }
 
-  ecr_repositories = toset(concat([for k, s in var.services : k if s.image == null], var.extra_ecr_repositories))
-
   images = {
     for k, s in var.services : k => s.image != null ? s.image : "${try(module.ecr[k].repository_url, "")}:${coalesce(s.image_tag, var.image_tag)}"
   }
@@ -45,7 +43,7 @@ resource "aws_secretsmanager_secret" "this" {
 module "ecr" {
   source   = "terraform-aws-modules/ecr/aws"
   version  = "~> 3.2"
-  for_each = local.ecr_repositories
+  for_each = toset(var.ecr_repositories)
 
   repository_name                 = "${var.name}/${each.key}"
   repository_image_tag_mutability = "IMMUTABLE"

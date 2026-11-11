@@ -70,8 +70,11 @@ variable "image_tag" {
   type        = string
 }
 
-variable "extra_ecr_repositories" {
-  description = "Additional ECR repositories to create, e.g. the builder workspace image."
+variable "ecr_repositories" {
+  description = <<-EOT
+    ECR repositories to create (created as <name>/<repo>). A service without an explicit image runs the
+    repo named after it. Kept apart from services so it never depends on values computed in other modules.
+  EOT
   type        = list(string)
   default     = []
 }
@@ -133,6 +136,11 @@ variable "services" {
       for k, s in var.services : s.priority != null if length(s.host_headers) + length(s.path_patterns) > 0
     ])
     error_message = "Services with host_headers or path_patterns need a listener rule priority."
+  }
+
+  validation {
+    condition     = alltrue([for k, s in var.services : contains(var.ecr_repositories, k) if s.image == null])
+    error_message = "Every service without an explicit image needs an ECR repository of the same name in ecr_repositories."
   }
 }
 
