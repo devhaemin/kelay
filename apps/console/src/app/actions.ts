@@ -77,8 +77,8 @@ export async function sendRecoveryAction(app: string, userId: string): Promise<A
   return run((api) => api.sendPasswordRecovery(AppSlug.parse(app), Id.parse(userId)));
 }
 
-export async function updateTicketAction(id: string, patch: z.input<typeof TicketPatch>): Promise<ActionResult<FeedbackTicket>> {
-  return run((api) => api.updateTicket(Id.parse(id), TicketPatch.parse(patch)));
+export async function updateTicketAction(app: string, key: string, patch: z.input<typeof TicketPatch>): Promise<ActionResult<FeedbackTicket>> {
+  return run((api) => api.updateTicket(AppSlug.parse(app), Id.parse(key), TicketPatch.parse(patch)));
 }
 
 export async function runReportAction(app: string): Promise<ActionResult<ImprovementReport>> {

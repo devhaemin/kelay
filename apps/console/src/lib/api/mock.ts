@@ -260,9 +260,9 @@ export function createMockApi(state: MockState = getMockState()): ConsoleApi {
       return clone(state.tickets.filter((t) => t.app === app));
     },
 
-    async updateTicket(tid, patch) {
-      const t = state.tickets.find((x) => x.id === tid);
-      if (!t) throw notFound(`Ticket ${tid}`);
+    async updateTicket(app, key, patch) {
+      const t = state.tickets.find((x) => x.app === app && x.key === key);
+      if (!t) throw notFound(`Ticket ${key}`);
       Object.assign(t, patch);
       return clone(t);
     },

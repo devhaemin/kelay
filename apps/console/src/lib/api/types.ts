@@ -309,7 +309,7 @@ export interface ConsoleApi {
   sendPasswordRecovery(app: string, userId: string): Promise<void>;
 
   listTickets(app: string): Promise<FeedbackTicket[]>;
-  updateTicket(id: string, patch: TicketPatch): Promise<FeedbackTicket>;
+  updateTicket(app: string, key: string, patch: TicketPatch): Promise<FeedbackTicket>;
 
   /** Newest first. */
   listReports(app: string): Promise<ImprovementReport[]>;

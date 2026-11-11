@@ -17,5 +17,10 @@ export async function getConsoleApi(): Promise<ConsoleApi> {
   if (dataMode() === 'mock') return createMockApi();
   const token = (await cookies()).get(TOKEN_COOKIE)?.value;
   if (!token) redirect('/signin');
-  return createHttpApi({ baseUrl: process.env.CONTROL_API_URL ?? 'http://localhost:4003', token });
+  return createHttpApi({
+    baseUrl: process.env.CONTROL_API_URL ?? 'http://localhost:4003',
+    token,
+    appOrigin: process.env.KELAY_APP_ORIGIN ?? 'https://kelay.app',
+    mcpBaseUrl: process.env.MCP_PUBLIC_BASE_URL ?? process.env.KELAY_APP_ORIGIN ?? 'https://kelay.app',
+  });
 }
