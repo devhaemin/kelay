@@ -5,7 +5,7 @@ import type { ClientMetadataResourceFetch } from '@better-auth/oauth-provider';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { localJwks, verifyKelayToken } from '@kelay/tokens';
 import { mcpResourceUrl } from './index.ts';
-import { Browser, ISSUER, MCP_BASE, PASSWORD, startTestIdentity, type TestIdentity } from './test-support.ts';
+import { Browser, FakeControlApi, ISSUER, MCP_BASE, PASSWORD, startTestIdentity, type TestIdentity } from './test-support.ts';
 
 const CLIENT_ID = 'https://assistant.example.com/oauth/client.json';
 const REDIRECT_URI = 'http://127.0.0.1:33418/callback';
@@ -37,6 +37,7 @@ const fetchClientMetadataResource: ClientMetadataResourceFetch = async (input) =
 };
 
 let t: TestIdentity;
+let controlApi: FakeControlApi;
 let browser: Browser;
 let as: oauth.AuthorizationServer;
 let jwks: ReturnType<typeof localJwks>;
@@ -102,7 +103,9 @@ const verify = (token: string, resource: string, app: string) =>
   verifyKelayToken(token, { jwks, issuer: ISSUER, audience: resource, app });
 
 beforeAll(async () => {
-  t = await startTestIdentity({ fetchClientMetadataResource });
+  // The recorder is created once the test database exists; Kelay ID only calls it at consent time.
+  t = await startTestIdentity({ fetchClientMetadataResource, consents: { record: (consent) => controlApi.recorder.record(consent) } });
+  controlApi = new FakeControlApi(t.pool);
   as = await oauth.processDiscoveryResponse(new URL(ISSUER), await oauth.discoveryRequest(new URL(ISSUER), { algorithm: 'oauth2', ...http() }));
   jwks = localJwks((await (await t.identity.app.request('/api/auth/jwks')).json()) as JSONWebKeySet);
   userId = await new Browser(t.identity.app).signUp(EMAIL, 'Ada');
@@ -155,6 +158,10 @@ describe('MCP authorization with a Client ID Metadata Document client', () => {
     });
     await expect(verify(res.access_token, RESOURCE.wiki, 'wiki')).rejects.toThrow(/aud/);
     await expect(verify(res.access_token, 'kelay:app:ticket-board', 'ticket-board')).rejects.toThrow(/aud/);
+
+    expect(controlApi.recorded).toEqual([
+      { userId, app: 'ticket-board', clientId: CLIENT_ID, clientName: 'Test Assistant', scopes: ['offline_access'] },
+    ]);
   });
 
   it('asks again for another app, and keeps the first app consented', async () => {
@@ -178,6 +185,8 @@ describe('MCP authorization with a Client ID Metadata Document client', () => {
       ['ticket-board', [RESOURCE.board]],
       ['wiki', [RESOURCE.wiki]],
     ]);
+    // One record per consent screen the person accepted; the authorization that skipped the screen adds none.
+    expect(controlApi.recorded.map((c) => c.app)).toEqual(['ticket-board', 'wiki']);
   });
 
   it('refreshes while membership and consent hold; a ban or a revoked consent ends access', async () => {
@@ -191,12 +200,57 @@ describe('MCP authorization with a Client ID Metadata Document client', () => {
     expect(afterBan.status).toBe(400);
     expect(await afterBan.json()).toMatchObject({ error: 'invalid_grant' });
 
+    // Consents are revoked in the control API only; Kelay ID's own route is off.
     const consents = (await (await browser.get('/api/auth/oauth2/get-consents')).json()) as { id: string; referenceId: string }[];
     const wikiConsent = consents.find((c) => c.referenceId === 'wiki')!;
-    expect((await browser.postJson('/api/auth/oauth2/delete-consent', { id: wikiConsent.id })).status).toBe(200);
-    const afterRevoke = await refresh(tokens.wiki!.refresh_token!);
+    expect((await browser.postJson('/api/auth/oauth2/delete-consent', { id: wikiConsent.id })).status).toBe(404);
+    const stillValid = await oauth.processRefreshTokenResponse(as, client, await refresh(tokens.wiki!.refresh_token!));
+    // A second grant under the same consent, kept unused until the person has connected the assistant again.
+    const second = await authorization(RESOURCE.wiki);
+    tokens.wikiSecond = await exchange(second, redirectTarget(await browser.get(second.url)));
+
+    await controlApi.revoke({ userId, app: 'wiki', clientId: CLIENT_ID });
+    const afterRevoke = await refresh(stillValid.refresh_token!);
     expect(afterRevoke.status).toBe(400);
     expect(await afterRevoke.json()).toMatchObject({ error: 'invalid_grant' });
+    // The other app's connection is untouched by it.
+    await t.setMember({ app: 'ticket-board', user_id: userId, org: 'orum', role: 'agent', plan: 'pro', status: 'active' });
+    const board = await authorization(RESOURCE.board);
+    expect(redirectTarget(await browser.get(board.url)).toString().startsWith(REDIRECT_URI)).toBe(true);
+  });
+
+  it('grants nothing when the control API cannot record the consent', async () => {
+    const wiki = await authorization(RESOURCE.wiki);
+    // The revoke above removed the consent, so Kelay ID asks again instead of redirecting straight back.
+    const consent = redirectTarget(await browser.get(wiki.url));
+    expect(consent.pathname).toBe('/consent');
+
+    controlApi.down = true;
+    const refused = await browser.postForm('/consent', { oauth_query: signedQuery(consent), accept: 'yes' });
+    controlApi.down = false;
+    expect(refused.status).toBe(502);
+    expect(await refused.text()).toContain('Test Assistant was not connected');
+    expect(refused.headers.get('location')).toBeNull();
+    const { rows } = await t.pool.query(`select 1 from "oauthConsent" where "userId" = $1 and "referenceId" = 'wiki'`, [userId]);
+    expect(rows).toEqual([]);
+    expect(controlApi.recorded.map((c) => c.app)).toEqual(['ticket-board', 'wiki']);
+  });
+
+  it('records the consent again when the person connects a revoked assistant again', async () => {
+    const wiki = await authorization(RESOURCE.wiki);
+    const { page, callback } = await consentTo(wiki);
+    expect(page).toContain('<strong>Test Assistant</strong> wants to use <strong>orum/wiki</strong> as you.');
+    const again = await exchange(wiki, callback);
+    expect(await verify(again.access_token, RESOURCE.wiki, 'wiki')).toMatchObject({ app: 'wiki', role: 'editor', azp: CLIENT_ID });
+    expect(controlApi.recorded.map((c) => c.app)).toEqual(['ticket-board', 'wiki', 'wiki']);
+    expect(controlApi.recorded[2]).toEqual({ userId, app: 'wiki', clientId: CLIENT_ID, clientName: 'Test Assistant', scopes: ['offline_access'] });
+
+    // A new consent does not bring back what the revoke ended: refresh tokens from before it stay dead.
+    const old = await oauth.refreshTokenGrantRequest(as, client, oauth.None(), tokens.wikiSecond!.refresh_token!, http());
+    expect(old.status).toBe(400);
+    expect(await old.json()).toMatchObject({ error: 'invalid_grant' });
+    const fresh = await oauth.processRefreshTokenResponse(as, client, await oauth.refreshTokenGrantRequest(as, client, oauth.None(), again.refresh_token!, http()));
+    expect(await verify(fresh.access_token, RESOURCE.wiki, 'wiki')).toMatchObject({ app: 'wiki' });
   });
 
   it('does not let a non-member connect an app', async () => {
@@ -208,6 +262,19 @@ describe('MCP authorization with a Client ID Metadata Document client', () => {
     const callback = redirectTarget(await browser.postForm('/consent', { oauth_query: signedQuery(consent), accept: 'yes' }));
     expect(callback.toString().startsWith(REDIRECT_URI)).toBe(true);
     expect(callback.searchParams.get('error')).toBe('access_denied');
+    expect(controlApi.recorded.map((c) => c.app)).not.toContain('notes');
+  });
+
+  it('does not let a member who is not confirmed yet connect an app', async () => {
+    await t.setMember({ app: 'notes', user_id: userId, org: 'acme', role: 'member', plan: 'free', status: 'unconfirmed' });
+    const notes = await authorization(RESOURCE.notes);
+    const consent = redirectTarget(await browser.get(notes.url));
+    const page = await (await browser.get(consent.toString())).text();
+    expect(page).toContain('Your membership of acme/notes is not confirmed yet');
+    expect(page).not.toContain('value="yes"');
+    const callback = redirectTarget(await browser.postForm('/consent', { oauth_query: signedQuery(consent), accept: 'yes' }));
+    expect(callback.searchParams.get('error')).toBe('access_denied');
+    expect(controlApi.recorded.map((c) => c.app)).not.toContain('notes');
   });
 
   it('rejects requests that do not name exactly one known app resource', async () => {

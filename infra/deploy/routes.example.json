@@ -1,0 +1,6 @@
+{
+  "orum/ticket-board": {
+    "prod": { "origin": "https://abcdefghijklmnopqrstuvwxyz012345.lambda-url.ap-northeast-2.on.aws", "region": "ap-northeast-2" },
+    "dev": { "origin": "https://543210zyxwvutsrqponmlkjihgfedcba.lambda-url.ap-northeast-2.on.aws" }
+  }
+}

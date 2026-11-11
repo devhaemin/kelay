@@ -8,6 +8,7 @@ import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
 import type { AppMemberRow } from '@kelay/contracts';
 import type { AppResource, AppResources } from './apps.ts';
 import { SOCIAL_PROVIDERS, type KelayAuth, type SocialProvider } from './auth.ts';
+import type { ConsentRecorder } from './consents.ts';
 import { mayUseApp, type MemberStore } from './members.ts';
 
 export interface PageDeps {
@@ -18,6 +19,10 @@ export interface PageDeps {
   members: MemberStore;
   emailPassword: boolean;
   social: SocialProvider[];
+  /** Where granted consents are recorded. Without it, consents live in Kelay ID only. */
+  consents?: ConsentRecorder;
+  /** The header better-auth reads the client IP from, when it is not x-forwarded-for. */
+  clientIpHeader?: string;
 }
 
 type Markup = HtmlEscapedString | Promise<HtmlEscapedString>;
@@ -79,7 +84,7 @@ const FORWARDED_HEADERS = ['cookie', 'origin', 'referer', 'user-agent', 'x-forwa
 
 function callAuth(deps: PageDeps, path: string, body: Record<string, unknown>, from: Request): Promise<Response> {
   const headers = new Headers({ 'content-type': 'application/json', accept: 'application/json' });
-  for (const name of FORWARDED_HEADERS) {
+  for (const name of deps.clientIpHeader ? [...FORWARDED_HEADERS, deps.clientIpHeader] : FORWARDED_HEADERS) {
     const value = from.headers.get(name);
     if (value !== null) headers.set(name, value);
   }
@@ -148,6 +153,7 @@ function loginBody(deps: PageDeps, oauthQuery: string, error?: string) {
 }
 
 interface ConsentView {
+  userId: string;
   email: string;
   clientId: string;
   clientName: string;
@@ -172,6 +178,7 @@ async function loadConsent(deps: PageDeps, c: Context, oauthQuery: string): Prom
   const client = await deps.auth.api.getOAuthClientPublic({ query: { client_id: clientId }, headers }).catch(() => null);
   if (!client) return messagePage(c, 400, 'Unknown assistant', 'Kelay could not identify this assistant.');
   return {
+    userId: session.user.id,
     email: session.user.email,
     clientId,
     clientName: client.client_name ?? new URL(clientId).host,
@@ -185,9 +192,12 @@ function consentBody(view: ConsentView, oauthQuery: string) {
   const { target, member, clientName } = view;
   const appName = `${target.handle}/${target.app}`;
   const allowed = mayUseApp(member);
-  const refusal = member?.status === 'banned'
-    ? `Your access to ${appName} is suspended, so ${clientName} cannot use it as you.`
-    : `You are not a member of ${appName}, so ${clientName} cannot use it as you.`;
+  const refusal =
+    member?.status === 'banned'
+      ? `Your access to ${appName} is suspended, so ${clientName} cannot use it as you.`
+      : member?.status === 'unconfirmed'
+        ? `Your membership of ${appName} is not confirmed yet, so ${clientName} cannot use it as you.`
+        : `You are not a member of ${appName}, so ${clientName} cannot use it as you.`;
   return html`<p><strong>${clientName}</strong> wants to use <strong>${appName}</strong> as you.</p>
     ${allowed ? '' : alert(refusal)}
     <dl>
@@ -284,6 +294,22 @@ export function pageRoutes(deps: PageDeps): Hono {
     const view = await loadConsent(deps, c, oauthQuery);
     if (view instanceof Response) return view;
     const accept = field(form, 'accept') === 'yes' && mayUseApp(view.member);
+    // Recorded before Kelay ID stores its own consent: if the control API cannot take it, nothing is
+    // granted. The other order could leave an assistant connected that no one can see or revoke.
+    if (accept && deps.consents) {
+      try {
+        await deps.consents.record({
+          userId: view.userId,
+          app: view.target.app,
+          clientId: view.clientId,
+          clientName: view.clientName,
+          scopes: view.scopes,
+        });
+      } catch (e) {
+        console.error(JSON.stringify({ type: 'consent_record_failed', app: view.target.app, client: view.clientId, message: (e as Error).message }));
+        return messagePage(c, 502, 'Could not connect', `Kelay could not save this connection, so ${view.clientName} was not connected. Go back and choose Allow again.`);
+      }
+    }
     const res = await callAuth(deps, '/oauth2/consent', { accept, oauth_query: oauthQuery }, c.req.raw);
     if (!res.ok) return messagePage(c, res.status, 'Consent failed', await errorMessage(res));
     return continueTo(res, '/');

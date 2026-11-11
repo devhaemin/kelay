@@ -205,6 +205,8 @@ Newest first. This is the console's `ToolCall` plus `userId`, `clientId`, `clien
 
 **`POST /v1/apps/:app/consents/:id/revoke`** → `200 { "consent": Consent }` with `active: false`. `404 not_found` when the consent is not for this app. Revoking twice returns the revoked consent.
 
+Kelay ID records a consent here (`PUT /internal/v1/consents`) each time a person allows an assistant on its consent screen. Revoking, from here or from `POST /v1/me/consents/:id/revoke`, is the only way to end a connection. In the same transaction it deletes what Kelay ID keeps for that user, app and client in the control DB: the consent row (better-auth's `oauthConsent`) and the refresh tokens (`oauthRefreshToken`). Kelay ID looks the consent row up on every token grant, so the assistant's next refresh fails with `invalid_grant`, connecting again asks the person again, and a refresh token from before the revoke stays dead after that. These are the only Kelay ID tables the control API writes.
+
 ```jsonc
 // Consent
 { "id", "userId", "app", "clientId": "<CIMD URL>", "clientName": "Claude Desktop" | null,

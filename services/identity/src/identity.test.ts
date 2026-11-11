@@ -6,12 +6,18 @@ import { remoteJwks, verifyKelayToken } from '@kelay/tokens';
 import { socialFromEnv } from './index.ts';
 import { Browser, ISSUER, PASSWORD, startTestIdentity, type TestIdentity } from './test-support.ts';
 
+const CONSOLE_ORIGIN = 'https://console.kelay.test';
+
 let t: TestIdentity;
 let server: ServerType;
 let jwksUrl: string;
 
 beforeAll(async () => {
-  t = await startTestIdentity({ social: { google: { clientId: 'google-test-id', clientSecret: 'google-test-secret' } } });
+  t = await startTestIdentity({
+    social: { google: { clientId: 'google-test-id', clientSecret: 'google-test-secret' } },
+    corsOrigins: [CONSOLE_ORIGIN],
+    clientIpHeader: 'CF-Connecting-IP',
+  });
   server = serve({ fetch: t.identity.app.fetch, port: 0 });
   await new Promise<void>((resolve) => server.once('listening', resolve));
   jwksUrl = `http://localhost:${(server.address() as AddressInfo).port}/api/auth/jwks`;
@@ -53,6 +59,10 @@ describe('service', () => {
     });
     expect(md.registration_endpoint).toBeUndefined();
     expect(md.grant_types_supported).not.toContain('client_credentials');
+  });
+
+  it('reads the client IP for rate limits from the configured header', () => {
+    expect(t.identity.auth.options.advanced?.ipAddress?.ipAddressHeaders).toEqual(['cf-connecting-ip']);
   });
 
   it('turns off the session-JWT route and dynamic client registration', async () => {
@@ -163,17 +173,51 @@ describe('POST /v1/token', () => {
     expect(claims.azp).toBeUndefined();
   });
 
-  it('refuses non-members and banned members', async () => {
+  it('refuses non-members, unconfirmed members and banned members', async () => {
     const browser = new Browser(t.identity.app);
     const userId = await browser.signUp('outsider@example.com');
     const nonMember = await browser.postJson('/v1/token', { app: 'ticket-board' });
     expect(nonMember.status).toBe(403);
     expect(await nonMember.json()).toMatchObject({ error: { code: 'denied' } });
 
-    await t.setMember({ app: 'ticket-board', user_id: userId, org: 'orum', role: 'agent', plan: 'free', status: 'banned' });
-    const banned = await browser.postJson('/v1/token', { app: 'ticket-board' });
-    expect(banned.status).toBe(403);
-    expect(await banned.json()).toMatchObject({ error: { code: 'denied' } });
+    for (const status of ['unconfirmed', 'banned'] as const) {
+      await t.setMember({ app: 'ticket-board', user_id: userId, org: 'orum', role: 'agent', plan: 'free', status });
+      const refused = await browser.postJson('/v1/token', { app: 'ticket-board' });
+      expect(refused.status, status).toBe(403);
+      expect(await refused.json()).toMatchObject({ error: { code: 'denied' } });
+    }
+    await t.setMember({ app: 'ticket-board', user_id: userId, org: 'orum', role: 'agent', plan: 'free', status: 'active' });
+    expect((await browser.postJson('/v1/token', { app: 'ticket-board' })).status).toBe(200);
+  });
+
+  it('answers cross-origin calls from configured origins only', async () => {
+    const browser = new Browser(t.identity.app);
+    const userId = await browser.signUp('cors@example.com');
+    await t.setMember({ app: 'ticket-board', user_id: userId, org: 'orum', role: 'agent', plan: 'free', status: 'active' });
+    const preflight = (origin: string) =>
+      t.identity.app.request('/v1/token', {
+        method: 'OPTIONS',
+        headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' },
+      });
+    const post = (origin: string) =>
+      browser.request('/v1/token', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ app: 'ticket-board' }) });
+
+    const allowed = await preflight(CONSOLE_ORIGIN);
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers.get('access-control-allow-origin')).toBe(CONSOLE_ORIGIN);
+    expect(allowed.headers.get('access-control-allow-credentials')).toBe('true');
+    expect(allowed.headers.get('access-control-allow-methods')).toBe('POST');
+    const fromConsole = await post(CONSOLE_ORIGIN);
+    expect(fromConsole.status).toBe(200);
+    expect(fromConsole.headers.get('access-control-allow-origin')).toBe(CONSOLE_ORIGIN);
+    expect(fromConsole.headers.get('vary')).toContain('Origin');
+
+    const other = 'https://evil.example.com';
+    expect((await preflight(other)).headers.get('access-control-allow-origin')).toBeNull();
+    const fromOther = await post(other);
+    expect(fromOther.status).toBe(403);
+    expect(fromOther.headers.get('access-control-allow-origin')).toBeNull();
+    expect(await fromOther.json()).toMatchObject({ error: { code: 'denied' } });
   });
 
   it('rejects a body without a valid app slug', async () => {

@@ -71,6 +71,35 @@ describe('consents', () => {
     expect((await h.req('POST', `/v1/me/consents/${wiki.id}/revoke`, { token: minaApp, caller })).status).toBe(404);
   });
 
+  it('deletes the consent and refresh tokens Kelay ID keeps for the same user, app and client, and no other', async () => {
+    const { pool } = h.database;
+    const kept = async (table: string) => (await pool.query(`select id from "${table}" order by id`)).rows.map((r) => r.id);
+    // The columns of better-auth's tables that a revoke reads; Kelay ID creates the real ones in the control DB.
+    for (const table of ['oauthConsent', 'oauthRefreshToken']) {
+      await pool.query(`create table "${table}" (id text primary key, "clientId" text not null, "userId" text, "referenceId" text)`);
+      await pool.query(`insert into "${table}" (id, "clientId", "userId", "referenceId") values
+        ('1', $1, 'hana', 'ticket-board'), ('2', $1, 'hana', 'team-wiki'), ('3', $2, 'hana', 'ticket-board'), ('4', $1, 'mina', 'ticket-board')`, [CLAUDE, CURSOR]);
+    }
+    await pool.query(`insert into "oauthRefreshToken" (id, "clientId", "userId", "referenceId") values ('1b', $1, 'hana', 'ticket-board')`, [CLAUDE]);
+    const svc = await h.service('identity');
+    const put = await h.req('PUT', '/internal/v1/consents', { caller: svc, body: { userId: 'hana', app: 'ticket-board', clientId: CLAUDE, clientName: 'Claude Desktop', scopes: ['offline_access'] } });
+
+    const revoked = await h.req('POST', `/v1/me/consents/${put.body.consent.id}/revoke`, { token: await consoleToken('hana') });
+    expect(revoked.body.consent).toMatchObject({ active: false });
+    expect(await kept('oauthConsent')).toEqual(['2', '3', '4']);
+    expect(await kept('oauthRefreshToken')).toEqual(['2', '3', '4']);
+
+    // Connecting again after a revoke is a new consent, not the old one brought back.
+    const again = await h.req('PUT', '/internal/v1/consents', { caller: svc, body: { userId: 'hana', app: 'ticket-board', clientId: CLAUDE, clientName: 'Claude Desktop', scopes: ['offline_access'] } });
+    expect(again.body.consent).toMatchObject({ active: true });
+    expect(again.body.consent.id).not.toBe(put.body.consent.id);
+    await pool.query(`insert into "oauthConsent" (id, "clientId", "userId", "referenceId") values ('5', $1, 'hana', 'ticket-board')`, [CLAUDE]);
+    const byBuilder = await h.req('POST', `/v1/apps/ticket-board/consents/${again.body.consent.id}/revoke`, { token: builder });
+    expect(byBuilder.body.consent).toMatchObject({ userId: 'hana', active: false });
+    expect(await kept('oauthConsent')).toEqual(['2', '3', '4']);
+    await pool.query('drop table "oauthConsent", "oauthRefreshToken"');
+  });
+
   it('shows the builder which assistants are connected to an app', async () => {
     const res = await h.req('GET', '/v1/apps/ticket-board/consents', { token: builder });
     expect(res.body.consents.map((x: { userId: string; clientName: string }) => `${x.userId}:${x.clientName}`)).toEqual(['daniel:Cursor']);

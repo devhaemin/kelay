@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      # The service tests start their own postgres:17 containers (docs/contracts.md §11) and wait a
+      # fixed time for them, so the image is pulled before that clock starts.
+      - run: docker pull postgres:17
+      - run: pnpm test
+
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: docker pull postgres:17
+      - run: pnpm e2e
+      - name: Keep the services' log when the run fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-services-log
+          path: node_modules/.cache/kelay/e2e/services.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  terraform-fmt:
+    name: Terraform format
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2
+      - run: terraform fmt -check -recursive -diff
+        working-directory: infra/terraform
+
+  terraform-validate:
+    name: Terraform validate (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [staging, prod]
+    defaults:
+      run:
+        working-directory: infra/terraform/envs/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2
+      # No backend and no credentials: this checks the configuration, not any cloud account.
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  deploy-tooling:
+    name: Workflows and deploy scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint the workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - name: Lint the deploy scripts
+        run: shellcheck -x -P . infra/deploy/*.sh
+      # Dry runs only: without --execute the scripts print commands and touch nothing.
+      - name: Dry-run the deploy scripts
+        run: |
+          infra/deploy/bootstrap-state.sh --account 111111111111
+          infra/deploy/build-images.sh --env staging --account 111111111111 --push --tag ci
+          infra/deploy/set-secrets.sh --env staging --account 111111111111 --file infra/deploy/secrets.env.example
+          infra/deploy/upload-routes.sh --namespace-id 00000000000000000000000000000000 --file infra/deploy/routes.example.json
+          for env in staging prod; do
+            node infra/deploy/render-services.mjs --env "$env" --tag ci --out "infra/deploy/out/$env/services.tfvars.json"
+            node infra/deploy/render-router-config.mjs --env "$env" --kv-namespace-id 00000000000000000000000000000000 \
+              --zone kelay.example --out "infra/deploy/out/$env/wrangler.json"
+            pnpm --filter @kelay/router exec wrangler deploy --dry-run --outdir "$RUNNER_TEMP/router-$env" \
+              --config "$PWD/infra/deploy/out/$env/wrangler.json"
+          done
+
+  image-list:
+    name: List service images
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.list.outputs.images }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: list
+        run: echo "images=$(jq -c . infra/deploy/images.json)" >> "$GITHUB_OUTPUT"
+
+  images:
+    name: Build ${{ matrix.image.service }} image
+    needs: image-list
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.image-list.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      # Built for the Fargate tasks' architecture and thrown away: images are pushed by deploy.yml only.
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.service }}

@@ -1,10 +1,11 @@
-// Consents a person gave their own AI assistants (user × app × MCP client). Revoking ends that client's access
-// to that app; Kelay ID and the MCP gateway check revoked_at through the internal routes.
+// Consents a person gave their own AI assistants (user × app × MCP client). Kelay ID records one here each
+// time a person allows an assistant. Revoking ends that client's access to that app at its next token refresh.
 import { Hono } from 'hono';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { CONSOLE_APP, requireBuilder, requireUser, type AppEnv } from '../auth.ts';
 import { consents, type ConsentRow } from '../db/schema.ts';
+import type { Db } from '../db/client.ts';
 import type { Ctx } from '../deps.ts';
 import { ApiError } from '../errors.ts';
 import { actorOf, loadApp, queryParams } from './util.ts';
@@ -21,6 +22,28 @@ export const consentView = (x: ConsentRow) => ({
   revokedAt: x.revokedAt,
   active: x.revokedAt == null,
 });
+
+/**
+ * Marks the consent revoked and, in the same transaction, deletes what Kelay ID keeps for the same
+ * user × app × client in this database (better-auth's tables, keyed by app in `referenceId`):
+ * - `oauthConsent`: Kelay ID looks it up on every token grant, so the next refresh is refused, and
+ *   connecting again shows the consent screen again;
+ * - `oauthRefreshToken`: otherwise a refresh token from before the revoke works again as soon as the
+ *   person connects that assistant again.
+ * A control DB that Kelay ID has not migrated has neither table.
+ */
+export async function revokeConsent(db: Db, id: string, at: Date): Promise<ConsentRow> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx.update(consents).set({ revokedAt: at }).where(eq(consents.id, id)).returning();
+    const { rows } = await tx.execute<{ present: boolean }>(sql`select to_regclass('"oauthConsent"') is not null as present`);
+    if (rows[0]?.present) {
+      for (const table of ['oauthConsent', 'oauthRefreshToken']) {
+        await tx.execute(sql`delete from ${sql.identifier(table)} where "userId" = ${row!.userId} and "clientId" = ${row!.clientId} and "referenceId" = ${row!.app}`);
+      }
+    }
+    return row!;
+  });
+}
 
 export function consentRoutes(ctx: Ctx) {
   const r = new Hono<AppEnv>();
@@ -50,9 +73,9 @@ export function consentRoutes(ctx: Ctx) {
     const existing = await db.query.consents.findFirst({ where: and(eq(consents.id, id), scopeFor(p.user)) });
     if (!existing) throw new ApiError('not_found', 'no such consent');
     if (existing.revokedAt) return c.json({ consent: consentView(existing) });
-    const [row] = await db.update(consents).set({ revokedAt: ctx.now() }).where(eq(consents.id, id)).returning();
-    ctx.logger.info({ type: 'consent_revoked', consent: id, app: row!.app, client: row!.clientId }, 'consent revoked');
-    return c.json({ consent: consentView(row!) });
+    const row = await revokeConsent(db, id, ctx.now());
+    ctx.logger.info({ type: 'consent_revoked', consent: id, app: row.app, client: row.clientId }, 'consent revoked');
+    return c.json({ consent: consentView(row) });
   });
 
   // The Agent tab: assistants members connected to this app.
@@ -75,9 +98,9 @@ export function consentRoutes(ctx: Ctx) {
     const existing = await db.query.consents.findFirst({ where: and(eq(consents.id, id), eq(consents.app, app.slug)) });
     if (!existing) throw new ApiError('not_found', 'no such consent');
     if (existing.revokedAt) return c.json({ consent: consentView(existing) });
-    const [row] = await db.update(consents).set({ revokedAt: ctx.now() }).where(eq(consents.id, id)).returning();
-    ctx.logger.info({ type: 'consent_revoked', consent: id, app: app.slug, client: row!.clientId, by: actorOf(principal) }, 'consent revoked by builder');
-    return c.json({ consent: consentView(row!) });
+    const row = await revokeConsent(db, id, ctx.now());
+    ctx.logger.info({ type: 'consent_revoked', consent: id, app: app.slug, client: row.clientId, by: actorOf(principal) }, 'consent revoked by builder');
+    return c.json({ consent: consentView(row) });
   });
 
   return r;

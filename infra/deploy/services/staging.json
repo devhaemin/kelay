@@ -1,0 +1,6 @@
+{
+  "$comment": "Sizes and counts of the staging platform services; read by render-services.mjs. Keys are those of service_overrides in infra/terraform/envs/staging/variables.tf. console, preview-proxy and otel-collector have no image yet (docs/deploy.md, Known gaps), so they stay at zero.",
+  "console": { "desired_count": 0 },
+  "preview-proxy": { "desired_count": 0 },
+  "otel-collector": { "desired_count": 0 }
+}

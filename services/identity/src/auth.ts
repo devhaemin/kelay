@@ -50,6 +50,8 @@ export interface AuthDeps {
   social: SocialConfig;
   fetchClientMetadataResource?: ClientMetadataResourceFetch;
   trustedOrigins?: string[];
+  /** Header that carries the client IP for rate limiting; unset keeps better-auth's x-forwarded-for. */
+  clientIpHeader?: string;
 }
 
 const invalidGrant = (description: string) =>
@@ -65,8 +67,8 @@ export function authOptions(deps: AuthDeps) {
   if (!primary) throw new Error('identity: the app registry is empty, so there is no MCP resource to protect');
 
   // Runs on every authorization_code and refresh_token grant, so a ban or a revoked consent
-  // stops the assistant at its next refresh. The provider's delete-consent leaves refresh
-  // tokens valid, which is why the consent row is looked up here.
+  // stops the assistant at its next refresh. Revoking in the control API deletes the consent
+  // row and leaves refresh tokens valid, which is why the row is looked up here.
   const appClaims: OAuthProviderExtension = {
     claims: {
       async accessToken({ ctx, user, client, resources, referenceId }) {
@@ -97,8 +99,16 @@ export function authOptions(deps: AuthDeps) {
     secret: deps.secret,
     database: deps.database,
     ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
-    // The jwt plugin's session-token route would mint JWTs a resource server could mistake for access tokens.
-    disabledPaths: ['/token'],
+    // Rate limits are per client IP. Behind Cloudflare and the ALB, x-forwarded-for is a chain whose first
+    // entry the client chooses, so better-auth finds no IP it can trust there and limits nothing.
+    ...(deps.clientIpHeader ? { advanced: { ipAddress: { ipAddressHeaders: [deps.clientIpHeader] } } } : {}),
+    disabledPaths: [
+      // The jwt plugin's session-token route would mint JWTs a resource server could mistake for access tokens.
+      '/token',
+      // Consents are revoked in the control API, which deletes Kelay ID's row with its own. Revoking
+      // here would leave the control API listing an assistant that no longer has access.
+      '/oauth2/delete-consent',
+    ],
     emailAndPassword: { enabled: deps.emailPassword },
     socialProviders: deps.social,
     plugins: [

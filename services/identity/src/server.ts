@@ -3,7 +3,7 @@ import { serve } from '@hono/node-server';
 import pg from 'pg';
 import { LOCAL_PORTS } from '@kelay/contracts';
 import { loadAppRegistry } from '@kelay/contracts/registry';
-import { createIdentity, migrateIdentity, socialFromEnv, type IdentityDeps } from './index.ts';
+import { controlApiConsents, createIdentity, migrateIdentity, socialFromEnv, type IdentityDeps } from './index.ts';
 
 const env = process.env;
 const production = env.NODE_ENV === 'production';
@@ -14,6 +14,16 @@ function required(name: string): string {
   return value;
 }
 
+// Consents are recorded in the control API. Production refuses to start without it; a local Kelay ID
+// run on its own keeps consents to itself.
+const controlApiUrl = production ? required('CONTROL_API_URL') : env.CONTROL_API_URL;
+const callerSecret = production ? required('KELAY_CALLER_SECRET') : env.KELAY_CALLER_SECRET;
+
+const list = (value: string | undefined) => (value ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+// In production the service sits behind Cloudflare and an ALB that only Cloudflare can reach
+// (docs/deploy.md), so the client IP is the one Cloudflare reports.
+const clientIpHeader = env.KELAY_ID_CLIENT_IP_HEADER ?? (production ? 'cf-connecting-ip' : undefined);
+
 const database = new pg.Pool({ connectionString: required('CONTROL_DATABASE_URL') });
 const deps: IdentityDeps = {
   database,
@@ -23,6 +33,9 @@ const deps: IdentityDeps = {
   mcpPublicBaseUrl: required('MCP_PUBLIC_BASE_URL'),
   emailPassword: !production || env.KELAY_ID_EMAIL_PASSWORD === 'true',
   social: socialFromEnv(env),
+  corsOrigins: list(env.KELAY_ID_CORS_ORIGINS),
+  ...(clientIpHeader ? { clientIpHeader } : {}),
+  ...(controlApiUrl && callerSecret ? { consents: controlApiConsents({ controlApiUrl, callerSecret }) } : {}),
 };
 
 await migrateIdentity(deps);
