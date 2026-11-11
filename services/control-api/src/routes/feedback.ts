@@ -78,6 +78,7 @@ export function feedbackRoutes(ctx: Ctx) {
       source: 'in-app',
       reporter: p.user.sub,
       reporterOrg: p.user.org,
+      ...(p.caller?.env ? { env: p.caller.env } : {}),
     });
     ctx.logger.info({ type: 'feedback', app: slug, ticket: ticket.key, sub: p.user.sub }, 'feedback received');
     return c.json({ ticketId: ticket.key }, 201);

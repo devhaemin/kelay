@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { AppRegistryEntry } from '@kelay/contracts';
+import { defaultRole } from '../src/routes/internal.ts';
 import { createHarness, type Harness } from './harness.ts';
 
 const fixture = (p: string) => JSON.parse(readFileSync(new URL(`../../../packages/contracts/fixtures/ticket-board/${p}`, import.meta.url), 'utf8'));
@@ -102,6 +103,15 @@ describe('members', () => {
     expect(bad.status).toBe(400);
     expect(bad.body.error.message).toContain('admin, member, guest');
     expect((await h.req('PATCH', '/v1/apps/ticket-board/members/u1', { token: jy, body: { role: 'guest' } })).status).toBe(200);
+  });
+
+  it('gives new members a role the app declares', async () => {
+    const svc = await h.service('identity');
+    const res = await h.req('PUT', '/internal/v1/apps/ticket-board/members/u7', { caller: svc, body: { org: 'orum' } });
+    expect(res.body.member).toMatchObject({ role: 'member', plan: 'free', status: 'active' });
+    expect(defaultRole(null)).toBe('member');
+    expect(defaultRole(['admin', 'editor', 'viewer'])).toBe('editor');
+    expect(defaultRole(['admin'])).toBe('admin');
   });
 });
 

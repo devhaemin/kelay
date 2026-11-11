@@ -14,6 +14,8 @@ export interface NewFeedback {
   source: TicketSource;
   reporter?: string | null;
   reporterOrg?: string | null;
+  /** Env of the app runtime that relayed it; dev feedback usually comes from the builder or named testers. */
+  env?: 'dev' | 'prod';
 }
 
 const TITLE_MAX = 80;
@@ -45,7 +47,7 @@ export async function createTicket(db: Executor, f: NewFeedback): Promise<Ticket
         reporterOrg: f.reporterOrg ?? null,
       })
       .returning();
-    await tx.insert(ticketEvents).values({ ticketId: row!.id, kind: 'created', actor: f.reporter ?? null, data: { source: f.source } });
+    await tx.insert(ticketEvents).values({ ticketId: row!.id, kind: 'created', actor: f.reporter ?? null, data: { source: f.source, ...(f.env ? { env: f.env } : {}) } });
     return row!;
   });
 }

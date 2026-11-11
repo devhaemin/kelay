@@ -11,12 +11,19 @@ import type { Ctx } from '../deps.ts';
 import { ApiError } from '../errors.ts';
 import { claimRun, completeRun } from '../queue/improvement.ts';
 import { createTicket } from '../services/feedback.ts';
+import { declaredRoles } from './apps.ts';
 import { consentView } from './consents.ts';
 import { FeedbackBody } from './feedback.ts';
 import { grantView } from './grants.ts';
 import { jsonBody, queryParams } from './util.ts';
 
 const EnvParam = z.enum(ENV_NAMES);
+
+/** `member` when the app declares it (or has no schema yet), else its first role other than admin. */
+export function defaultRole(roles: string[] | null): string {
+  if (!roles || roles.includes('member')) return 'member';
+  return roles.find((r) => r !== 'admin') ?? roles[0] ?? 'member';
+}
 
 const UpsertMember = z.object({
   org: z.string().min(1).max(200),
@@ -96,7 +103,7 @@ export function internalRoutes(ctx: Ctx) {
         app: app.slug,
         userId: c.req.param('userId'),
         org: body.org,
-        role: body.role ?? 'member',
+        role: body.role ?? defaultRole(await declaredRoles(db, app.slug)),
         plan: body.plan ?? 'free',
         status: body.status ?? 'active',
       })

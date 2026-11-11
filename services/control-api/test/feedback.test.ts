@@ -46,7 +46,7 @@ describe('feedback intake', () => {
       type: null,
       valid: null,
     });
-    expect(t.body.events.map((e: { kind: string }) => e.kind)).toEqual(['created']);
+    expect(t.body.events).toEqual([expect.objectContaining({ kind: 'created', actor: 'u1', data: { source: 'in-app', env: 'prod' } })]);
     expect((await h.req('GET', '/v1/apps', { token: builder })).body.apps[0].newFeedback).toBe(1);
   });
 
