@@ -190,6 +190,29 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   internal: 500,
 };
 
+// ---------------------------------------------------------------- database credentials
+
+/** The Postgres login of a service process, kept apart from database URLs so URLs hold no secret. */
+export interface DatabaseCredentials {
+  user?: string | undefined;
+  password?: string | undefined;
+}
+
+/** `DB_USER` and `DB_PASSWORD`: the login a deployed service uses for every database URL without one. */
+export function databaseCredentialsFromEnv(env: Record<string, string | undefined>): DatabaseCredentials {
+  return { user: env.DB_USER || undefined, password: env.DB_PASSWORD || undefined };
+}
+
+/** Adds the login to a database URL that names none. A URL with its own user is returned as it is. */
+export function databaseUrlWithCredentials(url: string, credentials: DatabaseCredentials | undefined): string {
+  if (!credentials?.user) return url;
+  const parsed = new URL(url);
+  if (parsed.username) return url;
+  parsed.username = credentials.user;
+  parsed.password = credentials.password ?? '';
+  return parsed.toString();
+}
+
 // ---------------------------------------------------------------- §6 app registry
 
 export const AppRegistryEntry = z.object({

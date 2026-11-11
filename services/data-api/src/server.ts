@@ -1,5 +1,5 @@
 import { serve } from '@hono/node-server';
-import { LOCAL_PORTS } from '@kelay/contracts';
+import { LOCAL_PORTS, databaseCredentialsFromEnv } from '@kelay/contracts';
 import { registrySourceFromEnv } from '@kelay/contracts/registry';
 import { remoteJwks, signCallerToken } from '@kelay/tokens';
 import { createApp, createLogger } from './app.ts';
@@ -18,6 +18,7 @@ const port = Number(process.env.PORT ?? LOCAL_PORTS.dataApi);
 
 const registry = registrySourceFromEnv(process.env, { callerToken: () => signCallerToken({ kind: 'service', svc: 'data-api' }, callerSecret) });
 const databases = createDatabases({
+  credentials: databaseCredentialsFromEnv(process.env),
   ...(process.env.DATA_API_POOL_MAX ? { poolMax: Number(process.env.DATA_API_POOL_MAX) } : {}),
   onPoolError: (err) => logger.error({ type: 'pool_error', err }, 'idle client error'),
 });

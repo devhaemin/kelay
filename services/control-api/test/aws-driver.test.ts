@@ -14,7 +14,7 @@ import {
   UpdateFunctionCodeCommand,
   UpdateFunctionConfigurationCommand,
 } from '@aws-sdk/client-lambda';
-import { CreateStateMachineCommand, SFNClient, StateMachineDoesNotExist, UpdateStateMachineCommand } from '@aws-sdk/client-sfn';
+import { CreateStateMachineCommand, DescribeStateMachineCommand, SFNClient, StateMachineDoesNotExist, UpdateStateMachineCommand } from '@aws-sdk/client-sfn';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { AwsDeployDriver } from '../src/deploy/aws.ts';
 import { DeployError, type DeployInput } from '../src/deploy/driver.ts';
@@ -71,8 +71,13 @@ function fakeAws() {
     return { FunctionUrl: `https://${FunctionName}.lambda-url.${REGION}.on.aws/`, AuthType: 'AWS_IAM' };
   });
   lambda.on(AddPermissionCommand).resolves({});
-  sfn.on(UpdateStateMachineCommand).callsFake(({ stateMachineArn }) => {
+  sfn.on(DescribeStateMachineCommand).callsFake(({ stateMachineArn }) => {
     if (!machines.has(stateMachineArn)) throw new StateMachineDoesNotExist({ message: 'does not exist', $metadata: {} });
+    return { stateMachineArn };
+  });
+  // As the Deploy role sees it: updating a state machine that is not there is refused, not "missing".
+  sfn.on(UpdateStateMachineCommand).callsFake(({ stateMachineArn }) => {
+    if (!machines.has(stateMachineArn)) throw Object.assign(new Error('not authorized to perform states:UpdateStateMachine'), { name: 'AccessDeniedException' });
     return { updateDate: new Date() };
   });
   sfn.on(CreateStateMachineCommand).callsFake(({ name }) => {
@@ -82,6 +87,7 @@ function fakeAws() {
   });
 
   const driver = new AwsDeployDriver({
+    platformEnv: 'staging',
     lambdaRoleArn: `arn:aws:iam::${ACCOUNT}:role/kelay-app-runtime`,
     stepFunctionsRoleArn: `arn:aws:iam::${ACCOUNT}:role/kelay-app-sfn`,
     routerPrincipal: `arn:aws:iam::${ACCOUNT}:role/kelay-router`,
@@ -135,7 +141,7 @@ describe('aws deploy driver', () => {
       Runtime: 'nodejs22.x',
       Handler: 'index.handler',
       Code: { S3Bucket: 'kelay-builds', S3Key: 'ticket-board/a1b2c3.zip' },
-      Tags: { 'kelay:app': 'ticket-board', 'kelay:env': 'dev' },
+      Tags: { 'kelay:app': 'ticket-board', 'kelay:env': 'staging', 'kelay:app-env': 'dev', 'kelay:managed-by': 'kelay-deploy' },
       Environment: {
         Variables: expect.objectContaining({ KELAY_APP: 'ticket-board', KELAY_ENV: 'dev', KELAY_CONFIG_VERSION: 'cfg-31', DATA_API_URL: 'https://data.kelay.internal', KELAY_CALLER_TOKEN: 'caller.jwt' }),
       },
@@ -165,7 +171,9 @@ describe('aws deploy driver', () => {
       publish: true,
       tags: [
         { key: 'kelay:app', value: 'ticket-board' },
-        { key: 'kelay:env', value: 'dev' },
+        { key: 'kelay:env', value: 'staging' },
+        { key: 'kelay:app-env', value: 'dev' },
+        { key: 'kelay:managed-by', value: 'kelay-deploy' },
       ],
     });
     expect(JSON.parse(machine!.definition!).States.collect.Resource).toBe(`${fnArn(nodes)}:live`);
@@ -235,7 +243,7 @@ describe('aws deploy driver', () => {
         stateMachineArns: [`arn:aws:states:${REGION}:${ACCOUNT}:stateMachine:kelay-app-ticket-board-prod-overdue-summary`],
       });
       const prodCreate = aws.lambda.commandCalls(CreateFunctionCommand).find((c) => c.args[0].input.FunctionName === 'kelay-app-ticket-board-prod-web');
-      expect(prodCreate?.args[0].input.Tags).toEqual({ 'kelay:app': 'ticket-board', 'kelay:env': 'prod' });
+      expect(prodCreate?.args[0].input.Tags).toEqual({ 'kelay:app': 'ticket-board', 'kelay:env': 'staging', 'kelay:app-env': 'prod', 'kelay:managed-by': 'kelay-deploy' });
     } finally {
       await h.close();
     }

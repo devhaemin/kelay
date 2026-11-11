@@ -53,7 +53,10 @@ export class DeployError extends Error {
   }
 }
 
-export const resourcePrefix = (app: string, env: EnvName) => `kelay-app-${app}-${env}`;
+/** Default of the runtime Terraform module's `app_resource_prefix`, which the Deploy role's IAM is scoped to. */
+export const APP_RESOURCE_PREFIX = 'kelay-app-';
+
+export const resourcePrefix = (app: string, env: EnvName, base = APP_RESOURCE_PREFIX) => `${base}${app}-${env}`;
 
 export class LocalDeployDriver implements DeployDriver {
   readonly name = 'local';

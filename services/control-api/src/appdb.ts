@@ -1,7 +1,7 @@
 // Read-only probes of an app database (contract §3). The control API never changes app data: every
 // probe runs in a transaction that is rolled back, with the same claims setup the Data API uses.
 import pg from 'pg';
-import { APP_DB_SCHEMA, RUNTIME_DB_ROLE, type KelayClaims } from '@kelay/contracts';
+import { APP_DB_SCHEMA, RUNTIME_DB_ROLE, databaseUrlWithCredentials, type DatabaseCredentials, type KelayClaims } from '@kelay/contracts';
 import { quoteIdent } from '@kelay/policy';
 
 export interface AppDatabases {
@@ -10,13 +10,16 @@ export interface AppDatabases {
   close(): Promise<void>;
 }
 
-export function createAppDatabases(opts: { poolMax?: number; onPoolError?: (err: Error) => void } = {}): AppDatabases {
+export function createAppDatabases(
+  /** `credentials`: the login for database URLs that carry none (DB_USER, DB_PASSWORD). */
+  opts: { poolMax?: number; onPoolError?: (err: Error) => void; credentials?: DatabaseCredentials } = {},
+): AppDatabases {
   const pools = new Map<string, pg.Pool>();
   return {
     pool(databaseUrl) {
       let pool = pools.get(databaseUrl);
       if (!pool) {
-        pool = new pg.Pool({ connectionString: databaseUrl, max: opts.poolMax ?? 3, connectionTimeoutMillis: 5000 });
+        pool = new pg.Pool({ connectionString: databaseUrlWithCredentials(databaseUrl, opts.credentials), max: opts.poolMax ?? 3, connectionTimeoutMillis: 5000 });
         // Without a listener, an idle client's network error crashes the process.
         pool.on('error', (err) => opts.onPoolError?.(err));
         pools.set(databaseUrl, pool);

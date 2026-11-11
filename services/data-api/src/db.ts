@@ -2,7 +2,7 @@
 // query runs in a transaction that carries the verified claims as `kelay_runtime`.
 import { Kysely, PostgresDialect, sql, type Transaction } from 'kysely';
 import { Pool } from 'pg';
-import { RUNTIME_DB_ROLE, type KelayClaims } from '@kelay/contracts';
+import { RUNTIME_DB_ROLE, databaseUrlWithCredentials, type DatabaseCredentials, type KelayClaims } from '@kelay/contracts';
 
 export type AppDb = Kysely<any>;
 
@@ -21,6 +21,8 @@ export interface Databases {
 
 export interface DatabasesOptions {
   poolMax?: number;
+  /** Login for app database URLs that carry none (DB_USER, DB_PASSWORD). */
+  credentials?: DatabaseCredentials;
   onPoolError?: (err: Error) => void;
 }
 
@@ -30,7 +32,7 @@ export function createDatabases(opts: DatabasesOptions = {}): Databases {
     get(databaseUrl) {
       let db = dbs.get(databaseUrl);
       if (!db) {
-        const pool = new Pool({ connectionString: databaseUrl, max: opts.poolMax ?? 10 });
+        const pool = new Pool({ connectionString: databaseUrlWithCredentials(databaseUrl, opts.credentials), max: opts.poolMax ?? 10 });
         // Without a listener, an idle client's network error crashes the process.
         pool.on('error', (err) => opts.onPoolError?.(err));
         db = new Kysely<any>({ dialect: new PostgresDialect({ pool }) });

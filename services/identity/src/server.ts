@@ -1,7 +1,7 @@
 // Kelay ID process entry: reads env, migrates better-auth's tables, serves on PORT (default 4001).
 import { serve } from '@hono/node-server';
 import pg from 'pg';
-import { LOCAL_PORTS } from '@kelay/contracts';
+import { LOCAL_PORTS, databaseCredentialsFromEnv, databaseUrlWithCredentials } from '@kelay/contracts';
 import { registrySourceFromEnv } from '@kelay/contracts/registry';
 import { signCallerToken } from '@kelay/tokens';
 import { controlApiConsents, createReloadingIdentity, migrateIdentity, socialFromEnv, type IdentityDeps } from './index.ts';
@@ -31,7 +31,7 @@ const registry = registrySourceFromEnv(env, {
 });
 const refreshSeconds = Number(env.KELAY_APPS_TTL_SECONDS ?? 30);
 
-const database = new pg.Pool({ connectionString: required('CONTROL_DATABASE_URL') });
+const database = new pg.Pool({ connectionString: databaseUrlWithCredentials(required('CONTROL_DATABASE_URL'), databaseCredentialsFromEnv(env)) });
 const deps: Omit<IdentityDeps, 'registry'> = {
   database,
   issuer: required('KELAY_ID_ISSUER'),

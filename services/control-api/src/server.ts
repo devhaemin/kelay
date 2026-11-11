@@ -1,5 +1,5 @@
 import { serve } from '@hono/node-server';
-import { LOCAL_PORTS } from '@kelay/contracts';
+import { LOCAL_PORTS, databaseCredentialsFromEnv, databaseUrlWithCredentials } from '@kelay/contracts';
 import { remoteJwks } from '@kelay/tokens';
 import { createControlApi } from './app.ts';
 import { createAppDatabases } from './appdb.ts';
@@ -23,7 +23,9 @@ function need(name: string): string {
 }
 
 const env = process.env;
-const database = createDatabase(need('CONTROL_DATABASE_URL'));
+// DB_USER and DB_PASSWORD are the login for every database URL that names none: the control DB and the app databases.
+const dbCredentials = databaseCredentialsFromEnv(env);
+const database = createDatabase(databaseUrlWithCredentials(need('CONTROL_DATABASE_URL'), dbCredentials));
 
 const effort = (v: string | undefined) => (v as 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined) || undefined;
 const llm = new AnthropicLlm({
@@ -40,14 +42,18 @@ const llm = new AnthropicLlm({
 const deploy: DeployDriver =
   env.KELAY_DEPLOY_DRIVER === 'aws'
     ? new AwsDeployDriver({
+        platformEnv: need('KELAY_ENV'),
+        ...(env.APP_RESOURCE_PREFIX ? { resourcePrefix: env.APP_RESOURCE_PREFIX } : {}),
         lambdaRoleArn: need('KELAY_LAMBDA_ROLE_ARN'),
         stepFunctionsRoleArn: need('KELAY_SFN_ROLE_ARN'),
         ...(env.KELAY_ROUTER_PRINCIPAL ? { routerPrincipal: env.KELAY_ROUTER_PRINCIPAL } : {}),
         ...(env.AWS_REGION ? { region: env.AWS_REGION } : {}),
+        // App functions run outside the VPC, so they need the public address of a service where this
+        // process uses a private one: APP_RUNTIME_<NAME> overrides <NAME> in the functions' environment.
         runtimeEnv: Object.fromEntries(
           ['KELAY_ID_ISSUER', 'DATA_API_URL', 'CONTROL_API_URL', 'MCP_PUBLIC_BASE_URL', 'LLM_GATEWAY_URL']
-            .filter((k) => env[k])
-            .map((k) => [k, env[k]!]),
+            .map((k) => [k, env[`APP_RUNTIME_${k}`] || env[k]] as const)
+            .filter((pair): pair is readonly [string, string] => Boolean(pair[1])),
         ),
       })
     : new LocalDeployDriver();
@@ -56,14 +62,14 @@ const improvements: ImprovementQueue = env.IMPROVEMENT_QUEUE_URL
   ? new SqsImprovementQueue({ queueUrl: env.IMPROVEMENT_QUEUE_URL })
   : new PgImprovementQueue(database.db);
 
-const appDbs = createAppDatabases({ onPoolError: (err) => log.error({ type: 'app_db', err: err.message }, 'app database connection failed') });
+const appDbs = createAppDatabases({ credentials: dbCredentials, onPoolError: (err) => log.error({ type: 'app_db', err: err.message }, 'app database connection failed') });
 
 const app = createControlApi({
   db: database.db,
   appDbs,
   // Both deploy drivers reach app databases the same way: through the URL on the env row, which comes
   // from APP_DATABASE_URL_TEMPLATE or from the provisioner (PUT /internal/v1/apps/:app/envs/:env).
-  appMigrator: new PgAppDatabaseMigrator(),
+  appMigrator: new PgAppDatabaseMigrator({ credentials: dbCredentials }),
   auth: { issuer: need('KELAY_ID_ISSUER'), jwks: remoteJwks(need('KELAY_ID_JWKS_URL')), callerSecret: need('KELAY_CALLER_SECRET') },
   llm,
   deploy,
