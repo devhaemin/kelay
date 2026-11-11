@@ -1,6 +1,7 @@
 // MCP authorization (MCP 2026-07-28): authorization code + PKCE with a CIMD client, one resource per app.
 import * as oauth from 'oauth4webapi';
 import type { JSONWebKeySet } from 'jose';
+import type { ClientMetadataResourceFetch } from '@better-auth/oauth-provider';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { localJwks, verifyKelayToken } from '@kelay/tokens';
 import { mcpResourceUrl } from './index.ts';
@@ -17,7 +18,7 @@ const RESOURCE = {
 const EMAIL = 'ada@example.com';
 
 const metadataFetches: string[] = [];
-async function fetchClientMetadataResource(input: RequestInfo | URL): Promise<Response> {
+const fetchClientMetadataResource: ClientMetadataResourceFetch = async (input) => {
   const url = input instanceof Request ? input.url : String(input);
   metadataFetches.push(url);
   if (url !== CLIENT_ID) return new Response('not found', { status: 404 });
@@ -33,7 +34,7 @@ async function fetchClientMetadataResource(input: RequestInfo | URL): Promise<Re
     },
     { headers: { 'cache-control': 'max-age=300' } },
   );
-}
+};
 
 let t: TestIdentity;
 let browser: Browser;

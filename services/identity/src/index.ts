@@ -14,7 +14,7 @@ import {
   type ErrorResponse,
 } from '@kelay/contracts';
 import { appResources } from './apps.ts';
-import { createAuth, type SocialConfig, type SocialProvider } from './auth.ts';
+import { authOptions, createAuth, type AuthDeps, type SocialConfig, type SocialProvider } from './auth.ts';
 import { mayUseApp, pgMemberStore, type MemberStore } from './members.ts';
 import { pageRoutes } from './pages.ts';
 
@@ -47,23 +47,33 @@ function fail(c: Context, code: ErrorCode, message: string) {
   return c.json({ error: { code, message } } satisfies ErrorResponse, HTTP_STATUS[code] as ContentfulStatusCode);
 }
 
-export function createIdentity(deps: IdentityDeps) {
-  const issuer = deps.issuer.replace(/\/+$/, '');
-  const apps = appResources(deps.registry, deps.mcpPublicBaseUrl);
-  const members = deps.members ?? pgMemberStore(deps.database);
-  const social = deps.social ?? {};
-  const emailPassword = deps.emailPassword ?? true;
-  const auth = createAuth({
+function resolveDeps(deps: IdentityDeps): AuthDeps {
+  return {
     database: deps.database,
-    issuer,
+    issuer: deps.issuer.replace(/\/+$/, ''),
     secret: deps.secret,
-    apps,
-    members,
-    emailPassword,
-    social,
+    apps: appResources(deps.registry, deps.mcpPublicBaseUrl),
+    members: deps.members ?? pgMemberStore(deps.database),
+    emailPassword: deps.emailPassword ?? true,
+    social: deps.social ?? {},
     ...(deps.fetchClientMetadataResource ? { fetchClientMetadataResource: deps.fetchClientMetadataResource } : {}),
     ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
-  });
+  };
+}
+
+/**
+ * Creates or updates better-auth's tables (users, sessions, JWKS, OAuth clients, consents, ...).
+ * Run it before `createIdentity`, whose instance starts reading those tables as soon as it exists.
+ */
+export async function migrateIdentity(deps: IdentityDeps): Promise<void> {
+  const { runMigrations } = await getMigrations(authOptions(resolveDeps(deps)));
+  await runMigrations();
+}
+
+export function createIdentity(deps: IdentityDeps) {
+  const resolved = resolveDeps(deps);
+  const { issuer, apps, members, emailPassword, social } = resolved;
+  const auth = createAuth(resolved);
 
   const app = new Hono();
   app.get('/healthz', (c) => c.json({ ok: true }));
@@ -109,17 +119,7 @@ export function createIdentity(deps: IdentityDeps) {
     }),
   );
 
-  return {
-    app,
-    auth,
-    apps,
-    issuer,
-    /** Creates or updates better-auth's tables (users, sessions, JWKS, OAuth clients, consents, ...). */
-    async migrate() {
-      const { runMigrations } = await getMigrations(auth.options);
-      await runMigrations();
-    },
-  };
+  return { app, auth, apps, issuer };
 }
 
 export type Identity = ReturnType<typeof createIdentity>;

@@ -1,5 +1,5 @@
 // better-auth configuration for Kelay ID (contract §8).
-import { betterAuth } from 'better-auth';
+import { betterAuth, type BetterAuthOptions } from 'better-auth';
 import { APIError } from 'better-auth/api';
 import { jwt } from 'better-auth/plugins';
 import { cimd } from '@better-auth/cimd';
@@ -55,13 +55,15 @@ export interface AuthDeps {
 const invalidGrant = (description: string) =>
   new APIError('BAD_REQUEST', { error: 'invalid_grant', error_description: description });
 
-export function createAuth(deps: AuthDeps) {
+/** Options without an instance: `betterAuth()` starts its context (and DB access) eagerly, migrations must not. */
+export function authOptions(deps: AuthDeps) {
   const { apps, members, issuer } = deps;
   const [primary] = apps.list;
   if (!primary) throw new Error('identity: the app registry is empty, so there is no MCP resource to protect');
 
   // Runs on every authorization_code and refresh_token grant, so a ban or a revoked consent
-  // stops the assistant at its next refresh.
+  // stops the assistant at its next refresh. The provider's delete-consent leaves refresh
+  // tokens valid, which is why the consent row is looked up here.
   const appClaims: OAuthProviderExtension = {
     claims: {
       async accessToken({ ctx, user, client, resources, referenceId }) {
@@ -87,7 +89,7 @@ export function createAuth(deps: AuthDeps) {
     },
   };
 
-  return betterAuth({
+  return {
     baseURL: issuer,
     secret: deps.secret,
     database: deps.database,
@@ -135,7 +137,9 @@ export function createAuth(deps: AuthDeps) {
         metadataProfile: 'mcp-2026-07-28',
       }),
     ],
-  });
+  } satisfies BetterAuthOptions;
 }
+
+export const createAuth = (deps: AuthDeps) => betterAuth(authOptions(deps));
 
 export type KelayAuth = ReturnType<typeof createAuth>;

@@ -5,7 +5,7 @@ import pg from 'pg';
 import { CookieJar } from 'tough-cookie';
 import type { AppMemberRow, AppRegistry, AppSchema } from '@kelay/contracts';
 import { loadAppRegistry } from '@kelay/contracts/registry';
-import { createIdentity, type Identity, type IdentityDeps } from './index.ts';
+import { createIdentity, migrateIdentity, type Identity, type IdentityDeps } from './index.ts';
 
 export const ADMIN_DATABASE_URL =
   process.env.IDENTITY_TEST_DATABASE_URL ?? 'postgres://postgres:kelay@localhost:54333/postgres';
@@ -61,15 +61,16 @@ export async function startTestIdentity(overrides: Partial<IdentityDeps> = {}): 
   url.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: url.toString() });
   await pool.query(APP_MEMBERS_DDL);
-  const identity = createIdentity({
+  const deps: IdentityDeps = {
     database: pool,
     issuer: ISSUER,
     secret: 'identity-test-secret-0123456789abcdef',
     registry: testRegistry(),
     mcpPublicBaseUrl: MCP_BASE,
     ...overrides,
-  });
-  await identity.migrate();
+  };
+  await migrateIdentity(deps);
+  const identity = createIdentity(deps);
   return {
     identity,
     pool,
