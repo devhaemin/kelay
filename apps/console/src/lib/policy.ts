@@ -99,7 +99,11 @@ export function policySql(c: CollectionDef, role: string, op: Op, scope: Scope):
   return `create policy "${name}"\non app.${c.name} for ${SQL_OP[op]}\n${clauses.join('\n')};`;
 }
 
-export const withScope = (matrix: PolicyMatrix, role: string, collection: string, ops: readonly Op[], scope: Scope): PolicyMatrix => {
+/** Number of Postgres policies the matrix installs: one per role × collection × op that isn't `none`. */
+export const countPolicies = (matrix: PolicyMatrix): number =>
+  Object.values(matrix).reduce((n, byCollection) => n + Object.values(byCollection).reduce((m, ops) => m + OPS.filter((op) => ops[op] !== 'none').length, 0), 0);
+
+export const withScope =(matrix: PolicyMatrix, role: string, collection: string, ops: readonly Op[], scope: Scope): PolicyMatrix => {
   const current = matrix[role]?.[collection] ?? { read: 'none', create: 'none', update: 'none', delete: 'none' };
   const next = { ...current };
   for (const op of ops) next[op] = scope;
