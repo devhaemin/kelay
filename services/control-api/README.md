@@ -47,7 +47,7 @@ These existed before and are unchanged, except:
 
 - The matrix is checked with `validatePolicy` from `@kelay/policy` against the dev schema. Unknown roles or collections answer `400 invalid_request` and the message lists every problem.
 - The rules are stored as a draft version: a copy of the active dev version with the new policy and the next version number. Saving again updates the same draft.
-- The next `POST /v1/apps/:app/envs/dev/deploy` turns the draft into the deployed version (same number). The rules reach the database when that version's migration is applied.
+- The next `POST /v1/apps/:app/envs/dev/deploy` turns the draft into the deployed version (same number). That deploy applies the rules to the dev database (see Deploy below).
 
 **`POST /v1/apps/:app/policy/preview`** with `{ "as": "<member userId>", "env"?: "dev" | "prod" }` (`env` defaults to `dev`) → `200`
 
@@ -190,6 +190,10 @@ Newest first. This is the console's `ToolCall` plus `userId`, `clientId`, `clien
 - `schema`, `policy` and `graphs` left out of the body carry over from the env's active version. For dev, rules saved with `PUT …/policy` take the place of the active policy.
 - Each deploy mints the app-runtime caller token for that app × env (contracts §4) and stores where it went as `version.callerTokenRef`. The `local` driver has nowhere to keep it, so the response carries it; the `aws` driver sets it as `KELAY_CALLER_TOKEN` on the app's functions. `POST /v1/apps/:app/publish` does the same when it creates a prod version.
 - The token lasts `CALLER_TOKEN_TTL_SECONDS` (one year by default). A new deploy mints a new one.
+- **App database.** Before the driver runs, a deploy applies the version's schema and access rules to the env's database: `migrationSql(schema, policy)` from `@kelay/policy`, through the `AppDatabaseMigrator` passed to `createControlApi` as `appMigrator` (default `PgAppDatabaseMigrator`). `POST /v1/apps/:app/publish` does the same for the prod database, also when it only moves the alias back to an older version, so the database always enforces the rules of the version that is live.
+  - The database is the env's `databaseUrl`. An env without one gets it from `APP_DATABASE_URL_TEMPLATE` (`{app}`, `{env}`); with neither, the migration is skipped and logged as `app_db_migration_skipped`. The same holds for the `local` and the `aws` driver.
+  - A version with a schema and no policy gets RLS with no policies: every row is denied. A version without a schema is not migrated.
+  - The migration connects as the login role in the URL, which must be the role the Data API connects with (contracts §3). When it fails, the deploy answers `500 internal` and no version is recorded.
 
 ## Routes for platform services
 

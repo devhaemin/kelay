@@ -5,10 +5,11 @@ import { z } from 'zod';
 import { AppSchema, AppSlug, PolicyMatrix } from '@kelay/contracts';
 import { signCallerToken } from '@kelay/tokens';
 import { requireBuilder, requireBuilderOrService, type AppEnv } from '../auth.ts';
-import { apps, envs, ENV_NAMES, versions, type AppRow, type EnvName, type VersionRow } from '../db/schema.ts';
+import { apps, envs, ENV_NAMES, versions, type AppRow, type EnvName, type EnvRow, type VersionRow } from '../db/schema.ts';
 import type { Ctx } from '../deps.ts';
 import { DeployError, type DeployInput } from '../deploy/driver.ts';
 import { ApiError } from '../errors.ts';
+import { databaseUrlFor } from './apps.ts';
 import { checkPolicy, findDraft } from './policy.ts';
 import { actorOf, appView, jsonBody, loadApp, loadEnv, queryParams, versionView } from './util.ts';
 
@@ -38,6 +39,31 @@ export function deployRoutes(ctx: Ctx) {
       if (e instanceof DeployError && e.badInput) throw new ApiError('invalid_request', e.message);
       throw new ApiError('internal', `deploy failed: ${(e as Error).message}`);
     }
+  };
+
+  /**
+   * Applies a version's tables and access rules to the env's database. It runs before the driver, because
+   * the migration only adds tables and columns: old code keeps working on the new schema, new code would
+   * not on the old one. A version without a schema has nothing to apply.
+   */
+  const migrateAppDatabase = async (app: string, env: EnvRow, version: Pick<VersionRow, 'schema' | 'policy'>): Promise<void> => {
+    if (!version.schema) return;
+    let databaseUrl = env.databaseUrl;
+    if (!databaseUrl) {
+      databaseUrl = databaseUrlFor(ctx.databaseUrlTemplate, app, env.name);
+      if (!databaseUrl) {
+        ctx.logger.warn({ type: 'app_db_migration_skipped', app, env: env.name }, 'the env has no database, so its access rules were not applied');
+        return;
+      }
+      await db.update(envs).set({ databaseUrl, updatedAt: ctx.now() }).where(and(eq(envs.app, app), eq(envs.name, env.name)));
+    }
+    try {
+      await ctx.appMigrator.migrate({ app, env: env.name, databaseUrl, schema: version.schema, policy: version.policy });
+    } catch (e) {
+      ctx.logger.error({ type: 'app_db_migration_failed', app, env: env.name, err: (e as Error).message }, 'app database migration failed');
+      throw new ApiError('internal', `could not apply the schema and access rules to the ${env.name} database: ${(e as Error).message}`);
+    }
+    ctx.logger.info({ type: 'app_db_migrated', app, env: env.name }, 'schema and access rules applied');
   };
 
   const mintCallerToken = (app: string, env: EnvName) =>
@@ -71,7 +97,7 @@ export function deployRoutes(ctx: Ctx) {
 
     // Whatever the build does not send carries over from the version it replaces, so redeploying new code
     // keeps the schema, access rules and graphs. Rules saved in the console (the draft) win over the active ones.
-    const { version: active } = await loadEnv(db, app.slug, env.data);
+    const { env: envRow, version: active } = await loadEnv(db, app.slug, env.data);
     const draft = env.data === 'dev' ? await findDraft(db, app.slug) : undefined;
     const schema = body.schema ?? active?.schema ?? null;
     const policy = body.policy ?? draft?.policy ?? active?.policy ?? null;
@@ -98,6 +124,7 @@ export function deployRoutes(ctx: Ctx) {
       graphs: body.graphs ?? active?.graphs ?? [],
       callerToken: await mintCallerToken(app.slug, env.data),
     };
+    await migrateAppDatabase(app.slug, envRow, { schema, policy });
     const result = await runDriver(app.slug, env.data, () => ctx.deploy.deploy(input));
     const version = await record(
       {
@@ -137,6 +164,10 @@ export function deployRoutes(ctx: Ctx) {
       source.env === 'prod'
         ? source
         : await db.query.versions.findFirst({ where: and(eq(versions.app, app.slug), eq(versions.env, 'prod'), eq(versions.number, source.number)) });
+
+    // Rolling back moves the rules back too: the database follows the version that is live.
+    const { env: prodEnv } = await loadEnv(db, app.slug, 'prod');
+    await migrateAppDatabase(app.slug, prodEnv, existing ?? source);
 
     let version: VersionRow;
     let callerToken: string | undefined;

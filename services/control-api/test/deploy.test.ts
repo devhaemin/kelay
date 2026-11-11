@@ -33,6 +33,10 @@ describe('deploy and publish with the local driver', () => {
     const detail = await h.req('GET', `/v1/apps/${APP}`, { token: builder });
     const dev = detail.body.envs.find((e: { name: string }) => e.name === 'dev');
     expect(dev.activeVersion.id).toBe(v2.body.version.id);
+
+    // Each deploy applied its schema to the dev database; a version without rules gets none.
+    expect(h.migrations).toHaveLength(2);
+    expect(h.migrations[0]).toEqual({ app: APP, env: 'dev', databaseUrl: 'postgres://kelay:kelay@localhost:54320/app_ticket_board_dev', schema, policy: null });
   });
 
   it('mints the app-runtime caller token and stores only where it went', async () => {
@@ -76,9 +80,14 @@ describe('deploy and publish with the local driver', () => {
 
     const p2 = await h.req('POST', `/v1/apps/${APP}/publish`, { token: builder, body: { versionId: v2.id } });
     expect(p2.body.version).toMatchObject({ env: 'prod', number: 2 });
+    const prodMigrations = () => h.migrations.filter((m) => m.env === 'prod');
+    expect(prodMigrations()).toHaveLength(2);
+    expect(prodMigrations()[0]).toMatchObject({ app: APP, databaseUrl: 'postgres://kelay:kelay@localhost:54320/app_ticket_board_prod', schema: { app: APP } });
 
     const rollback = await h.req('POST', `/v1/apps/${APP}/publish`, { token: builder, body: { versionId: p1.body.version.id } });
     expect(rollback.body.version.id).toBe(p1.body.version.id);
+    // A rollback puts that version's rules back as well.
+    expect(prodMigrations()).toHaveLength(3);
     expect(rollback.body.callerToken).toBeUndefined();
     expect(driver.activated).toEqual([{ app: APP, env: 'prod', lambdaVersion: 'local-1', resources: {} }]);
 

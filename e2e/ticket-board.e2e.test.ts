@@ -28,13 +28,19 @@ const auth = {
   getCallerToken: () => signCallerToken({ kind: 'app-runtime', app: APP, env: 'prod' }, config.callerSecret),
 };
 
-async function builderGet(path: string): Promise<{ status: number; body: any }> {
+async function builderCall(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
   const session = new KelayIdSession(config.issuer);
   await session.signIn(BUILDER.email, PASSWORD);
   const token = await session.appToken(CONSOLE_APP);
-  const res = await fetch(`${config.controlApiUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  const res = await fetch(`${config.controlApiUrl}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
   return { status: res.status, body: await res.json() };
 }
+
+const builderGet = (path: string) => builderCall('GET', path);
 
 beforeAll(async () => {
   junho = new KelayIdSession(config.issuer);
@@ -100,6 +106,44 @@ describe('Data API under Junho’s token', () => {
     });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: { code: 'forbidden_caller' } });
+  });
+});
+
+describe('Access rules saved in the console reach the app database', () => {
+  const tickets = createKelayClient({ dataApiUrl: config.dataApiUrl, app: APP, ...auth }).collection('tickets');
+
+  /** Saves the rules as a draft, then deploys the build that is already in Development with them. */
+  async function saveAndDeploy(policy: unknown): Promise<void> {
+    const saved = await builderCall('PUT', `/v1/apps/${APP}/policy`, { policy });
+    expect(saved.status).toBe(200);
+    const detail = await builderGet(`/v1/apps/${APP}`);
+    const dev = detail.body.envs.find((e: { name: string }) => e.name === 'dev').activeVersion;
+    const deployed = await builderCall('POST', `/v1/apps/${APP}/envs/dev/deploy`, { commit: dev.commit, artifactUrl: dev.artifactUrl, configVersion: dev.configVersion });
+    expect(deployed.status).toBe(201);
+    expect(deployed.body.version).toMatchObject({ id: saved.body.draft.id, status: 'deployed' });
+  }
+
+  it('changes what Junho reads once the builder deploys a narrower rule, and back', async () => {
+    const original = (await builderGet(`/v1/apps/${APP}/schema`)).body.policy;
+    expect(original.member.tickets.read).toBe('mine_shared');
+    const shared = BOARD.find((t) => t.shared && t.assignee === 'seoyeon')!;
+    expect(titles(await tickets.list())).toEqual(titles(visibleToJunho));
+
+    try {
+      // Saving alone is a draft: the database still answers with the deployed rules.
+      const draft = await builderCall('PUT', `/v1/apps/${APP}/policy`, { policy: { ...original, member: { ...original.member, tickets: { ...original.member.tickets, read: 'mine' } } } });
+      expect(draft.status).toBe(200);
+      expect(titles(await tickets.list())).toEqual(titles(visibleToJunho));
+
+      await saveAndDeploy(draft.body.draft.policy);
+      expect(titles(await tickets.list())).toEqual(titles(BOARD.filter((t) => t.assignee === 'junho')));
+      expect(await tickets.get(shared.id)).toBeNull();
+    } finally {
+      await saveAndDeploy(original);
+    }
+    expect(titles(await tickets.list())).toEqual(titles(visibleToJunho));
+    expect(await tickets.get(shared.id)).toMatchObject({ title: shared.title });
+    expect((await builderGet(`/v1/apps/${APP}/schema`)).body).toMatchObject({ policy: original, draft: null });
   });
 });
 

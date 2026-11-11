@@ -6,6 +6,7 @@ import { createAppDatabases } from './appdb.ts';
 import { createDatabase } from './db/client.ts';
 import { AwsDeployDriver } from './deploy/aws.ts';
 import { LocalDeployDriver, type DeployDriver } from './deploy/driver.ts';
+import { PgAppDatabaseMigrator } from './deploy/migrator.ts';
 import { AnthropicLlm } from './llm/anthropic.ts';
 import { createLogger } from './log.ts';
 import { PgImprovementQueue, SqsImprovementQueue, type ImprovementQueue } from './queue/improvement.ts';
@@ -60,6 +61,9 @@ const appDbs = createAppDatabases({ onPoolError: (err) => log.error({ type: 'app
 const app = createControlApi({
   db: database.db,
   appDbs,
+  // Both deploy drivers reach app databases the same way: through the URL on the env row, which comes
+  // from APP_DATABASE_URL_TEMPLATE or from the provisioner (PUT /internal/v1/apps/:app/envs/:env).
+  appMigrator: new PgAppDatabaseMigrator(),
   auth: { issuer: need('KELAY_ID_ISSUER'), jwks: remoteJwks(need('KELAY_ID_JWKS_URL')), callerSecret: need('KELAY_CALLER_SECRET') },
   llm,
   deploy,

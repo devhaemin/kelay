@@ -6,6 +6,7 @@ import type { AppEnv } from './auth.ts';
 import { createAppDatabases } from './appdb.ts';
 import { DEFAULT_CALLER_TOKEN_TTL_SECONDS, DEFAULT_DEDUPE_THRESHOLD, type ControlApiDeps, type Ctx } from './deps.ts';
 import { ApiError, errorBody, sendError } from './errors.ts';
+import { PgAppDatabaseMigrator } from './deploy/migrator.ts';
 import { createLogger } from './log.ts';
 import { appRoutes } from './routes/apps.ts';
 import { consentRoutes } from './routes/consents.ts';
@@ -29,6 +30,7 @@ export function createControlApi(deps: ControlApiDeps): Hono<RootEnv> {
     ...deps,
     logger,
     appDbs,
+    appMigrator: deps.appMigrator ?? new PgAppDatabaseMigrator(),
     qa: deps.qa ?? new PolicyQaRunner(appDbs),
     dedupeThreshold: deps.dedupeThreshold ?? DEFAULT_DEDUPE_THRESHOLD,
     callerTokenTtlSeconds: deps.callerTokenTtlSeconds ?? DEFAULT_CALLER_TOKEN_TTL_SECONDS,

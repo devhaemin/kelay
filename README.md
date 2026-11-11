@@ -195,6 +195,7 @@ To change a port or a secret, copy [`.env.example`](.env.example) to `.env` and 
 
 - Junho signs in at Kelay ID and gets a Ticket Board token with his role;
 - the Data API returns only his own tickets and the shared ones, lets him move his own ticket, and denies a change to someone else's;
+- an access rule the builder saves and deploys through the Control API changes what the Data API returns to Junho;
 - feedback sent with `sendFeedback` from `@kelay/sdk` becomes a ticket that the builder sees in the Control API;
 - an assistant completes the OAuth authorization-code flow (PKCE, consent page), and the MCP gateway's `tickets_list` returns the same rows as the screen.
 
