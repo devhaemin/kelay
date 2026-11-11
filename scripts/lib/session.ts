@@ -4,6 +4,18 @@ import { CookieJar } from 'tough-cookie';
 
 export type Fetch = (url: string, init?: RequestInit) => Response | Promise<Response>;
 
+/**
+ * Where Kelay ID sends the browser next. A navigation gets a 302/303; Node's fetch always sends
+ * `sec-fetch-mode: cors`, which better-auth answers with `{ redirect: true, url }` instead.
+ */
+export async function redirectTarget(res: Response, issuer: string): Promise<URL> {
+  const location = res.headers.get('location');
+  if (location && res.status >= 300 && res.status < 400) return new URL(location, issuer);
+  const body = (await res.clone().json().catch(() => null)) as { redirect?: unknown; url?: unknown } | null;
+  if (res.ok && body?.redirect === true && typeof body.url === 'string') return new URL(body.url, issuer);
+  throw new Error(`expected a redirect, got ${res.status} ${(await res.clone().text()).slice(0, 300)}`);
+}
+
 export class KelayIdSession {
   readonly jar = new CookieJar();
 
