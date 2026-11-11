@@ -1,0 +1,4 @@
+# Rendered var files and local secret values.
+out/
+*.env
+!*.env.example
