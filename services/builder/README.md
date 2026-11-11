@@ -86,7 +86,18 @@ With the `fargate` driver the build runs in the workspace task, which may not wr
 `BUILDER_WORKSPACE_DRIVER=local|fargate` (default `local`).
 
 - **`local`**: a folder per app under `KELAY_WORKSPACES_ROOT` (default `.kelay/workspaces` in the repo), sharing the dependencies installed in `templates/starter`. The preview is `next dev` on a free port.
-- **`fargate`**: one ECS task per app with the app's own EFS access point, so a task sees only that app's repo. The task runs `src/runtime-server.ts`, and the Builder drives it over the VPC with a token only the two of them know. The task holds the gateway key for the agent and no platform secret; checks and deploys stay in the Builder. Settings: `BUILDER_ECS_CLUSTER`, `BUILDER_EFS_FILE_SYSTEM_ID`, `BUILDER_SUBNETS`, `BUILDER_SECURITY_GROUPS`, `BUILDER_WORKSPACE_IMAGE`, `BUILDER_EXECUTION_ROLE_ARN`, `BUILDER_TASK_ROLE_ARN`, `BUILDER_PREVIEW_URL_TEMPLATE`, and `BUILDER_WORKSPACE_API_KEY` with `ANTHROPIC_BASE_URL` for the agent. This driver has unit tests only; it has not run against AWS, and the workspace image and the preview proxy do not exist yet.
+- **`fargate`**: one ECS task per app with the app's own EFS access point, so a task sees only that app's repo. The task runs `src/runtime-server.ts` from the [workspace image](#image), and the Builder drives it over the VPC with a token only the two of them know. The task holds the gateway key for the agent and no platform secret; checks and deploys stay in the Builder. Settings: `BUILDER_ECS_CLUSTER`, `BUILDER_EFS_FILE_SYSTEM_ID`, `BUILDER_SUBNETS`, `BUILDER_SECURITY_GROUPS`, `BUILDER_WORKSPACE_IMAGE`, `BUILDER_EXECUTION_ROLE_ARN`, `BUILDER_TASK_ROLE_ARN`, `BUILDER_PREVIEW_URL_TEMPLATE`, and `BUILDER_WORKSPACE_API_KEY` with `ANTHROPIC_BASE_URL` for the agent. This driver has unit tests only and has not run against AWS; what the task runs is checked with the image (below).
+
+## Image
+
+[`Dockerfile`](Dockerfile) (build it from the repo root) holds Node 22, pnpm, git, the Builder with its build tools, and `templates/starter` with its dependencies installed, so a workspace starts from a git checkout and installs nothing. It runs as uid 1000, the owner of every workspace access point. Its default command is the workspace runtime (`src/runtime-server.ts`, port 4007, `next dev` on 3000), which reads `KELAY_APP`, `KELAY_RUNTIME_TOKEN` and the agent settings above and keeps the repo under `/workspace`. Started with `node --import tsx src/server.ts`, the same image is the Builder service.
+
+```sh
+docker build -f services/builder/Dockerfile -t kelay/workspace .
+pnpm --filter @kelay/builder verify:image --image kelay/workspace
+```
+
+[`scripts/verify-image.ts`](scripts/verify-image.ts) needs Docker only. With a Control API stub and the scripted agent it runs the image both ways: as the workspace task, driven over the runtime protocol the way the `fargate` driver drives it (the bundles are built in the container, fetched, stored, and deployed to the stub; the web bundle then answers in the Lambda runtime emulator image, and the dev preview answers in the container), and as the Builder service, with a build started over its HTTP API.
 
 ## Other settings
 

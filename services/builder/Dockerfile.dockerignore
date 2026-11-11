@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/.next
+**/.open-next
+**/.env
+**/.env.*
+**/*.tsbuildinfo
+.git
+.kelay
+design
+docs
+infra
+apps
+e2e
+scripts

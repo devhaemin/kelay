@@ -5,5 +5,6 @@
   { "service": "identity", "context": ".", "dockerfile": "services/identity/Dockerfile" },
   { "service": "mcp-gateway", "context": ".", "dockerfile": "services/mcp-gateway/Dockerfile" },
   { "service": "llm-gateway", "context": "infra/litellm", "dockerfile": "infra/litellm/Dockerfile" },
-  { "service": "otel-collector", "context": "infra/otel", "dockerfile": "infra/otel/Dockerfile" }
+  { "service": "otel-collector", "context": "infra/otel", "dockerfile": "infra/otel/Dockerfile" },
+  { "service": "workspace", "context": ".", "dockerfile": "services/builder/Dockerfile" }
 ]
